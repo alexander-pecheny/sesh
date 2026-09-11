@@ -1,4 +1,4 @@
 [submodule "vendor/rmosh"]
 	path = vendor/rmosh
 	url = git@code.pecheny.me:pecheny/rmosh.git
-	branch = client-library
+	branch = main
