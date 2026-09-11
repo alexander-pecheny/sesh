@@ -33,7 +33,7 @@ extension Ghostty {
                     let app = Unmanaged<App>.fromOpaque(userdata).takeUnretainedValue()
                     DispatchQueue.main.async { app.tick() }
                 },
-                action_cb: { _, _, _ in false },
+                action_cb: { app, target, action in App.perform(app, target, action) },
                 read_clipboard_cb: { _, _, _ in },
                 confirm_read_clipboard_cb: { _, _, _, _ in },
                 write_clipboard_cb: { _, _, _, _, _ in },
@@ -52,14 +52,32 @@ extension Ghostty {
             if let config { ghostty_config_free(config) }
         }
 
+        // libghostty asks the embedder to reload when the conditional state (dark/light)
+        // changes; without this the theme never leaves its default flavour.
+        private static func perform(
+            _ app: ghostty_app_t?,
+            _ target: ghostty_target_s,
+            _ action: ghostty_action_s
+        ) -> Bool {
+            guard action.tag == GHOSTTY_ACTION_RELOAD_CONFIG, let config = Config.load() else {
+                return false
+            }
+            defer { ghostty_config_free(config) }
+            switch target.tag {
+            case GHOSTTY_TARGET_APP:
+                guard let app else { return false }
+                ghostty_app_update_config(app, config)
+            case GHOSTTY_TARGET_SURFACE:
+                ghostty_surface_update_config(target.target.surface, config)
+            default:
+                return false
+            }
+            return true
+        }
+
         func tick() {
             guard let app else { return }
             ghostty_app_tick(app)
-        }
-
-        func setColorScheme(_ scheme: ghostty_color_scheme_e) {
-            guard let app else { return }
-            ghostty_app_set_color_scheme(app, scheme)
         }
 
         private static func registerBundledFonts() {

@@ -66,6 +66,7 @@ extension Ghostty {
                 $0.contentsScale = scale
             }
 
+            updateColorScheme()
             ghostty_surface_set_content_scale(surface, scale, scale)
             ghostty_surface_set_size(
                 surface,
@@ -86,10 +87,10 @@ extension Ghostty {
 
         private func updateColorScheme() {
             guard let surface else { return }
-            ghostty_surface_set_color_scheme(
-                surface,
-                traitCollection.userInterfaceStyle == .dark
-                    ? GHOSTTY_COLOR_SCHEME_DARK : GHOSTTY_COLOR_SCHEME_LIGHT)
+            let scheme = traitCollection.userInterfaceStyle == .dark
+                ? GHOSTTY_COLOR_SCHEME_DARK : GHOSTTY_COLOR_SCHEME_LIGHT
+            ghostty_app_set_color_scheme(ghostty_surface_app(surface), scheme)
+            ghostty_surface_set_color_scheme(surface, scheme)
         }
 
         // MARK: Focus
