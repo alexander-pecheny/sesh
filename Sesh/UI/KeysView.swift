@@ -89,8 +89,7 @@ struct KeyImportView: View {
         }
         let key = Key(
             name: name.isEmpty ? String(line.split(separator: " ").first ?? "key") : name,
-            publicKey: line,
-            needsPassphrase: !passphrase.isEmpty)
+            publicKey: line)
         store.add(key, material: material, passphrase: passphrase.isEmpty ? nil : passphrase)
         dismiss()
     }

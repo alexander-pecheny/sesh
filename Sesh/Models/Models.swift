@@ -27,5 +27,4 @@ struct Key: Codable, Identifiable, Equatable {
     var id = UUID()
     var name = ""
     var publicKey = ""
-    var needsPassphrase = false
 }

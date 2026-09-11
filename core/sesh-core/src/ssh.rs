@@ -391,7 +391,7 @@ fn offers(result: &client::AuthResult, method: MethodKind) -> bool {
     match result {
         client::AuthResult::Success => false,
         client::AuthResult::Failure { remaining_methods, .. } => {
-            remaining_methods.iter().any(|m| *m == method)
+            remaining_methods.contains(&method)
         }
     }
 }

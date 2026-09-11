@@ -5,7 +5,7 @@
 //! for the duration of the call only; copy what you keep. Answer `on_host_key` with
 //! `sesh_session_answer_host_key` and `on_auth_prompt` with `sesh_session_answer_prompt`;
 //! until you do, the Session waits. Every function is safe to call from any thread.
-#![allow(non_camel_case_types)]
+#![allow(non_camel_case_types, clippy::missing_safety_doc)]
 
 use std::ffi::{c_char, c_void, CStr, CString};
 use std::path::PathBuf;

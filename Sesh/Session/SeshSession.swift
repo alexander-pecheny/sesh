@@ -105,7 +105,14 @@ final class SeshSession: ObservableObject {
     }
 
     fileprivate func apply(_ state: UInt32, _ message: String) {
-        stage = [Stage.connecting, .authenticating, .connected, .closed][safe: Int(state)] ?? .failed
+        stage =
+            switch state {
+            case 0: .connecting
+            case 1: .authenticating
+            case 2: .connected
+            case 3: .closed
+            default: .failed
+            }
         if !message.isEmpty { self.message = message }
     }
 }
@@ -210,8 +217,4 @@ enum PrivateKey {
         guard let line else { return (nil, error.map { String(cString: $0) } ?? "unreadable key") }
         return (String(cString: line), nil)
     }
-}
-
-private extension Array {
-    subscript(safe index: Int) -> Element? { indices.contains(index) ? self[index] : nil }
 }
