@@ -1,4 +1,4 @@
-import Foundation
+import UIKit
 import GhosttyKit
 
 /// Owns one sesh-core Session and wires it to a libghostty surface. Core callbacks arrive
@@ -27,20 +27,38 @@ final class SeshSession: ObservableObject {
     @Published var hostKeyQuestion: HostKeyQuestion?
     @Published var authQuestion: AuthQuestion?
     @Published var savePassword = false
+    @Published var selection: CGPoint?
+    @Published var editing = false
 
     let host: Host
+    let input = InputState()
     let terminal: Ghostty.TerminalView
 
+    private let store: Store
     private var handle: OpaquePointer?
     private let bridge = Bridge()
-    private var lastAnswer: String?
 
     init(host: Host, store: Store, app: ghostty_app_t) {
         self.host = host
-        terminal = Ghostty.TerminalView(app: app)
+        self.store = store
+        terminal = Ghostty.TerminalView(app: app, input: input, fontSize: store.fontSize)
         bridge.terminal = terminal
         bridge.owner = self
 
+        terminal.onWrite = { [weak self] data in self?.send(data) }
+        terminal.onResize = { [weak self] cols, rows in self?.resize(cols, rows) }
+        terminal.onSelection = { [weak self] anchor in self?.selection = anchor }
+        terminal.onEditor = { [weak self] in self?.editing = true }
+    }
+
+    /// The first layout is also the first honest grid size, so connecting waits for it and
+    /// the remote never sees the 80x24 placeholder.
+    private func resize(_ cols: UInt16, _ rows: UInt16) {
+        guard let handle else { return connect(cols, rows) }
+        sesh_session_resize(handle, cols, rows)
+    }
+
+    private func connect(_ cols: UInt16, _ rows: UInt16) {
         let key = store.key(host.keyID)
         let strings = CStrings()
         let address = strings.make(host.address)
@@ -58,23 +76,28 @@ final class SeshSession: ObservableObject {
                 host: address, port: UInt16(host.port), user: user, password: password,
                 key_pem: pem, key_passphrase: passphrase, known_hosts_path: knownHosts,
                 remote_command: command, extra_flags: strings.make(host.moshFlags),
-                cols: 80, rows: 24)
+                cols: cols, rows: rows)
             handle = sesh_mosh_connect(&config, Bridge.callbacks, userdata)
         case .ssh:
             var config = sesh_ssh_config_t(
                 host: address, port: UInt16(host.port), user: user, password: password,
                 key_pem: pem, key_passphrase: passphrase, known_hosts_path: knownHosts,
                 term: strings.make("xterm-256color"), remote_command: command,
-                extra_flags: strings.make(host.sshFlags), cols: 80, rows: 24,
+                extra_flags: strings.make(host.sshFlags), cols: cols, rows: rows,
                 agent_forwarding: host.agentForwarding)
             handle = sesh_ssh_connect(&config, Bridge.callbacks, userdata)
         }
+    }
 
-        terminal.onWrite = { [weak self] data in self?.send(data) }
-        terminal.onResize = { [weak self] cols, rows in
-            guard let handle = self?.handle else { return }
-            sesh_session_resize(handle, cols, rows)
-        }
+    func copySelection() {
+        guard let text = terminal.selection()?.text else { return }
+        UIPasteboard.general.string = text
+        selection = nil
+    }
+
+    func sendDraft(_ text: String, enter: Bool) {
+        terminal.paste(text)
+        if enter { terminal.send(keycode: Keycode.enter, mods: []) }
     }
 
     deinit {

@@ -32,8 +32,16 @@ struct SessionTab: View {
             .background(flavour(.mantle))
 
             Ghostty.Terminal(view: session.terminal)
+                .overlay(alignment: .topLeading) { copyButton }
         }
         .background(flavour(.base))
+        .sheet(isPresented: $session.editing) {
+            EditorView { text, enter in session.sendDraft(text, enter: enter) }
+                .environmentObject(store)
+        }
+        .onChange(of: session.editing) { _, editing in
+            if !editing { _ = session.terminal.becomeFirstResponder() }
+        }
         .sheet(item: $session.hostKeyQuestion) { question in
             HostKeySheet(question: question, host: session.host) { session.answerHostKey($0) }
         }
@@ -41,6 +49,18 @@ struct SessionTab: View {
             AuthSheet(question: question, savePassword: $session.savePassword) {
                 session.answerPrompt(question, $0)
             }
+        }
+    }
+
+    @ViewBuilder private var copyButton: some View {
+        if let anchor = session.selection {
+            Button("Copy") { session.copySelection() }
+                .font(.mono(13))
+                .padding(.horizontal, 12)
+                .padding(.vertical, 6)
+                .background(flavour(.surface1), in: .capsule)
+                .foregroundStyle(flavour(.text))
+                .offset(x: max(anchor.x - 20, 4), y: max(anchor.y - 44, 4))
         }
     }
 

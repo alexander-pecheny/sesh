@@ -6,6 +6,7 @@ struct HostListView: View {
     @Binding var connecting: Host?
     @State private var editing: Host?
     @State private var showingKeys = false
+    @State private var showingSettings = false
 
     private var flavour: Catppuccin.Flavour { colorScheme == .dark ? .mocha : .latte }
 
@@ -20,6 +21,11 @@ struct HostListView: View {
                 ToolbarItem(placement: .topBarLeading) {
                     Button { showingKeys = true } label: { Label("Keys", systemImage: "key") }
                 }
+                ToolbarItem(placement: .topBarLeading) {
+                    Button { showingSettings = true } label: {
+                        Label("Settings", systemImage: "gearshape")
+                    }
+                }
                 ToolbarItem(placement: .topBarTrailing) {
                     Button { editing = Host() } label: { Label("Add Host", systemImage: "plus") }
                 }
@@ -28,6 +34,7 @@ struct HostListView: View {
         .tint(flavour(.mauve))
         .sheet(item: $editing) { HostFormView(host: $0) }
         .sheet(isPresented: $showingKeys) { KeysView() }
+        .sheet(isPresented: $showingSettings) { SettingsView() }
     }
 
     private var empty: some View {

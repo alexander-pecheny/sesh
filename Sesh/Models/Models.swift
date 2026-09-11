@@ -28,3 +28,14 @@ struct Key: Codable, Identifiable, Equatable {
     var name = ""
     var publicKey = ""
 }
+
+struct Draft: Codable, Identifiable, Hashable {
+    var id = UUID()
+    var text = ""
+    var edited = Date()
+
+    var title: String {
+        let first = text.split(separator: "\n", maxSplits: 1).first.map(String.init) ?? ""
+        return first.isEmpty ? "Empty Draft" : first
+    }
+}

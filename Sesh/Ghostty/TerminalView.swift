@@ -1,19 +1,29 @@
+import SwiftUI
 import UIKit
 import GhosttyKit
 
 extension Ghostty {
     /// A libghostty surface in manual I/O mode: `onWrite` receives what the terminal wants
     /// sent to the remote, `process(_:)` pushes remote output back in.
-    final class TerminalView: UIView, UIKeyInput {
-        private static let enterKeycode: UInt32 = 0x24
-        private static let backspaceKeycode: UInt32 = 0x33
-
+    final class TerminalView: UIView, UIKeyInput, UIGestureRecognizerDelegate {
         private var surface: ghostty_surface_t?
         private var grid: (UInt16, UInt16) = (0, 0)
+        private var writes = 0
+        private var writesAtPress = 0
+        private var shiftBypass = false
+        private var panAnchor = CGPoint.zero
+        private var pinchBase = 0.0
+        private var fontSize: Double
+
+        let input: InputState
         var onWrite: ((Data) -> Void)?
         var onResize: ((UInt16, UInt16) -> Void)?
+        var onSelection: ((CGPoint?) -> Void)?
+        var onEditor: (() -> Void)?
 
-        init(app: ghostty_app_t) {
+        init(app: ghostty_app_t, input: InputState, fontSize: Double) {
+            self.input = input
+            self.fontSize = fontSize
             super.init(frame: CGRect(x: 0, y: 0, width: 800, height: 600))
 
             var config = ghostty_surface_config_new()
@@ -22,19 +32,20 @@ extension Ghostty {
                 uiview: Unmanaged.passUnretained(self).toOpaque()))
             config.userdata = Unmanaged.passUnretained(self).toOpaque()
             config.scale_factor = UITraitCollection.current.displayScale
+            config.font_size = Float(fontSize)
             config.io_mode = GHOSTTY_SURFACE_IO_MANUAL
             config.io_write_userdata = Unmanaged.passUnretained(self).toOpaque()
             config.io_write_cb = { userdata, bytes, len in
                 guard let userdata, let bytes, len > 0 else { return }
                 let view = Unmanaged<TerminalView>.fromOpaque(userdata).takeUnretainedValue()
                 let data = Data(bytes: bytes, count: Int(len))
-                DispatchQueue.main.async { view.onWrite?(data) }
+                DispatchQueue.main.async { view.wrote(data) }
             }
 
             surface = ghostty_surface_new(app, &config)
             if surface == nil { logger.critical("ghostty_surface_new failed") }
 
-            addGestureRecognizer(UITapGestureRecognizer(target: self, action: #selector(focus)))
+            addGestures()
         }
 
         required init?(coder: NSCoder) { fatalError("unsupported") }
@@ -52,6 +63,11 @@ extension Ghostty {
                     buffer.baseAddress!.assumingMemoryBound(to: CChar.self),
                     UInt(buffer.count))
             }
+        }
+
+        private func wrote(_ data: Data) {
+            writes += 1
+            onWrite?(data)
         }
 
         // MARK: UIView
@@ -100,9 +116,26 @@ extension Ghostty {
             ghostty_surface_set_color_scheme(surface, scheme)
         }
 
-        // MARK: Focus
+        // MARK: Focus and the keys row
 
         override var canBecomeFirstResponder: Bool { true }
+
+        override var inputAccessoryView: UIView? { accessory }
+
+        private lazy var accessory: UIView = {
+            let row = KeysRow(input: input) { [weak self] in self?.perform($0) }
+            let host = UIHostingController(rootView: row)
+            keysRow = host
+            host.view.backgroundColor = .clear
+            host.view.frame = CGRect(x: 0, y: 0, width: 0, height: KeysRow.height)
+            host.view.autoresizingMask = [.flexibleWidth, .flexibleHeight]
+            let container = UIView(frame: host.view.frame)
+            container.autoresizingMask = .flexibleWidth
+            container.addSubview(host.view)
+            return container
+        }()
+
+        private var keysRow: UIViewController?
 
         @objc @discardableResult private func focus() -> Bool { becomeFirstResponder() }
 
@@ -118,32 +151,193 @@ extension Ghostty {
             return resigned
         }
 
+        private func perform(_ action: KeysRow.Action) {
+            switch action {
+            case .key(let code): send(keycode: code, mods: input.consume())
+            case .character(let character): send(character: character, extra: input.consume())
+            case .paste: paste(UIPasteboard.general.string ?? "")
+            case .editor: onEditor?()
+            case .hide: _ = resignFirstResponder()
+            }
+        }
+
+        // MARK: Keys
+
+        func paste(_ text: String) {
+            guard let surface, !text.isEmpty else { return }
+            text.withCString { ghostty_surface_text(surface, $0, UInt(text.utf8.count)) }
+        }
+
+        func send(keycode: UInt32, mods: Mods, text: String? = nil, unshifted: UInt32 = 0) {
+            guard let surface else { return }
+            var event = ghostty_input_key_s()
+            event.keycode = keycode
+            event.mods = mods.ghostty
+            event.consumed_mods = mods.subtracting([.ctrl, .cmd]).ghostty
+            event.unshifted_codepoint = unshifted
+            event.action = GHOSTTY_ACTION_PRESS
+            if let text, mods.isDisjoint(with: [.ctrl, .cmd]) {
+                text.withCString {
+                    event.text = $0
+                    _ = ghostty_surface_key(surface, event)
+                }
+                event.text = nil
+            } else {
+                _ = ghostty_surface_key(surface, event)
+            }
+            event.action = GHOSTTY_ACTION_RELEASE
+            _ = ghostty_surface_key(surface, event)
+        }
+
+        private func send(character: Character, extra: Mods) {
+            guard let stroke = Keycode.stroke(character) else {
+                paste(String(character))
+                return
+            }
+            send(
+                keycode: stroke.code,
+                mods: stroke.mods.union(extra),
+                text: String(character),
+                unshifted: stroke.unshifted)
+        }
+
         // MARK: UIKeyInput
 
         var hasText: Bool { true }
 
         func insertText(_ text: String) {
-            guard let surface else { return }
+            let mods = input.consume()
             if text == "\n" {
-                sendKey(Self.enterKeycode)
-                return
+                send(keycode: Keycode.enter, mods: mods)
+            } else if mods.isDisjoint(with: [.ctrl, .alt, .cmd]) {
+                paste(text)
+            } else {
+                text.forEach { send(character: $0, extra: mods) }
             }
-            let length = text.utf8.count
-            text.withCString { ghostty_surface_text(surface, $0, UInt(length)) }
         }
 
-        func deleteBackward() { sendKey(Self.backspaceKeycode) }
+        func deleteBackward() { send(keycode: Keycode.backspace, mods: input.consume()) }
 
-        private func sendKey(_ keycode: UInt32) {
+        override func pressesBegan(_ presses: Set<UIPress>, with event: UIPressesEvent?) {
+            let unhandled = presses.filter { !handle($0) }
+            if !unhandled.isEmpty { super.pressesBegan(unhandled, with: event) }
+        }
+
+        /// Plain characters are left to `insertText`; only named keys and real modifier
+        /// combos are ours, or every hardware keystroke would arrive twice.
+        private func handle(_ press: UIPress) -> Bool {
+            guard let key = press.key else { return false }
+            let mods = Mods(key.modifierFlags).union(input.consume())
+            if let code = Keycode.named(key.keyCode) {
+                send(keycode: code, mods: mods)
+                return true
+            }
+            guard !mods.isDisjoint(with: [.ctrl, .alt, .cmd]),
+                  let character = key.charactersIgnoringModifiers.first,
+                  let stroke = Keycode.stroke(character) else { return false }
+            send(keycode: stroke.code, mods: stroke.mods.union(mods), unshifted: stroke.unshifted)
+            return true
+        }
+
+        // MARK: Touch
+
+        private func addGestures() {
+            let tap = UITapGestureRecognizer(target: self, action: #selector(onTap))
+            let pan = UIPanGestureRecognizer(target: self, action: #selector(onPan))
+            pan.maximumNumberOfTouches = 1
+            let twoFinger = UIPanGestureRecognizer(target: self, action: #selector(onScroll))
+            twoFinger.minimumNumberOfTouches = 2
+            let pinch = UIPinchGestureRecognizer(target: self, action: #selector(onPinch))
+            for recogniser in [tap, pan, twoFinger, pinch] as [UIGestureRecognizer] {
+                recogniser.delegate = self
+                addGestureRecognizer(recogniser)
+            }
+        }
+
+        func gestureRecognizer(
+            _ recogniser: UIGestureRecognizer,
+            shouldRecognizeSimultaneouslyWith other: UIGestureRecognizer
+        ) -> Bool { true }
+
+        private var selectMods: Mods { shiftBypass ? .shift : [] }
+
+        @objc private func onTap(_ recogniser: UITapGestureRecognizer) {
+            focus()
+            let point = recogniser.location(in: self)
+            switch input.mode {
+            case .click:
+                let mods = input.consume()
+                click(mods.contains(.rightClick) ? GHOSTTY_MOUSE_RIGHT : GHOSTTY_MOUSE_LEFT,
+                      at: point, mods: mods.subtracting(.rightClick))
+            case .select:
+                click(GHOSTTY_MOUSE_LEFT, at: point, mods: selectMods)
+                onSelection?(nil)
+            }
+        }
+
+        @objc private func onPan(_ recogniser: UIPanGestureRecognizer) {
+            guard input.mode == .select else {
+                onScroll(recogniser)
+                return
+            }
             guard let surface else { return }
-            var event = ghostty_input_key_s()
-            event.mods = GHOSTTY_MODS_NONE
-            event.consumed_mods = GHOSTTY_MODS_NONE
-            event.keycode = keycode
-            event.action = GHOSTTY_ACTION_PRESS
-            _ = ghostty_surface_key(surface, event)
-            event.action = GHOSTTY_ACTION_RELEASE
-            _ = ghostty_surface_key(surface, event)
+            let mods = selectMods.ghostty
+            var point = recogniser.location(in: self)
+            switch recogniser.state {
+            case .began:
+                let start = recogniser.translation(in: self)
+                point.x -= start.x
+                point.y -= start.y
+                writesAtPress = writes
+                ghostty_surface_mouse_pos(surface, point.x, point.y, mods)
+                _ = ghostty_surface_mouse_button(surface, GHOSTTY_MOUSE_PRESS, GHOSTTY_MOUSE_LEFT, mods)
+            case .changed:
+                ghostty_surface_mouse_pos(surface, point.x, point.y, mods)
+            default:
+                _ = ghostty_surface_mouse_button(surface, GHOSTTY_MOUSE_RELEASE, GHOSTTY_MOUSE_LEFT, mods)
+                if writes != writesAtPress { shiftBypass = true }
+                onSelection?(selection()?.anchor)
+            }
+        }
+
+        @objc private func onScroll(_ recogniser: UIPanGestureRecognizer) {
+            guard let surface else { return }
+            let translation = recogniser.translation(in: self)
+            if recogniser.state == .began { panAnchor = translation }
+            let delta = CGPoint(x: translation.x - panAnchor.x, y: translation.y - panAnchor.y)
+            panAnchor = translation
+            guard recogniser.state == .changed else { return }
+            let point = recogniser.location(in: self)
+            ghostty_surface_mouse_pos(surface, point.x, point.y, GHOSTTY_MODS_NONE)
+            ghostty_surface_mouse_scroll(surface, delta.x, delta.y, 1)
+        }
+
+        @objc private func onPinch(_ recogniser: UIPinchGestureRecognizer) {
+            guard let surface else { return }
+            if recogniser.state == .began { pinchBase = fontSize }
+            let size = min(max(pinchBase * Double(recogniser.scale), 6), 48)
+            guard abs(size - fontSize) >= 0.5 else { return }
+            fontSize = size
+            let action = "set_font_size:\(String(format: "%.1f", size))"
+            _ = ghostty_surface_binding_action(surface, action, UInt(action.utf8.count))
+        }
+
+        private func click(
+            _ button: ghostty_input_mouse_button_e, at point: CGPoint, mods: Mods
+        ) {
+            guard let surface else { return }
+            ghostty_surface_mouse_pos(surface, point.x, point.y, mods.ghostty)
+            _ = ghostty_surface_mouse_button(surface, GHOSTTY_MOUSE_PRESS, button, mods.ghostty)
+            _ = ghostty_surface_mouse_button(surface, GHOSTTY_MOUSE_RELEASE, button, mods.ghostty)
+        }
+
+        func selection() -> (text: String, anchor: CGPoint)? {
+            guard let surface, ghostty_surface_has_selection(surface) else { return nil }
+            var text = ghostty_text_s()
+            guard ghostty_surface_read_selection(surface, &text) else { return nil }
+            defer { ghostty_surface_free_text(surface, &text) }
+            guard let bytes = text.text else { return nil }
+            return (String(cString: bytes), CGPoint(x: text.tl_px_x, y: text.tl_px_y))
         }
     }
 }

@@ -4,6 +4,10 @@ import Foundation
 final class Store: ObservableObject {
     @Published var hosts: [Host] = [] { didSet { write(hosts, to: "hosts.json") } }
     @Published var keys: [Key] = [] { didSet { write(keys, to: "keys.json") } }
+    @Published var drafts: [Draft] = [] { didSet { write(drafts, to: "drafts.json") } }
+    @Published var fontSize: Double {
+        didSet { UserDefaults.standard.set(fontSize, forKey: "fontSize") }
+    }
 
     private let directory: URL
 
@@ -11,8 +15,10 @@ final class Store: ObservableObject {
         let support = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
         directory = support.appendingPathComponent("Sesh", isDirectory: true)
         try? FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        fontSize = UserDefaults.standard.object(forKey: "fontSize") as? Double ?? 12
         hosts = read("hosts.json") ?? []
         keys = read("keys.json") ?? []
+        drafts = read("drafts.json") ?? []
     }
 
     var knownHostsPath: String { directory.appendingPathComponent("known_hosts").path }
@@ -39,6 +45,13 @@ final class Store: ObservableObject {
     }
 
     func key(_ id: UUID?) -> Key? { keys.first { $0.id == id } }
+
+    func upsert(_ draft: Draft) {
+        var saved = draft
+        saved.edited = Date()
+        drafts.removeAll { $0.id == saved.id }
+        drafts.insert(saved, at: 0)
+    }
 
     private func read<T: Decodable>(_ name: String) -> T? {
         guard let data = try? Data(contentsOf: directory.appendingPathComponent(name)) else { return nil }
