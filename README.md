@@ -16,3 +16,12 @@ verifies it against `scripts/ghosttykit.sha256`, but that one is unusable on iOS
 gen` regenerates the Xcode project from `project.yml`, which is the only place project
 settings are edited. Bundled JetBrains Mono is under the SIL Open Font License, copied
 into `Resources/Fonts` with its licence.
+
+`just core` builds the Rust crate in `core/sesh-core` — russh for SSH, the Extra flags
+parser and the known-hosts check — for device and simulator and wraps it as
+`Frameworks/SeshCore.xcframework`; `cbindgen` writes `Sesh/sesh.h`, which Swift reaches
+through `Sesh/Sesh-Bridging-Header.h` rather than a module map, because GhosttyKit's
+module map claims every header in the shared `include/` directory. `just core-test` runs
+the crate's tests. `just sshd` starts an unprivileged sshd on 127.0.0.1:2222 with a
+throwaway host key and test key under `.local/`, and `just sshd-stop` stops it; that is
+what the simulator connects to.

@@ -182,20 +182,16 @@ async fn drive(
     let mut _jump = None;
     let mut handle = match &flags.jump {
         None => {
-            let address = resolve(&config.host, port, &flags).await?;
-            client::connect(client_config.clone(), address, handler(&config.host, port))
-                .await
-                .map_err(|e| format!("{}: {e}", config.host))?
+            connect_any(&client_config, &config.host, port, &flags, || {
+                handler(&config.host, port)
+            })
+            .await?
         }
         Some(jump) => {
-            let address = resolve(&jump.host, jump.port, &flags).await?;
-            let mut hop = client::connect(
-                client_config.clone(),
-                address,
-                handler(&jump.host, jump.port),
-            )
-            .await
-            .map_err(|e| format!("{}: {e}", jump.host))?;
+            let mut hop = connect_any(&client_config, &jump.host, jump.port, &flags, || {
+                handler(&jump.host, jump.port)
+            })
+            .await?;
             let hop_user = jump.user.clone().unwrap_or_else(|| user.clone());
             authenticate(&mut hop, &hop_user, &config, &flags, events, answers).await?;
             let stream = hop
@@ -274,12 +270,27 @@ fn client_config(flags: &SshFlags) -> client::Config {
     config
 }
 
-async fn resolve(host: &str, port: u16, flags: &SshFlags) -> Result<SocketAddr, String> {
-    tokio::net::lookup_host((host, port))
+/// A name can carry several addresses, and only some of them may be listening.
+async fn connect_any(
+    client_config: &Arc<client::Config>,
+    host: &str,
+    port: u16,
+    flags: &SshFlags,
+    mut handler: impl FnMut() -> Handler,
+) -> Result<client::Handle<Handler>, String> {
+    let addresses: Vec<SocketAddr> = tokio::net::lookup_host((host, port))
         .await
         .map_err(|e| format!("{host}: {e}"))?
-        .find(|a| !(flags.ipv4_only && a.is_ipv6() || flags.ipv6_only && a.is_ipv4()))
-        .ok_or_else(|| format!("{host}: no address of the requested family"))
+        .filter(|a| !(flags.ipv4_only && a.is_ipv6() || flags.ipv6_only && a.is_ipv4()))
+        .collect();
+    let mut failure = format!("{host}: no address of the requested family");
+    for address in addresses {
+        match client::connect(client_config.clone(), address, handler()).await {
+            Ok(handle) => return Ok(handle),
+            Err(error) => failure = format!("{host}: {error}"),
+        }
+    }
+    Err(failure)
 }
 
 async fn authenticate(

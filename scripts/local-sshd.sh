@@ -39,6 +39,7 @@ chmod 600 "$local/ssh_host_ed25519_key" "$local/testkey"
 cat > "$config" <<CONF
 Port 2222
 ListenAddress 127.0.0.1
+ListenAddress ::1
 HostKey $local/ssh_host_ed25519_key
 PidFile $pidfile
 AuthorizedKeysFile $local/testkey.pub

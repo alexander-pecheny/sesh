@@ -14,6 +14,8 @@
   the Rust session) and never call back into the surface synchronously from it.
   `ghostty_surface_process_output` is safe from any thread and runs the VT parser on the
   caller. Call `_key`, `_text`, `_set_size`, `_set_focus`, `_update_config` on main.
+- Grid size: `ghostty_surface_size` returns columns and rows once `ghostty_surface_set_size`
+  has run, which is how a transport learns the window size to send the remote.
 - Actions matter: answer `GHOSTTY_ACTION_RELOAD_CONFIG` by loading a fresh config and
   calling `ghostty_app_update_config` / `ghostty_surface_update_config`, or the
   light/dark theme never switches. Later phases need `SET_TITLE`, `RING_BELL`,
