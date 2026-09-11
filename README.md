@@ -7,8 +7,12 @@ driven in manual I/O mode, so bytes arrive from a transport instead of a child p
 SSH and mosh both live in one Rust core behind a C ABI. See `CONTEXT.md` for the
 vocabulary, `docs/PLAN.md` for the plan and `docs/adr/` for the decisions.
 
-Build with `just build` and install on the booted simulator with `just run`; both need
-`xcodegen`, `just`, `zig` and Xcode 26.3. `just ghosttykit` builds the pinned
+Clone with `git submodule update --init vendor/rmosh`: mosh comes from
+[rmosh](https://code.pecheny.me/pecheny/rmosh), vendored there, and `sesh-core` depends on
+its `mosh-client` and launcher libraries by path. Build with `just build` and install on
+the booted simulator with `just run`; both need `xcodegen`, `just`, `zig`, `protoc` and
+Xcode 26.3.
+`just ghosttykit` builds the pinned
 `GhosttyKit.xcframework` from the cmux fork with `patches/libxev-ios-async.patch`, which
 restores libxev's cross-thread wakeup on iOS; without it libghostty's renderer and IO
 threads never wake. `just ghosttykit-prebuilt` fetches the published build instead and
@@ -17,8 +21,9 @@ gen` regenerates the Xcode project from `project.yml`, which is the only place p
 settings are edited. Bundled JetBrains Mono is under the SIL Open Font License, copied
 into `Resources/Fonts` with its licence.
 
-`just core` builds the Rust crate in `core/sesh-core` — russh for SSH, the Extra flags
-parser and the known-hosts check — for device and simulator and wraps it as
+`just core` builds the Rust crate in `core/sesh-core` — russh for SSH, rmosh's client for
+mosh, the Extra flags parser and the known-hosts check — for device and simulator and
+wraps it as
 `Frameworks/SeshCore.xcframework`; `cbindgen` writes `Sesh/sesh.h`, which Swift reaches
 through `Sesh/Sesh-Bridging-Header.h` rather than a module map, because GhosttyKit's
 module map claims every header in the shared `include/` directory. `just core-test` runs
