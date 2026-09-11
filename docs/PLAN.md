@@ -82,16 +82,20 @@ is the spec for the implementing agents. Decisions here were settled with the ow
   that starts a new Session in the same Tab. No keepalive tricks, no retry loops.
   Session restore across app termination is phase two of the product, out of scope now.
 - Keys row, left to right: `esc ctrl alt shift cmd right-click tab` | `~ | / -` |
-  arrows (hold to repeat) | pinned: paste, click/select toggle, Editor, hide keyboard.
+  arrows (hold to repeat) | pinned: paste, Editor, and the three-way Touch mode selector.
+  No separate hide-keyboard button: Click and Select modes put the keyboard down.
   Modifiers: one tap arms for the next key or tap, two taps lock, tap again to clear;
   highlighted while armed or locked. `cmd` is ghostty's super. The row scrolls sideways
   and also shows with a hardware keyboard.
-- Click mode (default): tap sends mouse press and release at the cell (right button when
-  right-click is armed); one-finger drag scrolls, as scrollback or wheel events when the
-  program enabled mouse reporting; no selection; long press does nothing. Select mode:
+- Three Touch modes, picked with a segmented icon selector pinned at the right of the
+  Keys row. Type (default): tap sends mouse press and release at the cell (right button
+  when right-click is armed), the on-screen keyboard is up; one-finger drag scrolls, as
+  scrollback or wheel events when the program enabled mouse reporting; no selection;
+  long press does nothing. Click: same taps and drags, but the on-screen keyboard stays
+  down so the user can work a TUI by touch; the Keys row stays visible. Select:
   one-finger drag selects with a floating Copy button, tap clears, two-finger drag
-  scrolls, the program sees no mouse events. The toggle shows the mode; the last mode is
-  remembered.
+  scrolls, keyboard down, the program sees no mouse events. A hardware keyboard works in
+  every mode. The last mode is remembered.
 - Editor: a sheet listing Drafts, first line as title, newest edit first, swipe to
   delete, tap to edit. Editing screen: system proportional font, Send, Send + Enter,
   Cancel. Send uses bracketed paste when the program enabled it; Send + Enter appends

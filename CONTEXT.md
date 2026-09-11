@@ -48,14 +48,22 @@ _Avoid_: reconnect (that is a new Session in the same Tab)
 
 ## Touch
 
+**Touch mode**:
+One of three ways the terminal treats fingers: Type, Click or Select. Chosen with a
+selector in the Keys row; the app remembers the last one.
+
+**Type mode**:
+The default Touch mode. A tap is a mouse click for the remote program and the on-screen
+keyboard is up; a drag scrolls; nothing selects text.
+_Avoid_: keyboard mode
+
 **Click mode**:
-The default touch mode. A tap is a mouse click for the remote program; a drag scrolls;
-nothing selects text.
+Like Type mode but the on-screen keyboard stays down, for working a TUI by touch.
 _Avoid_: tap mode, navigation mode
 
 **Select mode**:
-The touch mode in which a drag selects text to copy and the remote program sees no
-mouse events at all.
+The Touch mode in which a drag selects text to copy, the keyboard stays down, and the
+remote program sees no mouse events at all.
 _Avoid_: copy mode, selection mode
 
 **Keys row**:
