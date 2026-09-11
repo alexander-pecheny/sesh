@@ -74,6 +74,8 @@ is the spec for the implementing agents. Decisions here were settled with the ow
   `-p`/`--port`, `--server=`, `--predict=`, `-a`, `-n`, `--no-init`, `-4`, `-6`,
   `--experimental-remote-ip=local|remote` with `remote` the default. Anything else is
   rejected before connecting, naming the flag.
+- The Remote command runs as `exec "$SHELL" -lic '<command>'` on both transports, so
+  it sees the PATH and aliases the user's rc files set; a bare `execvp` did not.
 - Mosh bootstrap: run `mosh-server new -s -c 256 -l LANG=... [-p port] [-- command]`
   over a russh exec channel with a pty, prefixed by the `remote` announce when chosen,
   parse `MOSH CONNECT <port> <key>` as rmosh's launcher does (`crates/mosh/src/main.rs`,
@@ -85,7 +87,7 @@ is the spec for the implementing agents. Decisions here were settled with the ow
   that starts a new Session in the same Tab. No keepalive tricks, no retry loops.
   Session restore across app termination is phase two of the product, out of scope now.
 - Keys row, left to right: `esc ctrl alt shift cmd right-click tab` | `~ | / -` |
-  arrows (hold to repeat) | pinned: paste, Editor, and the three-way Touch mode selector.
+  arrows (plain taps, no repeat) | pinned: paste, Editor, and the three-way Touch mode selector.
   No separate hide-keyboard button: Click and Select modes put the keyboard down.
   Modifiers: one tap arms for the next key or tap, two taps lock, tap again to clear;
   highlighted while armed or locked. `cmd` is ghostty's super. The row scrolls sideways

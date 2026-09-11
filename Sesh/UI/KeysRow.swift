@@ -97,9 +97,8 @@ struct KeysRow: View {
     }
 
     private func arrow(_ icon: String, _ name: String, _ code: UInt32) -> some View {
-        RepeatKey(label: label(Image(systemName: icon))) { send(.key(code)) }
+        Button { send(.key(code)) } label: { label(Image(systemName: icon)) }
             .accessibilityLabel(name)
-            .accessibilityAddTraits(.isButton)
     }
 
     private func label(
@@ -116,26 +115,3 @@ struct KeysRow: View {
 }
 
 /// Hold to repeat: SwiftUI has no repeating button, and a long press fires once.
-private struct RepeatKey<Label: View>: View {
-    let label: Label
-    let action: () -> Void
-
-    @State private var timer: Timer?
-
-    var body: some View {
-        label.gesture(
-            DragGesture(minimumDistance: 0)
-                .onChanged { _ in
-                    guard timer == nil else { return }
-                    action()
-                    timer = Timer.scheduledTimer(withTimeInterval: 0.12, repeats: true) { _ in
-                        Task { @MainActor in action() }
-                    }
-                    timer?.fireDate = Date().addingTimeInterval(0.4)
-                }
-                .onEnded { _ in
-                    timer?.invalidate()
-                    timer = nil
-                })
-    }
-}

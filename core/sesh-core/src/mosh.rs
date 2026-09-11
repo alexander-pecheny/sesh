@@ -217,7 +217,12 @@ fn command_line(config: &Config, flags: &MoshFlags) -> Result<String, String> {
                 format!("{low}:{high}")
             }
         }),
-        command: flags::split(config.remote_command.as_deref().unwrap_or(""))?,
+        command: match config.remote_command.as_deref().map(str::trim) {
+            Some(command) if !command.is_empty() => {
+                vec!["sh".into(), "-c".into(), crate::session::in_login_shell(command)]
+            }
+            _ => Vec::new(),
+        },
         ..Default::default()
     };
     let announce = match flags.remote_ip {
@@ -269,7 +274,9 @@ mod tests {
         let command = line("--experimental-remote-ip=local -p 60001 --server=/opt/bin/mosh-server", "tmux attach");
         assert!(command.starts_with("/opt/bin/mosh-server new"), "{command}");
         assert!(command.contains("-p 60001"), "{command}");
-        assert!(command.ends_with("-- tmux attach"), "{command}");
+        assert!(command.contains("-- sh -c "), "{command}");
+        assert!(command.contains("-lic "), "{command}");
+        assert!(command.contains("tmux attach"), "{command}");
     }
 
     #[test]

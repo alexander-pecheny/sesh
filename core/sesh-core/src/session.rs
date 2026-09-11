@@ -138,3 +138,21 @@ pub async fn ask(
     events.auth_prompt(id, name, instruction, &prompts);
     rx.await.map_err(|_| "authentication cancelled".to_string())
 }
+
+/// A Remote command runs in the user's login shell, interactive, so it sees the PATH
+/// and aliases their rc files set, as if typed at the prompt.
+pub fn in_login_shell(command: &str) -> String {
+    format!("exec \"$SHELL\" -lic {}", mosh::opts::shell_quote(command))
+}
+
+#[cfg(test)]
+mod login_shell_tests {
+    #[test]
+    fn quotes_the_command_for_the_login_shell() {
+        assert_eq!(super::in_login_shell("herdr"), r#"exec "$SHELL" -lic herdr"#);
+        assert_eq!(
+            super::in_login_shell("tmux new -A -s main"),
+            r#"exec "$SHELL" -lic 'tmux new -A -s main'"#
+        );
+    }
+}

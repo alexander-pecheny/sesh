@@ -155,7 +155,7 @@ async fn drive(config: Config, context: Context) -> Result<(), String> {
             .map_err(|e| format!("requesting agent forwarding: {e}"))?;
     }
     match config.remote_command.as_deref().map(str::trim).filter(|c| !c.is_empty()) {
-        Some(command) => writer.exec(true, command).await,
+        Some(command) => writer.exec(true, crate::session::in_login_shell(command)).await,
         None => writer.request_shell(true).await,
     }
     .map_err(|e| format!("starting the remote command: {e}"))?;
