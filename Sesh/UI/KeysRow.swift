@@ -16,9 +16,9 @@ struct KeysRow: View {
     private var flavour: Catppuccin.Flavour { colorScheme == .dark ? .mocha : .latte }
 
     var body: some View {
-        HStack(spacing: 4) {
+        HStack(spacing: 3) {
             ScrollView(.horizontal, showsIndicators: false) {
-                HStack(spacing: 4) {
+                HStack(spacing: 3) {
                     cap("esc") { send(.key(Keycode.escape)) }
                     ForEach(Mods.all, id: \.rawValue) { modKey($0) }
                     cap("tab") { send(.key(Keycode.tab)) }
@@ -34,27 +34,20 @@ struct KeysRow: View {
                     arrow("chevron.up", "up", Keycode.up)
                     arrow("chevron.right", "right", Keycode.right)
                 }
-                .padding(.horizontal, 4)
+                .padding(.horizontal, 3)
                 .fixedSize(horizontal: true, vertical: false)
             }
-            HStack(spacing: 4) {
+            HStack(spacing: 3) {
                 cap(icon: "doc.on.clipboard", name: "paste") { send(.paste) }
                 Button { input.mode = input.mode.next } label: {
-                    HStack(spacing: 3) {
-                        Image(systemName: input.mode.icon)
-                        Text(input.mode.label).font(.mono(11)).lineLimit(1).fixedSize()
-                    }
-                    .padding(.horizontal, 8)
-                    .frame(height: 32)
-                    .background(flavour(.surface0), in: .rect(cornerRadius: 6))
-                    .foregroundStyle(flavour(.text))
+                    label(Image(systemName: input.mode.icon))
                 }
                 .accessibilityLabel("mode")
                 .accessibilityValue(input.mode.label)
                 cap(icon: "square.and.pencil", name: "editor") { send(.editor) }
                 cap(icon: "keyboard.chevron.compact.down", name: "hide") { send(.hide) }
             }
-            .padding(.trailing, 4)
+            .padding(.trailing, 3)
         }
         .frame(height: Self.height)
         .frame(maxWidth: .infinity)
@@ -68,11 +61,11 @@ struct KeysRow: View {
     }
 
     private func modKey(_ mod: Mods) -> some View {
-        let title = mod == .rightClick ? "rclick" : mod.label
+        let title = mod == .rightClick ? "rclk" : mod.label
         let held = input.locked.contains(mod) ? flavour(.peach)
             : input.armed.contains(mod) ? flavour(.mauve) : nil
         return Button { input.tap(mod) } label: {
-            label(Text(title).font(.mono(13)), background: held ?? flavour(.surface0),
+            label(Text(title).font(.mono(12)), background: held ?? flavour(.surface0),
                   foreground: held == nil ? flavour(.text) : flavour(.crust))
         }
         .accessibilityLabel(mod.label)
@@ -80,7 +73,7 @@ struct KeysRow: View {
     }
 
     private func cap(_ title: String, name: String? = nil, action: @escaping () -> Void) -> some View {
-        Button(action: action) { label(Text(title).font(.mono(13))) }
+        Button(action: action) { label(Text(title).font(.mono(12))) }
             .accessibilityLabel(name ?? title)
     }
 
@@ -99,9 +92,9 @@ struct KeysRow: View {
         _ content: some View, background: Color? = nil, foreground: Color? = nil
     ) -> some View {
         content
-            .frame(minWidth: 30)
+            .frame(minWidth: 26)
             .frame(height: 32)
-            .padding(.horizontal, 4)
+            .padding(.horizontal, 3)
             .background(background ?? flavour(.surface0), in: .rect(cornerRadius: 6))
             .foregroundStyle(foreground ?? flavour(.text))
     }
