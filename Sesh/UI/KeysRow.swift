@@ -16,9 +16,9 @@ struct KeysRow: View {
     private var flavour: Catppuccin.Flavour { colorScheme == .dark ? .mocha : .latte }
 
     var body: some View {
-        HStack(spacing: 6) {
+        HStack(spacing: 4) {
             ScrollView(.horizontal, showsIndicators: false) {
-                HStack(spacing: 6) {
+                HStack(spacing: 4) {
                     cap("esc") { send(.key(Keycode.escape)) }
                     ForEach(Mods.all, id: \.rawValue) { modKey($0) }
                     cap("tab") { send(.key(Keycode.tab)) }
@@ -34,9 +34,9 @@ struct KeysRow: View {
                     arrow("chevron.up", "up", Keycode.up)
                     arrow("chevron.right", "right", Keycode.right)
                 }
-                .padding(.horizontal, 6)
+                .padding(.horizontal, 4)
             }
-            HStack(spacing: 6) {
+            HStack(spacing: 4) {
                 cap(icon: "doc.on.clipboard", name: "paste") { send(.paste) }
                 Button { input.mode = input.mode.next } label: {
                     HStack(spacing: 3) {
@@ -53,7 +53,7 @@ struct KeysRow: View {
                 cap(icon: "square.and.pencil", name: "editor") { send(.editor) }
                 cap(icon: "keyboard.chevron.compact.down", name: "hide") { send(.hide) }
             }
-            .padding(.trailing, 6)
+            .padding(.trailing, 4)
         }
         .frame(height: Self.height)
         .frame(maxWidth: .infinity)
@@ -67,10 +67,11 @@ struct KeysRow: View {
     }
 
     private func modKey(_ mod: Mods) -> some View {
+        let title = mod == .rightClick ? "rclick" : mod.label
         let held = input.locked.contains(mod) ? flavour(.peach)
             : input.armed.contains(mod) ? flavour(.mauve) : nil
         return Button { input.tap(mod) } label: {
-            label(Text(mod.label).font(.mono(13)), background: held ?? flavour(.surface0),
+            label(Text(title).font(.mono(13)), background: held ?? flavour(.surface0),
                   foreground: held == nil ? flavour(.text) : flavour(.crust))
         }
         .accessibilityLabel(mod.label)
@@ -97,9 +98,9 @@ struct KeysRow: View {
         _ content: some View, background: Color? = nil, foreground: Color? = nil
     ) -> some View {
         content
-            .frame(minWidth: 34)
+            .frame(minWidth: 30)
             .frame(height: 32)
-            .padding(.horizontal, 6)
+            .padding(.horizontal, 4)
             .background(background ?? flavour(.surface0), in: .rect(cornerRadius: 6))
             .foregroundStyle(foreground ?? flavour(.text))
     }
