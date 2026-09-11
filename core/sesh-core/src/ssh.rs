@@ -2,39 +2,17 @@
 
 use std::net::SocketAddr;
 use std::path::PathBuf;
-use std::sync::atomic::{AtomicU32, Ordering};
-use std::sync::{Arc, Mutex, OnceLock};
+use std::sync::Arc;
 
 use russh::client::{self, KeyboardInteractiveAuthResponse};
 use russh::keys::ssh_key::{self, HashAlg, PublicKey};
 use russh::keys::PrivateKeyWithHashAlg;
 use russh::{ChannelMsg, MethodKind};
-use tokio::sync::{mpsc, oneshot};
+use tokio::sync::oneshot;
 
 use crate::flags::{self, SshFlags};
 use crate::known_hosts::{self, Verdict};
-
-#[derive(Clone, Copy)]
-pub enum State {
-    Connecting,
-    Authenticating,
-    Connected,
-    Closed,
-    Failed,
-}
-
-pub struct Prompt {
-    pub prompt: String,
-    pub echo: bool,
-}
-
-/// Every method is called from a tokio worker thread.
-pub trait Events: Send + Sync + 'static {
-    fn output(&self, bytes: &[u8]);
-    fn state(&self, state: State, message: &str);
-    fn host_key(&self, fingerprint: &str, previous: Option<&str>);
-    fn auth_prompt(&self, id: u32, name: &str, instruction: &str, prompts: &[Prompt]);
-}
+use crate::session::{ask, Answers, Command, Context, Events, Prompt, Session, State};
 
 #[derive(Default)]
 pub struct Config {
@@ -53,83 +31,12 @@ pub struct Config {
     pub agent_forwarding: bool,
 }
 
-enum Command {
-    Write(Vec<u8>),
-    Resize(u16, u16),
-    Close,
-}
-
-#[derive(Default)]
-struct Answers {
-    host_key: Mutex<Option<oneshot::Sender<bool>>>,
-    prompt: Mutex<Option<(u32, oneshot::Sender<Vec<String>>)>>,
-    next_id: AtomicU32,
-}
-
-pub struct Session {
-    commands: mpsc::UnboundedSender<Command>,
-    answers: Arc<Answers>,
-}
-
-fn runtime() -> &'static tokio::runtime::Runtime {
-    static RUNTIME: OnceLock<tokio::runtime::Runtime> = OnceLock::new();
-    RUNTIME.get_or_init(|| {
-        tokio::runtime::Builder::new_multi_thread()
-            .worker_threads(2)
-            .enable_all()
-            .build()
-            .expect("tokio runtime")
-    })
-}
-
-impl Session {
-    pub fn connect(config: Config, events: Arc<dyn Events>) -> Session {
-        let (commands, rx) = mpsc::unbounded_channel();
-        let answers = Arc::new(Answers::default());
-        let session = Session { commands, answers: answers.clone() };
-        runtime().spawn(async move {
-            match drive(config, &events, &answers, rx).await {
-                Ok(()) => events.state(State::Closed, ""),
-                Err(message) => events.state(State::Failed, &message),
-            }
-        });
-        session
-    }
-
-    pub fn write(&self, bytes: &[u8]) {
-        let _ = self.commands.send(Command::Write(bytes.to_vec()));
-    }
-
-    pub fn resize(&self, cols: u16, rows: u16) {
-        let _ = self.commands.send(Command::Resize(cols, rows));
-    }
-
-    pub fn close(&self) {
-        let _ = self.commands.send(Command::Close);
-    }
-
-    pub fn answer_host_key(&self, accept: bool) {
-        if let Some(tx) = self.answers.host_key.lock().unwrap().take() {
-            let _ = tx.send(accept);
-        }
-    }
-
-    pub fn answer_prompt(&self, id: u32, answers: Option<Vec<String>>) {
-        let mut slot = self.answers.prompt.lock().unwrap();
-        if slot.as_ref().is_some_and(|(pending, _)| *pending == id) {
-            if let (Some((_, tx)), Some(answers)) = (slot.take(), answers) {
-                let _ = tx.send(answers);
-            }
-        }
-    }
-}
-
-struct Handler {
-    events: Arc<dyn Events>,
-    answers: Arc<Answers>,
-    known_hosts: PathBuf,
-    host: String,
-    port: u16,
+pub struct Handler {
+    pub events: Arc<dyn Events>,
+    pub answers: Arc<Answers>,
+    pub known_hosts: PathBuf,
+    pub host: String,
+    pub port: u16,
 }
 
 impl client::Handler for Handler {
@@ -156,12 +63,17 @@ impl client::Handler for Handler {
     }
 }
 
-async fn drive(
-    config: Config,
-    events: &Arc<dyn Events>,
-    answers: &Arc<Answers>,
-    mut commands: mpsc::UnboundedReceiver<Command>,
-) -> Result<(), String> {
+pub fn connect(config: Config, events: Arc<dyn Events>) -> Session {
+    Session::start(events, move |context| drive(config, context))
+}
+
+async fn drive(config: Config, context: Context) -> Result<(), String> {
+    let Context {
+        events,
+        answers,
+        mut commands,
+    } = context;
+    let (events, answers) = (&events, &answers);
     let flags = flags::parse_ssh(&config.extra_flags)?;
     if config.agent_forwarding || flags.agent_forwarding {
         return Err("agent forwarding arrives in phase 5".into());
@@ -186,14 +98,15 @@ async fn drive(
                 handler(&config.host, port)
             })
             .await?
+            .0
         }
         Some(jump) => {
-            let mut hop = connect_any(&client_config, &jump.host, jump.port, &flags, || {
+            let (mut hop, _) = connect_any(&client_config, &jump.host, jump.port, &flags, || {
                 handler(&jump.host, jump.port)
             })
             .await?;
             let hop_user = jump.user.clone().unwrap_or_else(|| user.clone());
-            authenticate(&mut hop, &hop_user, &config, &flags, events, answers).await?;
+            authenticate(&mut hop, &hop_user, &credentials(&config), &flags, events, answers).await?;
             let stream = hop
                 .channel_open_direct_tcpip(&config.host, port as u32, "127.0.0.1", 0)
                 .await
@@ -206,7 +119,7 @@ async fn drive(
         }
     };
 
-    authenticate(&mut handle, &user, &config, &flags, events, answers).await?;
+    authenticate(&mut handle, &user, &credentials(&config), &flags, events, answers).await?;
 
     let channel = handle
         .channel_open_session()
@@ -249,7 +162,7 @@ async fn drive(
     Ok(())
 }
 
-fn client_config(flags: &SshFlags) -> client::Config {
+pub fn client_config(flags: &SshFlags) -> client::Config {
     let mut config = client::Config {
         keepalive_interval: flags.alive_interval.map(std::time::Duration::from_secs),
         nodelay: true,
@@ -271,13 +184,13 @@ fn client_config(flags: &SshFlags) -> client::Config {
 }
 
 /// A name can carry several addresses, and only some of them may be listening.
-async fn connect_any(
+pub async fn connect_any(
     client_config: &Arc<client::Config>,
     host: &str,
     port: u16,
     flags: &SshFlags,
     mut handler: impl FnMut() -> Handler,
-) -> Result<client::Handle<Handler>, String> {
+) -> Result<(client::Handle<Handler>, SocketAddr), String> {
     let addresses: Vec<SocketAddr> = tokio::net::lookup_host((host, port))
         .await
         .map_err(|e| format!("{host}: {e}"))?
@@ -286,17 +199,24 @@ async fn connect_any(
     let mut failure = format!("{host}: no address of the requested family");
     for address in addresses {
         match client::connect(client_config.clone(), address, handler()).await {
-            Ok(handle) => return Ok(handle),
+            Ok(handle) => return Ok((handle, address)),
             Err(error) => failure = format!("{host}: {error}"),
         }
     }
     Err(failure)
 }
 
-async fn authenticate(
+pub struct Credentials<'a> {
+    pub host: &'a str,
+    pub key: Option<&'a str>,
+    pub key_passphrase: Option<&'a str>,
+    pub password: Option<&'a str>,
+}
+
+pub async fn authenticate(
     handle: &mut client::Handle<Handler>,
     user: &str,
-    config: &Config,
+    config: &Credentials<'_>,
     flags: &SshFlags,
     events: &Arc<dyn Events>,
     answers: &Arc<Answers>,
@@ -305,9 +225,9 @@ async fn authenticate(
     let failed = |e: russh::Error| format!("authenticating as {user}: {e}");
     let mut result = handle.authenticate_none(user).await.map_err(failed)?;
 
-    if let Some(pem) = &config.key {
+    if let Some(pem) = config.key {
         if !result.success() && offers(&result, MethodKind::PublicKey) {
-            let key = russh::keys::decode_secret_key(pem, config.key_passphrase.as_deref())
+            let key = russh::keys::decode_secret_key(pem, config.key_passphrase)
                 .map_err(|e| format!("reading the key: {e}"))?;
             let hash = rsa_hash(flags, handle).await;
             result = handle
@@ -316,7 +236,7 @@ async fn authenticate(
                 .map_err(failed)?;
         }
     }
-    if let Some(password) = &config.password {
+    if let Some(password) = config.password {
         if !result.success() && offers(&result, MethodKind::Password) {
             result = handle.authenticate_password(user, password).await.map_err(failed)?;
         }
@@ -383,7 +303,16 @@ async fn keyboard_interactive(
     }
 }
 
-fn prompt(text: &str, echo: bool) -> Prompt {
+fn credentials(config: &Config) -> Credentials<'_> {
+    Credentials {
+        host: &config.host,
+        key: config.key.as_deref(),
+        key_passphrase: config.key_passphrase.as_deref(),
+        password: config.password.as_deref(),
+    }
+}
+
+pub fn prompt(text: &str, echo: bool) -> Prompt {
     Prompt { prompt: text.to_string(), echo }
 }
 
@@ -396,24 +325,7 @@ fn offers(result: &client::AuthResult, method: MethodKind) -> bool {
     }
 }
 
-async fn ask(
-    events: &Arc<dyn Events>,
-    answers: &Arc<Answers>,
-    name: &str,
-    instruction: &str,
-    prompts: Vec<Prompt>,
-) -> Result<Vec<String>, String> {
-    if prompts.is_empty() {
-        return Ok(Vec::new());
-    }
-    let id = answers.next_id.fetch_add(1, Ordering::Relaxed) + 1;
-    let (tx, rx) = oneshot::channel();
-    *answers.prompt.lock().unwrap() = Some((id, tx));
-    events.auth_prompt(id, name, instruction, &prompts);
-    rx.await.map_err(|_| "authentication cancelled".to_string())
-}
-
-async fn rsa_hash(flags: &SshFlags, handle: &client::Handle<Handler>) -> Option<HashAlg> {
+pub async fn rsa_hash(flags: &SshFlags, handle: &client::Handle<Handler>) -> Option<HashAlg> {
     match flags.pubkey_accepted_algorithms.as_deref() {
         Some(list) if list.contains("rsa-sha2-512") => Some(HashAlg::Sha512),
         Some(list) if list.contains("rsa-sha2-256") => Some(HashAlg::Sha256),

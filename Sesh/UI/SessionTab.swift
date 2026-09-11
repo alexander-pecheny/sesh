@@ -48,6 +48,7 @@ struct SessionTab: View {
         switch session.stage {
         case .connecting: "connecting"
         case .authenticating: "authenticating"
+        case .bootstrapping: "starting mosh-server"
         case .connected: "connected"
         case .closed: "closed"
         case .failed: session.message

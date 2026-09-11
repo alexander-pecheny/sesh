@@ -4,7 +4,7 @@ struct Host: Codable, Identifiable, Equatable {
     enum Transport: String, Codable, CaseIterable, Identifiable {
         case ssh, mosh
         var id: String { rawValue }
-        var label: String { self == .ssh ? "SSH" : "mosh (phase 3)" }
+        var label: String { self == .ssh ? "SSH" : "mosh" }
     }
 
     var id = UUID()

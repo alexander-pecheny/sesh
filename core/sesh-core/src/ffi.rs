@@ -12,7 +12,9 @@ use std::path::PathBuf;
 use std::sync::Arc;
 
 use crate::flags::{self, Transport};
-use crate::ssh::{self, Session, State};
+use crate::mosh;
+use crate::session::{self, Prompt, Session, State};
+use crate::ssh;
 
 #[repr(C)]
 #[derive(Clone, Copy)]
@@ -22,6 +24,7 @@ pub enum sesh_state_t {
     SESH_STATE_CONNECTED = 2,
     SESH_STATE_CLOSED = 3,
     SESH_STATE_FAILED = 4,
+    SESH_STATE_BOOTSTRAPPING = 5,
 }
 
 #[repr(C)]
@@ -65,6 +68,23 @@ pub struct sesh_ssh_config_t {
     pub agent_forwarding: bool,
 }
 
+/// Optional fields are NULL when unset. `extra_flags` takes the mosh subset, whose
+/// `--ssh=` value carries the ssh one.
+#[repr(C)]
+pub struct sesh_mosh_config_t {
+    pub host: *const c_char,
+    pub port: u16,
+    pub user: *const c_char,
+    pub password: *const c_char,
+    pub key_pem: *const c_char,
+    pub key_passphrase: *const c_char,
+    pub known_hosts_path: *const c_char,
+    pub remote_command: *const c_char,
+    pub extra_flags: *const c_char,
+    pub cols: u16,
+    pub rows: u16,
+}
+
 pub struct sesh_session_t {
     session: Session,
 }
@@ -86,7 +106,7 @@ impl Drop for Sink {
     }
 }
 
-impl ssh::Events for Sink {
+impl session::Events for Sink {
     fn output(&self, bytes: &[u8]) {
         if let Some(callback) = self.callbacks.on_output {
             callback(self.userdata, bytes.as_ptr(), bytes.len());
@@ -102,6 +122,7 @@ impl ssh::Events for Sink {
             State::Connected => sesh_state_t::SESH_STATE_CONNECTED,
             State::Closed => sesh_state_t::SESH_STATE_CLOSED,
             State::Failed => sesh_state_t::SESH_STATE_FAILED,
+            State::Bootstrapping => sesh_state_t::SESH_STATE_BOOTSTRAPPING,
         };
         callback(self.userdata, state, message.as_ptr());
     }
@@ -117,7 +138,7 @@ impl ssh::Events for Sink {
         );
     }
 
-    fn auth_prompt(&self, id: u32, name: &str, instruction: &str, prompts: &[ssh::Prompt]) {
+    fn auth_prompt(&self, id: u32, name: &str, instruction: &str, prompts: &[Prompt]) {
         let Some(callback) = self.callbacks.on_auth_prompt else { return };
         let name = CString::new(name).unwrap_or_default();
         let instruction = CString::new(instruction).unwrap_or_default();
@@ -160,7 +181,7 @@ pub unsafe extern "C" fn sesh_ssh_connect(
     let Some(config) = config.as_ref() else {
         return std::ptr::null_mut();
     };
-    let session = Session::connect(
+    let session = ssh::connect(
         ssh::Config {
             host: text(config.host).unwrap_or_default(),
             port: if config.port == 0 { 22 } else { config.port },
@@ -175,6 +196,36 @@ pub unsafe extern "C" fn sesh_ssh_connect(
             cols: config.cols,
             rows: config.rows,
             agent_forwarding: config.agent_forwarding,
+        },
+        Arc::new(Sink { callbacks, userdata }),
+    );
+    Box::into_raw(Box::new(sesh_session_t { session }))
+}
+
+/// Starts a mosh Session: `mosh-server` over ssh, then rmosh's client over UDP.
+/// Returns NULL only when `config` is NULL.
+#[no_mangle]
+pub unsafe extern "C" fn sesh_mosh_connect(
+    config: *const sesh_mosh_config_t,
+    callbacks: sesh_callbacks_t,
+    userdata: *mut c_void,
+) -> *mut sesh_session_t {
+    let Some(config) = config.as_ref() else {
+        return std::ptr::null_mut();
+    };
+    let session = mosh::connect(
+        mosh::Config {
+            host: text(config.host).unwrap_or_default(),
+            port: if config.port == 0 { 22 } else { config.port },
+            user: text(config.user).unwrap_or_default(),
+            password: text(config.password),
+            key: text(config.key_pem),
+            key_passphrase: text(config.key_passphrase),
+            known_hosts: text(config.known_hosts_path).map(PathBuf::from).unwrap_or_default(),
+            remote_command: text(config.remote_command),
+            extra_flags: text(config.extra_flags).unwrap_or_default(),
+            cols: config.cols,
+            rows: config.rows,
         },
         Arc::new(Sink { callbacks, userdata }),
     );

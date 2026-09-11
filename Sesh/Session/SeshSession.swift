@@ -19,7 +19,7 @@ final class SeshSession: ObservableObject {
     }
 
     enum Stage: Equatable {
-        case connecting, authenticating, connected, closed, failed
+        case connecting, authenticating, connected, closed, failed, bootstrapping
     }
 
     @Published private(set) var stage = Stage.connecting
@@ -43,22 +43,32 @@ final class SeshSession: ObservableObject {
 
         let key = store.key(host.keyID)
         let strings = CStrings()
-        var config = sesh_ssh_config_t()
-        config.host = strings.make(host.address)
-        config.port = UInt16(host.port)
-        config.user = strings.make(host.user)
-        config.password = strings.make(Keychain.read("password.\(host.id)"))
-        config.key_pem = strings.make(key.flatMap { Keychain.read("key.\($0.id)") })
-        config.key_passphrase = strings.make(key.flatMap { Keychain.read("passphrase.\($0.id)") })
-        config.known_hosts_path = strings.make(store.knownHostsPath)
-        config.term = strings.make("xterm-256color")
-        config.remote_command = strings.make(host.remoteCommand)
-        config.extra_flags = strings.make(host.sshFlags)
-        config.cols = 80
-        config.rows = 24
-        config.agent_forwarding = host.agentForwarding
+        let address = strings.make(host.address)
+        let user = strings.make(host.user)
+        let password = strings.make(Keychain.read("password.\(host.id)"))
+        let pem = strings.make(key.flatMap { Keychain.read("key.\($0.id)") })
+        let passphrase = strings.make(key.flatMap { Keychain.read("passphrase.\($0.id)") })
+        let knownHosts = strings.make(store.knownHostsPath)
+        let command = strings.make(host.remoteCommand)
+        let userdata = Unmanaged.passRetained(bridge).toOpaque()
 
-        handle = sesh_ssh_connect(&config, Bridge.callbacks, Unmanaged.passRetained(bridge).toOpaque())
+        switch host.transport {
+        case .mosh:
+            var config = sesh_mosh_config_t(
+                host: address, port: UInt16(host.port), user: user, password: password,
+                key_pem: pem, key_passphrase: passphrase, known_hosts_path: knownHosts,
+                remote_command: command, extra_flags: strings.make(host.moshFlags),
+                cols: 80, rows: 24)
+            handle = sesh_mosh_connect(&config, Bridge.callbacks, userdata)
+        case .ssh:
+            var config = sesh_ssh_config_t(
+                host: address, port: UInt16(host.port), user: user, password: password,
+                key_pem: pem, key_passphrase: passphrase, known_hosts_path: knownHosts,
+                term: strings.make("xterm-256color"), remote_command: command,
+                extra_flags: strings.make(host.sshFlags), cols: 80, rows: 24,
+                agent_forwarding: host.agentForwarding)
+            handle = sesh_ssh_connect(&config, Bridge.callbacks, userdata)
+        }
 
         terminal.onWrite = { [weak self] data in self?.send(data) }
         terminal.onResize = { [weak self] cols, rows in
@@ -111,6 +121,7 @@ final class SeshSession: ObservableObject {
             case 1: .authenticating
             case 2: .connected
             case 3: .closed
+            case 5: .bootstrapping
             default: .failed
             }
         if !message.isEmpty { self.message = message }

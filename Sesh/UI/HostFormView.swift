@@ -20,7 +20,7 @@ struct HostFormView: View {
                 Section {
                     Picker("Transport", selection: $host.transport) {
                         ForEach(Host.Transport.allCases) { transport in
-                            Text(transport.label).tag(transport).disabled(transport == .mosh)
+                            Text(transport.label).tag(transport)
                         }
                     }
                     Picker("Key", selection: $host.keyID) {

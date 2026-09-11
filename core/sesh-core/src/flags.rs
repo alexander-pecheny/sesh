@@ -13,6 +13,48 @@ pub struct Jump {
     pub port: u16,
 }
 
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum Predict {
+    #[default]
+    Adaptive,
+    Always,
+    Never,
+    Experimental,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum RemoteIp {
+    Local,
+    Remote,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct MoshFlags {
+    pub ssh: SshFlags,
+    pub server: String,
+    pub ports: Option<(u16, u16)>,
+    pub predict: Predict,
+    pub no_init: bool,
+    pub ipv4_only: bool,
+    pub ipv6_only: bool,
+    pub remote_ip: RemoteIp,
+}
+
+impl Default for MoshFlags {
+    fn default() -> Self {
+        MoshFlags {
+            ssh: SshFlags::default(),
+            server: "mosh-server".into(),
+            ports: None,
+            predict: Predict::Adaptive,
+            no_init: false,
+            ipv4_only: false,
+            ipv6_only: false,
+            remote_ip: RemoteIp::Remote,
+        }
+    }
+}
+
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct SshFlags {
     pub port: Option<u16>,
@@ -130,7 +172,8 @@ fn parse_option(option: &str, flags: &mut SshFlags) -> Result<(), String> {
     Ok(())
 }
 
-pub fn parse_mosh(text: &str) -> Result<(), String> {
+pub fn parse_mosh(text: &str) -> Result<MoshFlags, String> {
+    let mut flags = MoshFlags::default();
     let mut args = split(text)?.into_iter();
     while let Some(arg) = args.next() {
         let (key, inline) = match arg.split_once('=') {
@@ -138,15 +181,23 @@ pub fn parse_mosh(text: &str) -> Result<(), String> {
             None => (arg.clone(), None),
         };
         match key.as_str() {
-            "--ssh" => parse_ssh(strip_command(&value(&mut args, inline, "--ssh")?)).map(|_| ())?,
-            "--server" => drop(value(&mut args, inline, "--server")?),
-            "--predict" => match value(&mut args, inline, "--predict")?.as_str() {
-                "adaptive" | "always" | "never" | "experimental" => {}
-                other => return Err(format!("--predict wants adaptive|always|never, got {other:?}")),
-            },
+            "--ssh" => flags.ssh = parse_ssh(strip_command(&value(&mut args, inline, "--ssh")?))?,
+            "--server" => flags.server = value(&mut args, inline, "--server")?,
+            "--predict" => {
+                flags.predict = match value(&mut args, inline, "--predict")?.as_str() {
+                    "adaptive" => Predict::Adaptive,
+                    "always" => Predict::Always,
+                    "never" => Predict::Never,
+                    "experimental" => Predict::Experimental,
+                    other => {
+                        return Err(format!("--predict wants adaptive|always|never, got {other:?}"))
+                    }
+                }
+            }
             "--experimental-remote-ip" => {
-                match value(&mut args, inline, "--experimental-remote-ip")?.as_str() {
-                    "local" | "remote" => {}
+                flags.remote_ip = match value(&mut args, inline, "--experimental-remote-ip")?.as_str() {
+                    "local" => RemoteIp::Local,
+                    "remote" => RemoteIp::Remote,
                     other => {
                         return Err(format!("--experimental-remote-ip wants local|remote, got {other:?}"))
                     }
@@ -154,17 +205,25 @@ pub fn parse_mosh(text: &str) -> Result<(), String> {
             }
             "-p" | "--port" => {
                 let v = value(&mut args, inline, &key)?;
-                let range = v.split_once(':').map_or((v.as_str(), v.as_str()), |(a, b)| (a, b));
-                for part in [range.0, range.1] {
+                let (low, high) = v.split_once(':').unwrap_or((v.as_str(), v.as_str()));
+                let port = |part: &str| {
                     part.parse::<u16>()
-                        .map_err(|_| format!("{key} wants a port or port range, got {v:?}"))?;
-                }
+                        .map_err(|_| format!("{key} wants a port or port range, got {v:?}"))
+                };
+                flags.ports = Some((port(low)?, port(high)?));
             }
-            "-a" | "-n" | "--no-init" | "-4" | "-6" => {}
+            "-a" => flags.predict = Predict::Always,
+            "-n" => flags.predict = Predict::Never,
+            "--no-init" => flags.no_init = true,
+            "-4" => flags.ipv4_only = true,
+            "-6" => flags.ipv6_only = true,
             _ => return Err(format!("unsupported mosh flag: {arg}")),
         }
     }
-    Ok(())
+    if flags.ipv4_only && flags.ipv6_only {
+        return Err("-4 and -6 cannot both be given".into());
+    }
+    Ok(flags)
 }
 
 /// `--ssh` carries a whole command line, so its first word is the program, not a flag.
@@ -178,7 +237,7 @@ fn strip_command(value: &str) -> &str {
 pub fn validate(transport: Transport, text: &str) -> Result<(), String> {
     match transport {
         Transport::Ssh => parse_ssh(text).map(|_| ()),
-        Transport::Mosh => parse_mosh(text),
+        Transport::Mosh => parse_mosh(text).map(|_| ()),
     }
 }
 
@@ -227,10 +286,32 @@ mod tests {
     }
 
     #[test]
+    fn mosh_defaults_are_upstream_defaults() {
+        let f = parse_mosh("").unwrap();
+        assert_eq!(f.server, "mosh-server");
+        assert_eq!(f.predict, Predict::Adaptive);
+        assert_eq!(f.remote_ip, RemoteIp::Remote);
+        assert_eq!(f.ports, None);
+    }
+
+    #[test]
     fn mosh_subset_and_its_rejections() {
-        parse_mosh("-a -n --no-init -4 --predict=adaptive --port 60000:60010 --server=mosh-server").unwrap();
-        parse_mosh("--ssh='ssh -p 2222'").unwrap();
-        assert!(parse_mosh("--ssh='ssh -p 2222'").is_ok());
+        let f = parse_mosh(
+            "--no-init -4 --predict=never --port 60000:60010 --server=/opt/bin/mosh-server \
+             --experimental-remote-ip=local --ssh='ssh -p 2222 -l bob'",
+        )
+        .unwrap();
+        assert_eq!(f.server, "/opt/bin/mosh-server");
+        assert_eq!(f.ports, Some((60000, 60010)));
+        assert_eq!(f.predict, Predict::Never);
+        assert_eq!(f.remote_ip, RemoteIp::Local);
+        assert!(f.no_init && f.ipv4_only);
+        assert_eq!(f.ssh.port, Some(2222));
+        assert_eq!(f.ssh.user.as_deref(), Some("bob"));
+
+        assert_eq!(parse_mosh("-a").unwrap().predict, Predict::Always);
+        assert_eq!(parse_mosh("-n").unwrap().predict, Predict::Never);
+        assert_eq!(parse_mosh("-p 60000").unwrap().ports, Some((60000, 60000)));
         for (text, needle) in [
             ("--bogus", "--bogus"),
             ("--predict=maybe", "--predict"),
