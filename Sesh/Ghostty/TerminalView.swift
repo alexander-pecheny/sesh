@@ -21,6 +21,9 @@ extension Ghostty {
         var onResize: ((UInt16, UInt16) -> Void)?
         var onSelection: ((CGPoint?) -> Void)?
         var onEditor: (() -> Void)?
+        var onTitle: ((String) -> Void)?
+
+        var gridSize: (UInt16, UInt16) { grid }
 
         init(app: ghostty_app_t, input: InputState, fontSize: Double) {
             self.input = input
@@ -45,6 +48,9 @@ extension Ghostty {
 
             surface = ghostty_surface_new(app, &config)
             if surface == nil { logger.critical("ghostty_surface_new failed") }
+            isAccessibilityElement = true
+            accessibilityLabel = "Terminal"
+            accessibilityIdentifier = "terminal"
 
             addGestures()
         }
@@ -98,9 +104,12 @@ extension Ghostty {
             onResize?(size.columns, size.rows)
         }
 
+        // A Tab that is not the visible one keeps its Session and its VT state; only the
+        // renderer is told to stand down.
         override func didMoveToWindow() {
             super.didMoveToWindow()
             updateColorScheme()
+            if let surface { ghostty_surface_set_occlusion(surface, window != nil) }
             if window != nil { focus() }
         }
 
@@ -205,6 +214,14 @@ extension Ghostty {
         // MARK: UIKeyInput
 
         var hasText: Bool { true }
+
+        // Without these iOS turns a shell's quotes and dashes into typographic ones.
+        var autocorrectionType = UITextAutocorrectionType.no
+        var autocapitalizationType = UITextAutocapitalizationType.none
+        var spellCheckingType = UITextSpellCheckingType.no
+        var smartQuotesType = UITextSmartQuotesType.no
+        var smartDashesType = UITextSmartDashesType.no
+        var smartInsertDeleteType = UITextSmartInsertDeleteType.no
 
         func insertText(_ text: String) {
             let mods = input.consume()

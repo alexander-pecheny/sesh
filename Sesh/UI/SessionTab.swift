@@ -4,51 +4,47 @@ import GhosttyKit
 struct SessionTab: View {
     @EnvironmentObject private var store: Store
     @Environment(\.colorScheme) private var colorScheme
-    @StateObject private var session: SeshSession
-    let onClose: () -> Void
-
-    init(host: Host, store: Store, app: ghostty_app_t, onClose: @escaping () -> Void) {
-        _session = StateObject(wrappedValue: SeshSession(host: host, store: store, app: app))
-        self.onClose = onClose
-    }
+    @ObservedObject var session: SeshSession
 
     private var flavour: Catppuccin.Flavour { colorScheme == .dark ? .mocha : .latte }
 
     var body: some View {
-        VStack(spacing: 0) {
-            HStack {
-                Text(session.host.title).font(.mono(14)).foregroundStyle(flavour(.text))
-                Spacer()
-                Text(status).font(.mono(11)).foregroundStyle(flavour(.subtext0))
-                Button {
-                    session.close()
-                    onClose()
-                } label: {
-                    Image(systemName: "xmark.circle.fill").foregroundStyle(flavour(.overlay1))
+        Ghostty.Terminal(view: session.terminal)
+            .overlay(alignment: .topLeading) { copyButton }
+            .overlay { disconnected }
+            .sheet(isPresented: $session.editing) {
+                EditorView { text, enter in session.sendDraft(text, enter: enter) }
+                    .environmentObject(store)
+            }
+            .onChange(of: session.editing) { _, editing in
+                if !editing { _ = session.terminal.becomeFirstResponder() }
+            }
+            .sheet(item: $session.hostKeyQuestion) { question in
+                HostKeySheet(question: question, host: session.host) { session.answerHostKey($0) }
+            }
+            .sheet(item: $session.authQuestion) { question in
+                AuthSheet(question: question, savePassword: $session.savePassword) {
+                    session.answerPrompt(question, $0)
                 }
             }
-            .padding(.horizontal, 12)
-            .padding(.vertical, 8)
-            .background(flavour(.mantle))
+    }
 
-            Ghostty.Terminal(view: session.terminal)
-                .overlay(alignment: .topLeading) { copyButton }
-        }
-        .background(flavour(.base))
-        .sheet(isPresented: $session.editing) {
-            EditorView { text, enter in session.sendDraft(text, enter: enter) }
-                .environmentObject(store)
-        }
-        .onChange(of: session.editing) { _, editing in
-            if !editing { _ = session.terminal.becomeFirstResponder() }
-        }
-        .sheet(item: $session.hostKeyQuestion) { question in
-            HostKeySheet(question: question, host: session.host) { session.answerHostKey($0) }
-        }
-        .sheet(item: $session.authQuestion) { question in
-            AuthSheet(question: question, savePassword: $session.savePassword) {
-                session.answerPrompt(question, $0)
+    @ViewBuilder private var disconnected: some View {
+        if session.ended {
+            VStack(spacing: 12) {
+                Text(session.reason)
+                    .font(.mono(13))
+                    .multilineTextAlignment(.center)
+                    .foregroundStyle(flavour(.text))
+                Button("Reconnect") { session.reconnect() }
+                    .font(.mono(14))
+                    .buttonStyle(.borderedProminent)
+                    .tint(flavour(.mauve))
             }
+            .padding(20)
+            .background(flavour(.mantle), in: .rect(cornerRadius: 12))
+            .overlay(RoundedRectangle(cornerRadius: 12).stroke(flavour(.surface1)))
+            .padding(24)
         }
     }
 
@@ -61,17 +57,6 @@ struct SessionTab: View {
                 .background(flavour(.surface1), in: .capsule)
                 .foregroundStyle(flavour(.text))
                 .offset(x: max(anchor.x - 20, 4), y: max(anchor.y - 44, 4))
-        }
-    }
-
-    private var status: String {
-        switch session.stage {
-        case .connecting: "connecting"
-        case .authenticating: "authenticating"
-        case .bootstrapping: "starting mosh-server"
-        case .connected: "connected"
-        case .closed: "closed"
-        case .failed: session.message
         }
     }
 }

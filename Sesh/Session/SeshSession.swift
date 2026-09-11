@@ -4,7 +4,7 @@ import GhosttyKit
 /// Owns one sesh-core Session and wires it to a libghostty surface. Core callbacks arrive
 /// on tokio threads; `Bridge` is the only thing they touch, and it hops to main.
 @MainActor
-final class SeshSession: ObservableObject {
+final class SeshSession: ObservableObject, Identifiable {
     struct HostKeyQuestion: Identifiable {
         let id = UUID()
         let fingerprint: String
@@ -29,26 +29,63 @@ final class SeshSession: ObservableObject {
     @Published var savePassword = false
     @Published var selection: CGPoint?
     @Published var editing = false
+    @Published private(set) var title: String?
 
+    let id = UUID()
     let host: Host
     let input = InputState()
     let terminal: Ghostty.TerminalView
 
     private let store: Store
     private var handle: OpaquePointer?
-    private let bridge = Bridge()
+    private var bridge = Bridge()
 
     init(host: Host, store: Store, app: ghostty_app_t) {
         self.host = host
         self.store = store
         terminal = Ghostty.TerminalView(app: app, input: input, fontSize: store.fontSize)
-        bridge.terminal = terminal
-        bridge.owner = self
+        savePassword = Keychain.read("password.\(host.id)") != nil
 
         terminal.onWrite = { [weak self] data in self?.send(data) }
         terminal.onResize = { [weak self] cols, rows in self?.resize(cols, rows) }
         terminal.onSelection = { [weak self] anchor in self?.selection = anchor }
         terminal.onEditor = { [weak self] in self?.editing = true }
+        terminal.onTitle = { [weak self] title in self?.title = title }
+    }
+
+    var name: String { title.map { $0.isEmpty ? host.title : $0 } ?? host.title }
+
+    var ended: Bool { stage == .closed || stage == .failed }
+
+    var reason: String {
+        guard stage == .failed else { return "the remote shell exited" }
+        return message.isEmpty ? "the Session failed" : message
+    }
+
+    var status: String {
+        switch stage {
+        case .connecting: "connecting"
+        case .authenticating: "authenticating"
+        case .bootstrapping: "starting mosh-server"
+        case .connected: "connected"
+        case .closed: "closed"
+        case .failed: message.isEmpty ? "failed" : message
+        }
+    }
+
+    /// A fresh Session in the same Tab, on the same surface, so the scrollback survives.
+    func reconnect() {
+        if let handle {
+            sesh_session_close(handle)
+            sesh_session_free(handle)
+            self.handle = nil
+        }
+        hostKeyQuestion = nil
+        authQuestion = nil
+        message = ""
+        stage = .connecting
+        let size = terminal.gridSize
+        connect(size.0, size.1)
     }
 
     /// The first layout is also the first honest grid size, so connecting waits for it and
@@ -59,6 +96,12 @@ final class SeshSession: ObservableObject {
     }
 
     private func connect(_ cols: UInt16, _ rows: UInt16) {
+        bridge.owner = nil
+        bridge.terminal = nil
+        bridge = Bridge()
+        bridge.owner = self
+        bridge.terminal = terminal
+
         let key = store.key(host.keyID)
         let strings = CStrings()
         let address = strings.make(host.address)
@@ -79,14 +122,28 @@ final class SeshSession: ObservableObject {
                 cols: cols, rows: rows)
             handle = sesh_mosh_connect(&config, Bridge.callbacks, userdata)
         case .ssh:
-            var config = sesh_ssh_config_t(
-                host: address, port: UInt16(host.port), user: user, password: password,
-                key_pem: pem, key_passphrase: passphrase, known_hosts_path: knownHosts,
-                term: strings.make("xterm-256color"), remote_command: command,
-                extra_flags: strings.make(host.sshFlags), cols: cols, rows: rows,
-                agent_forwarding: host.agentForwarding)
-            handle = sesh_ssh_connect(&config, Bridge.callbacks, userdata)
+            let held = host.agentForwarding ? store.keys.compactMap(material) : []
+            let pems = held.map { strings.make($0.pem) }
+            let passphrases = held.map { strings.make($0.passphrase) }
+            let flags = strings.make(host.sshFlags)
+            let term = strings.make("xterm-256color")
+            handle = pems.withUnsafeBufferPointer { keys in
+                passphrases.withUnsafeBufferPointer { secrets in
+                    var config = sesh_ssh_config_t(
+                        host: address, port: UInt16(host.port), user: user, password: password,
+                        key_pem: pem, key_passphrase: passphrase, known_hosts_path: knownHosts,
+                        term: term, remote_command: command, extra_flags: flags,
+                        cols: cols, rows: rows, agent_forwarding: host.agentForwarding,
+                        agent_keys: keys.baseAddress, agent_key_passphrases: secrets.baseAddress,
+                        agent_key_count: UInt(held.count))
+                    return sesh_ssh_connect(&config, Bridge.callbacks, userdata)
+                }
+            }
         }
+    }
+
+    private func material(_ key: Key) -> (pem: String, passphrase: String?)? {
+        Keychain.read("key.\(key.id)").map { ($0, Keychain.read("passphrase.\(key.id)")) }
     }
 
     func copySelection() {
@@ -138,6 +195,11 @@ final class SeshSession: ObservableObject {
     }
 
     fileprivate func apply(_ state: UInt32, _ message: String) {
+        guard state != SESH_STATE_PASSWORD_REJECTED.rawValue else {
+            Keychain.write(nil, to: "password.\(host.id)")
+            savePassword = false
+            return
+        }
         stage =
             switch state {
             case 0: .connecting

@@ -27,7 +27,9 @@ struct HostFormView: View {
                         Text("None").tag(UUID?.none)
                         ForEach(store.keys) { Text($0.name).tag(UUID?.some($0.id)) }
                     }
-                    Toggle("Agent forwarding (phase 5)", isOn: $host.agentForwarding).disabled(true)
+                    if host.transport == .ssh {
+                        Toggle("Agent forwarding", isOn: $host.agentForwarding)
+                    }
                 }
                 Section {
                     LabeledField("Extra flags ssh", "-o ServerAliveInterval=30", text: $host.sshFlags)

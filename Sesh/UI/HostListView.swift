@@ -3,7 +3,8 @@ import SwiftUI
 struct HostListView: View {
     @EnvironmentObject private var store: Store
     @Environment(\.colorScheme) private var colorScheme
-    @Binding var connecting: Host?
+    @ObservedObject var tabs: Tabs
+    let open: (Host) -> Void
     @State private var editing: Host?
     @State private var showingKeys = false
     @State private var showingSettings = false
@@ -29,6 +30,13 @@ struct HostListView: View {
                 ToolbarItem(placement: .topBarTrailing) {
                     Button { editing = Host() } label: { Label("Add Host", systemImage: "plus") }
                 }
+                if let session = tabs.sessions.last {
+                    ToolbarItem(placement: .topBarTrailing) {
+                        Button { tabs.show(session) } label: {
+                            Label("Tabs", systemImage: "rectangle.stack")
+                        }
+                    }
+                }
             }
         }
         .tint(flavour(.mauve))
@@ -51,7 +59,7 @@ struct HostListView: View {
     private var list: some View {
         List {
             ForEach(store.hosts) { host in
-                Button { connecting = host } label: {
+                Button { open(host) } label: {
                     VStack(alignment: .leading, spacing: 2) {
                         Text(host.title).font(.mono(16)).foregroundStyle(flavour(.text))
                         Text(host.subtitle).font(.mono(12)).foregroundStyle(flavour(.subtext0))

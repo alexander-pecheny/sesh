@@ -59,6 +59,9 @@ extension Ghostty {
             _ target: ghostty_target_s,
             _ action: ghostty_action_s
         ) -> Bool {
+            if action.tag == GHOSTTY_ACTION_SET_TITLE {
+                return retitle(target, action.action.set_title.title)
+            }
             guard action.tag == GHOSTTY_ACTION_RELOAD_CONFIG, let config = Config.load() else {
                 return false
             }
@@ -72,6 +75,15 @@ extension Ghostty {
             default:
                 return false
             }
+            return true
+        }
+
+        private static func retitle(_ target: ghostty_target_s, _ title: UnsafePointer<CChar>?) -> Bool {
+            guard target.tag == GHOSTTY_TARGET_SURFACE, let title,
+                  let userdata = ghostty_surface_userdata(target.target.surface) else { return false }
+            let view = Unmanaged<TerminalView>.fromOpaque(userdata).takeUnretainedValue()
+            let text = String(cString: title)
+            DispatchQueue.main.async { view.onTitle?(text) }
             return true
         }
 
