@@ -11,8 +11,6 @@ extension Ghostty {
         private var surface: ghostty_surface_t?
         var onWrite: ((Data) -> Void)?
 
-        override class var layerClass: AnyClass { CAMetalLayer.self }
-
         init(app: ghostty_app_t) {
             super.init(frame: CGRect(x: 0, y: 0, width: 800, height: 600))
 
@@ -21,7 +19,7 @@ extension Ghostty {
             config.platform = ghostty_platform_u(ios: ghostty_platform_ios_s(
                 uiview: Unmanaged.passUnretained(self).toOpaque()))
             config.userdata = Unmanaged.passUnretained(self).toOpaque()
-            config.scale_factor = contentScaleFactor
+            config.scale_factor = UITraitCollection.current.displayScale
             config.io_mode = GHOSTTY_SURFACE_IO_MANUAL
             config.io_write_userdata = Unmanaged.passUnretained(self).toOpaque()
             config.io_write_cb = { userdata, bytes, len in
@@ -59,7 +57,15 @@ extension Ghostty {
         override func layoutSubviews() {
             super.layoutSubviews()
             guard let surface else { return }
-            let scale = window?.screen.scale ?? contentScaleFactor
+            let scale = window?.screen.scale ?? traitCollection.displayScale
+
+            // libghostty renders into a sublayer it adds to us but never sizes; it reads
+            // that layer's bounds and contentsScale back as its own drawable size.
+            layer.sublayers?.forEach {
+                $0.frame = layer.bounds
+                $0.contentsScale = scale
+            }
+
             ghostty_surface_set_content_scale(surface, scale, scale)
             ghostty_surface_set_size(
                 surface,

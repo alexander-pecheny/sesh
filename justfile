@@ -2,7 +2,11 @@ udid := "466D3ACF-302A-40B8-8570-719088AF057C"
 bundle_id := "me.pecheny.sesh"
 derived := "build"
 
+# The published prebuilt is macOS-only in practice; see scripts/build-ghosttykit.sh.
 ghosttykit:
+    ./scripts/build-ghosttykit.sh
+
+ghosttykit-prebuilt:
     ./scripts/fetch-ghosttykit.sh
 
 gen: ghosttykit

@@ -15,6 +15,8 @@ if [ -f "$OUT/.ghostty_sha" ] && [ "$(cat "$OUT/.ghostty_sha")" = "$SHA" ]; then
   exit 0
 fi
 
+mkdir -p "$ROOT/Frameworks"
+
 tmp="$(mktemp -d)"
 trap 'rm -rf "$tmp"' EXIT
 

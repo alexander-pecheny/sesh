@@ -8,8 +8,11 @@ SSH and mosh both live in one Rust core behind a C ABI. See `CONTEXT.md` for the
 vocabulary, `docs/PLAN.md` for the plan and `docs/adr/` for the decisions.
 
 Build with `just build` and install on the booted simulator with `just run`; both need
-`xcodegen`, `just` and Xcode 26.3. `just ghosttykit` downloads the pinned
-`GhosttyKit.xcframework` from the cmux fork's releases and verifies it against
-`scripts/ghosttykit.sha256`; `just gen` regenerates the Xcode project from `project.yml`,
-which is the only place project settings are edited. Bundled JetBrains Mono is under the
-SIL Open Font License, copied into `Resources/Fonts` with its licence.
+`xcodegen`, `just`, `zig` and Xcode 26.3. `just ghosttykit` builds the pinned
+`GhosttyKit.xcframework` from the cmux fork with `patches/libxev-ios-async.patch`, which
+restores libxev's cross-thread wakeup on iOS; without it libghostty's renderer and IO
+threads never wake. `just ghosttykit-prebuilt` fetches the published build instead and
+verifies it against `scripts/ghosttykit.sha256`, but that one is unusable on iOS. `just
+gen` regenerates the Xcode project from `project.yml`, which is the only place project
+settings are edited. Bundled JetBrains Mono is under the SIL Open Font License, copied
+into `Resources/Fonts` with its licence.
