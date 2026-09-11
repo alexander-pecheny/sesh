@@ -13,6 +13,7 @@ mosh-client = { path = "../../vendor/rmosh/crates/mosh-client" }
 mosh-sys = { path = "../../vendor/rmosh/crates/mosh-sys" }
 russh = { version = "0.54", default-features = false, features = ["flate2", "ring", "rsa"] }
 tokio = { version = "1", features = ["rt-multi-thread", "macros", "net", "io-util", "sync", "time"] }
+futures = "0.3"
 
 [dev-dependencies]
 tempfile = "3"

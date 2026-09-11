@@ -13,6 +13,8 @@ pub enum State {
     Closed,
     Failed,
     Bootstrapping,
+    /// The saved password was refused; the app forgets it and waits for the prompt.
+    PasswordRejected,
 }
 
 pub struct Prompt {

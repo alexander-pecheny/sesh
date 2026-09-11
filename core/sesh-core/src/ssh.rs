@@ -7,9 +7,10 @@ use std::sync::Arc;
 use russh::client::{self, KeyboardInteractiveAuthResponse};
 use russh::keys::ssh_key::{self, HashAlg, PublicKey};
 use russh::keys::PrivateKeyWithHashAlg;
-use russh::{ChannelMsg, MethodKind};
+use russh::{Channel, ChannelMsg, MethodKind};
 use tokio::sync::oneshot;
 
+use crate::agent::{self, Agent};
 use crate::flags::{self, SshFlags};
 use crate::known_hosts::{self, Verdict};
 use crate::session::{ask, Answers, Command, Context, Events, Prompt, Session, State};
@@ -29,6 +30,7 @@ pub struct Config {
     pub cols: u16,
     pub rows: u16,
     pub agent_forwarding: bool,
+    pub agent_keys: Vec<(String, Option<String>)>,
 }
 
 pub struct Handler {
@@ -37,10 +39,22 @@ pub struct Handler {
     pub known_hosts: PathBuf,
     pub host: String,
     pub port: u16,
+    pub agent: Option<Agent>,
 }
 
 impl client::Handler for Handler {
     type Error = russh::Error;
+
+    async fn server_channel_open_agent_forward(
+        &mut self,
+        channel: Channel<client::Msg>,
+        _session: &mut client::Session,
+    ) -> Result<(), Self::Error> {
+        if let Some(agent) = &self.agent {
+            agent.attach(channel.into_stream());
+        }
+        Ok(())
+    }
 
     async fn check_server_key(&mut self, key: &PublicKey) -> Result<bool, Self::Error> {
         let previous = match known_hosts::check(&self.known_hosts, &self.host, self.port, key) {
@@ -75,9 +89,11 @@ async fn drive(config: Config, context: Context) -> Result<(), String> {
     } = context;
     let (events, answers) = (&events, &answers);
     let flags = flags::parse_ssh(&config.extra_flags)?;
-    if config.agent_forwarding || flags.agent_forwarding {
-        return Err("agent forwarding arrives in phase 5".into());
-    }
+    let forwarding = config.agent_forwarding || flags.agent_forwarding;
+    let agent = match forwarding {
+        false => None,
+        true => Some(agent::start(agent::decode(&config.agent_keys)?).await?),
+    };
     let user = flags.user.clone().unwrap_or_else(|| config.user.clone());
     let port = flags.port.unwrap_or(config.port);
 
@@ -89,6 +105,7 @@ async fn drive(config: Config, context: Context) -> Result<(), String> {
         known_hosts: config.known_hosts.clone(),
         host: host.to_string(),
         port,
+        agent: agent.clone(),
     };
 
     let mut _jump = None;
@@ -131,6 +148,12 @@ async fn drive(config: Config, context: Context) -> Result<(), String> {
         .request_pty(true, &config.term, cols, rows, 0, 0, &[])
         .await
         .map_err(|e| format!("requesting a pty: {e}"))?;
+    if forwarding {
+        writer
+            .agent_forward(true)
+            .await
+            .map_err(|e| format!("requesting agent forwarding: {e}"))?;
+    }
     match config.remote_command.as_deref().map(str::trim).filter(|c| !c.is_empty()) {
         Some(command) => writer.exec(true, command).await,
         None => writer.request_shell(true).await,
@@ -239,6 +262,9 @@ pub async fn authenticate(
     if let Some(password) = config.password {
         if !result.success() && offers(&result, MethodKind::Password) {
             result = handle.authenticate_password(user, password).await.map_err(failed)?;
+            if !result.success() {
+                events.state(State::PasswordRejected, "");
+            }
         }
     }
 
@@ -331,5 +357,129 @@ pub async fn rsa_hash(flags: &SshFlags, handle: &client::Handle<Handler>) -> Opt
         Some(list) if list.contains("rsa-sha2-256") => Some(HashAlg::Sha256),
         Some(_) => None,
         None => handle.best_supported_rsa_hash().await.ok().flatten().flatten(),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::sync::Mutex;
+
+    use russh::keys::ssh_key::rand_core::OsRng;
+    use russh::keys::PrivateKey;
+    use russh::server;
+
+    use super::*;
+
+    struct Remote {
+        password: String,
+    }
+
+    impl server::Handler for Remote {
+        type Error = russh::Error;
+
+        async fn auth_password(&mut self, _: &str, password: &str) -> Result<server::Auth, Self::Error> {
+            Ok(if password == self.password {
+                server::Auth::Accept
+            } else {
+                // russh's server drops a method once it fails; OpenSSH keeps offering it.
+                server::Auth::Reject {
+                    proceed_with_methods: Some([MethodKind::Password][..].into()),
+                    partial_success: false,
+                }
+            })
+        }
+    }
+
+    #[derive(Default)]
+    struct Watcher {
+        answers: Mutex<Option<Arc<Answers>>>,
+        states: Mutex<Vec<&'static str>>,
+        typed: Option<String>,
+    }
+
+    impl Events for Watcher {
+        fn output(&self, _: &[u8]) {}
+
+        fn state(&self, state: State, _: &str) {
+            if let State::PasswordRejected = state {
+                self.states.lock().unwrap().push("rejected");
+            }
+        }
+
+        fn host_key(&self, _: &str, _: Option<&str>) {
+            let answers = self.answers.lock().unwrap().clone().unwrap();
+            let sender = answers.host_key.lock().unwrap().take().unwrap();
+            let _ = sender.send(true);
+        }
+
+        fn auth_prompt(&self, id: u32, _: &str, _: &str, _: &[Prompt]) {
+            self.states.lock().unwrap().push("prompted");
+            let answers = self.answers.lock().unwrap().clone().unwrap();
+            let typed = self.typed.clone().expect("prompted with nothing to type");
+            let mut slot = answers.prompt.lock().unwrap();
+            if let Some((pending, sender)) = slot.take() {
+                assert_eq!(pending, id);
+                let _ = sender.send(vec![typed]);
+            }
+        }
+    }
+
+    async fn run(watcher: Arc<Watcher>, saved: Option<&str>, accepted: &str) -> Result<(), String> {
+        let config = Arc::new(server::Config {
+            keys: vec![PrivateKey::random(&mut OsRng, russh::keys::Algorithm::Ed25519).unwrap()],
+            methods: [MethodKind::Password][..].into(),
+            ..Default::default()
+        });
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let address = listener.local_addr().unwrap();
+        let password = accepted.to_string();
+        tokio::spawn(async move {
+            let (socket, _) = listener.accept().await.unwrap();
+            let _ = server::run_stream(config, socket, Remote { password }).await;
+        });
+
+        let answers = Arc::new(Answers::default());
+        *watcher.answers.lock().unwrap() = Some(answers.clone());
+        let events: Arc<dyn Events> = watcher;
+        let known_hosts = tempfile::NamedTempFile::new().unwrap();
+        let flags = SshFlags::default();
+        let mut handle = client::connect(
+            Arc::new(client_config(&flags)),
+            address,
+            Handler {
+                events: events.clone(),
+                answers: answers.clone(),
+                known_hosts: known_hosts.path().to_path_buf(),
+                host: "127.0.0.1".into(),
+                port: address.port(),
+                agent: None,
+            },
+        )
+        .await
+        .unwrap();
+        let credentials = Credentials {
+            host: "127.0.0.1",
+            key: None,
+            key_passphrase: None,
+            password: saved,
+        };
+        authenticate(&mut handle, "tester", &credentials, &flags, &events, &answers).await
+    }
+
+    #[tokio::test]
+    async fn a_saved_password_is_tried_before_the_user_is_asked() {
+        let watcher = Arc::new(Watcher::default());
+        run(watcher.clone(), Some("saved"), "saved").await.unwrap();
+        assert!(watcher.states.lock().unwrap().is_empty());
+    }
+
+    #[tokio::test]
+    async fn a_refused_saved_password_is_reported_and_then_asked_for() {
+        let watcher = Arc::new(Watcher {
+            typed: Some("typed".into()),
+            ..Default::default()
+        });
+        run(watcher.clone(), Some("wrong"), "typed").await.unwrap();
+        assert_eq!(*watcher.states.lock().unwrap(), ["rejected", "prompted"]);
     }
 }

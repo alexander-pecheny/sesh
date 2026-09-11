@@ -65,6 +65,7 @@ async fn drive(config: Config, context: Context) -> Result<(), String> {
             known_hosts: config.known_hosts.clone(),
             host: config.host.clone(),
             port,
+            agent: None,
         })
         .await?;
     let credentials = Credentials {

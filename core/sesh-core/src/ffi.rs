@@ -25,6 +25,7 @@ pub enum sesh_state_t {
     SESH_STATE_CLOSED = 3,
     SESH_STATE_FAILED = 4,
     SESH_STATE_BOOTSTRAPPING = 5,
+    SESH_STATE_PASSWORD_REJECTED = 6,
 }
 
 #[repr(C)]
@@ -66,6 +67,11 @@ pub struct sesh_ssh_config_t {
     pub cols: u16,
     pub rows: u16,
     pub agent_forwarding: bool,
+    /// PEM Keys the agent serves, with a matching passphrase array whose entries may be
+    /// NULL. Read only while `sesh_ssh_connect` runs.
+    pub agent_keys: *const *const c_char,
+    pub agent_key_passphrases: *const *const c_char,
+    pub agent_key_count: usize,
 }
 
 /// Optional fields are NULL when unset. `extra_flags` takes the mosh subset, whose
@@ -123,6 +129,7 @@ impl session::Events for Sink {
             State::Closed => sesh_state_t::SESH_STATE_CLOSED,
             State::Failed => sesh_state_t::SESH_STATE_FAILED,
             State::Bootstrapping => sesh_state_t::SESH_STATE_BOOTSTRAPPING,
+            State::PasswordRejected => sesh_state_t::SESH_STATE_PASSWORD_REJECTED,
         };
         callback(self.userdata, state, message.as_ptr());
     }
@@ -166,6 +173,24 @@ unsafe fn text(pointer: *const c_char) -> Option<String> {
         .filter(|s| !s.is_empty())
 }
 
+unsafe fn keys(
+    pems: *const *const c_char,
+    passphrases: *const *const c_char,
+    count: usize,
+) -> Vec<(String, Option<String>)> {
+    if pems.is_null() || count == 0 {
+        return Vec::new();
+    }
+    (0..count)
+        .filter_map(|i| {
+            let passphrase = (!passphrases.is_null())
+                .then(|| text(*passphrases.add(i)))
+                .flatten();
+            text(*pems.add(i)).map(|pem| (pem, passphrase))
+        })
+        .collect()
+}
+
 fn raw(text: String) -> *mut c_char {
     CString::new(text).unwrap_or_default().into_raw()
 }
@@ -196,6 +221,7 @@ pub unsafe extern "C" fn sesh_ssh_connect(
             cols: config.cols,
             rows: config.rows,
             agent_forwarding: config.agent_forwarding,
+            agent_keys: keys(config.agent_keys, config.agent_key_passphrases, config.agent_key_count),
         },
         Arc::new(Sink { callbacks, userdata }),
     );
