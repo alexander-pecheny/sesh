@@ -28,6 +28,8 @@ targets:
     dependencies:
       - framework: Frameworks/GhosttyKit.xcframework
         embed: false
+      - framework: Frameworks/SeshCore.xcframework
+        embed: false
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: me.pecheny.sesh

@@ -1,0 +1,21 @@
+language = "C"
+pragma_once = true
+documentation = true
+documentation_style = "c99"
+cpp_compat = true
+sys_includes = ["stdbool.h", "stddef.h", "stdint.h"]
+no_includes = true
+header = """
+// Generated from core/sesh-core by cbindgen. Do not edit.
+//
+// Threading: every callback in sesh_callbacks_t is invoked from a tokio worker thread,
+// never from the thread that called sesh_ssh_connect. Pointers passed to a callback are
+// borrowed for the duration of the call; copy what you keep. Answer on_host_key with
+// sesh_session_answer_host_key and on_auth_prompt with sesh_session_answer_prompt; the
+// Session waits until you do. All functions here are safe to call from any thread."""
+
+[export]
+include = ["sesh_session_t"]
+
+[enum]
+prefix_with_name = false

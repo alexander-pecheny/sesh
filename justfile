@@ -9,7 +9,7 @@ ghosttykit:
 ghosttykit-prebuilt:
     ./scripts/fetch-ghosttykit.sh
 
-gen: ghosttykit
+gen: ghosttykit core
     xcodegen generate --quiet
 
 build: gen
@@ -22,10 +22,16 @@ run: build
     xcrun simctl launch {{udid}} {{bundle_id}}
 
 core:
-    @echo "phase 2+"
+    ./scripts/build-core.sh
+
+core-test:
+    cd core && cargo test
 
 sshd:
-    @echo "phase 2+"
+    ./scripts/local-sshd.sh
+
+sshd-stop:
+    ./scripts/local-sshd.sh stop
 
 e2e:
-    @echo "phase 2+"
+    @echo "phase 5"
