@@ -33,5 +33,5 @@ sshd:
 sshd-stop:
     ./scripts/local-sshd.sh stop
 
-e2e:
-    @echo "phase 5"
+e2e: build
+    uv run scripts/e2e.py
