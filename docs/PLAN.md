@@ -97,17 +97,22 @@ is the spec for the implementing agents. Decisions here were settled with the ow
   long press does nothing. Click: same taps and drags, but the on-screen keyboard stays
   down so the user can work a TUI by touch; the Keys row stays visible. Select:
   one-finger drag selects with a floating Copy button, tap clears, two-finger drag
-  scrolls, keyboard down, the program sees no mouse events. A hardware keyboard works in
-  every mode. The last mode is remembered.
+  scrolls, keyboard down, the program sees no mouse events and a tap only clears the
+  selection. A hardware keyboard works in every mode. The last mode is remembered.
+- The Keys row is a normal view under the terminal, not the keyboard's accessory view:
+  as an accessory it overlapped the last row, sat in the home-indicator gesture zone
+  when the keyboard was down, and made the grid flap on a real phone.
 - Editor: a sheet listing Drafts, first line as title, newest edit first, swipe to
   delete, tap to edit. Editing screen: system proportional font, Send, Send + Enter,
   Cancel. Send uses bracketed paste when the program enabled it; Send + Enter appends
   `\r`. Sending leaves the Draft in place. Drafts persist as JSON.
 - Theme: ghostty config `theme = light:Catppuccin Latte,dark:Catppuccin Mocha`. Chrome,
   keys row and Editor use the same palettes, hard-coded from catppuccin's hex values,
-  following the system appearance. JetBrains Mono for the terminal and all chrome; the
-  Editor's text view is the one system-font exception. Font size is a setting, default
+  following the system appearance. JetBrainsMono Nerd Font for the terminal; the chrome
+  uses the system font (changed 12 September 2026, it was mono before). Font size is a setting, default
   12pt; pinch-to-zoom changes it for that Tab only.
+- Clipboard: OSC 52 writes set the phone's clipboard (`clipboard-write = allow`);
+  reads are denied.
 - Platform: iOS 18 minimum, universal iPhone and iPad. SwiftUI for lists, forms, Editor,
   Tab bar. A UIKit `UIView` we own for the terminal: `CAMetalLayer`, `UIKeyInput` (and
   `UITextInput` only if the keyboard needs it), hardware key events via

@@ -11,15 +11,15 @@ struct KeysView: View {
             List {
                 ForEach(store.keys) { key in
                     VStack(alignment: .leading, spacing: 4) {
-                        Text(key.name).font(.mono(15))
-                        Text(key.publicKey).font(.mono(10)).lineLimit(2).foregroundStyle(.secondary)
+                        Text(key.name).font(.ui(15))
+                        Text(key.publicKey).font(.ui(10)).lineLimit(2).foregroundStyle(.secondary)
                         Button("Copy public key") { UIPasteboard.general.string = key.publicKey }
-                            .font(.mono(12))
+                            .font(.ui(12))
                     }
                     .swipeActions { Button("Delete", role: .destructive) { store.remove(key) } }
                 }
                 if store.keys.isEmpty {
-                    Text("No Keys yet").font(.mono(14)).foregroundStyle(.secondary)
+                    Text("No Keys yet").font(.ui(14)).foregroundStyle(.secondary)
                 }
             }
             .navigationTitle("Keys")
@@ -50,11 +50,11 @@ struct KeyImportView: View {
                 Section {
                     LabeledField("Name", "id_ed25519", text: $name)
                     LabeledField("Passphrase", "none", text: $passphrase)
-                    Button("Choose a file") { picking = true }.font(.mono(14))
+                    Button("Choose a file") { picking = true }.font(.ui(14))
                 }
                 Section {
                     TextEditor(text: $material)
-                        .font(.mono(11))
+                        .font(.ui(11))
                         .frame(minHeight: 160)
                         .autocorrectionDisabled()
                         .textInputAutocapitalization(.never)
@@ -64,7 +64,7 @@ struct KeyImportView: View {
                     if let error { Text(error).foregroundStyle(.red) }
                 }
             }
-            .font(.mono(14))
+            .font(.ui(14))
             .navigationTitle("Import Key")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {

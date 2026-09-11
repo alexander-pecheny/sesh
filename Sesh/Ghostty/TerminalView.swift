@@ -8,9 +8,6 @@ extension Ghostty {
     final class TerminalView: UIView, UIKeyInput, UIGestureRecognizerDelegate {
         private var surface: ghostty_surface_t?
         private var grid: (UInt16, UInt16) = (0, 0)
-        private var writes = 0
-        private var writesAtPress = 0
-        private var shiftBypass = false
         private var panAnchor = CGPoint.zero
         private var touchStart = CGPoint.zero
         private var pinchBase = 0.0
@@ -73,10 +70,7 @@ extension Ghostty {
             }
         }
 
-        private func wrote(_ data: Data) {
-            writes += 1
-            onWrite?(data)
-        }
+        private func wrote(_ data: Data) { onWrite?(data) }
 
         // MARK: UIView
 
@@ -131,27 +125,11 @@ extension Ghostty {
 
         override var canBecomeFirstResponder: Bool { true }
 
-        override var inputAccessoryView: UIView? { accessory }
-
-        // Click and Select put the keyboard away without resigning, so the keys row stays.
+        // Click and Select put the keyboard away without resigning, so hardware keys
+        // still arrive.
         override var inputView: UIView? { input.mode.keyboard ? nil : blankKeyboard }
 
         private let blankKeyboard = UIView(frame: .zero)
-
-        private lazy var accessory: UIView = {
-            let row = KeysRow(input: input) { [weak self] in self?.perform($0) }
-            let host = UIHostingController(rootView: row)
-            keysRow = host
-            host.view.backgroundColor = .clear
-            host.view.frame = CGRect(x: 0, y: 0, width: 0, height: KeysRow.height)
-            host.view.autoresizingMask = [.flexibleWidth, .flexibleHeight]
-            let container = UIView(frame: host.view.frame)
-            container.autoresizingMask = .flexibleWidth
-            container.addSubview(host.view)
-            return container
-        }()
-
-        private var keysRow: UIViewController?
 
         @objc @discardableResult private func focus() -> Bool { becomeFirstResponder() }
 
@@ -167,7 +145,7 @@ extension Ghostty {
             return resigned
         }
 
-        private func perform(_ action: KeysRow.Action) {
+        func perform(_ action: KeysRow.Action) {
             switch action {
             case .key(let code): send(keycode: code, mods: input.consume())
             case .character(let character): send(character: character, extra: input.consume())
@@ -287,8 +265,6 @@ extension Ghostty {
             shouldRecognizeSimultaneouslyWith other: UIGestureRecognizer
         ) -> Bool { true }
 
-        private var selectMods: Mods { shiftBypass ? .shift : [] }
-
         @objc private func onTap(_ recogniser: UITapGestureRecognizer) {
             focus()
             let point = recogniser.location(in: self)
@@ -298,7 +274,7 @@ extension Ghostty {
                       at: point, mods: mods.subtracting(.rightClick))
                 return
             }
-            click(GHOSTTY_MOUSE_LEFT, at: point, mods: selectMods)
+            if let surface { _ = ghostty_surface_clear_selection(surface) }
             onSelection?(nil)
         }
 
@@ -308,19 +284,18 @@ extension Ghostty {
                 return
             }
             guard let surface else { return }
-            let mods = selectMods.ghostty
+            // Shift keeps a select-mode drag local: ghostty never reports it to the program.
+            let mods = Mods.shift.ghostty
             var point = recogniser.location(in: self)
             switch recogniser.state {
             case .began:
                 point = touchStart
-                writesAtPress = writes
                 ghostty_surface_mouse_pos(surface, point.x, point.y, mods)
                 _ = ghostty_surface_mouse_button(surface, GHOSTTY_MOUSE_PRESS, GHOSTTY_MOUSE_LEFT, mods)
             case .changed:
                 ghostty_surface_mouse_pos(surface, point.x, point.y, mods)
             default:
                 _ = ghostty_surface_mouse_button(surface, GHOSTTY_MOUSE_RELEASE, GHOSTTY_MOUSE_LEFT, mods)
-                if writes != writesAtPress { shiftBypass = true }
                 onSelection?(selection()?.anchor)
             }
         }

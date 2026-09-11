@@ -62,8 +62,8 @@ Like Type mode but the on-screen keyboard stays down, for working a TUI by touch
 _Avoid_: tap mode, navigation mode
 
 **Select mode**:
-The Touch mode in which a drag selects text to copy, the keyboard stays down, and the
-remote program sees no mouse events at all.
+The Touch mode in which a drag selects text to copy, a tap clears the selection, the
+keyboard stays down, and the remote program sees no mouse events at all.
 _Avoid_: copy mode, selection mode
 
 **Keys row**:

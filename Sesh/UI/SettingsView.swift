@@ -8,11 +8,11 @@ struct SettingsView: View {
         NavigationStack {
             Form {
                 Stepper(value: $store.fontSize, in: 6...32, step: 1) {
-                    LabeledContent("Font size") { Text("\(Int(store.fontSize))").font(.mono(14)) }
+                    LabeledContent("Font size") { Text("\(Int(store.fontSize))").font(.ui(14)) }
                 }
                 .accessibilityLabel("font size")
                 Text("New Tabs use this size. Pinch inside a Tab to change that Tab only.")
-                    .font(.mono(12))
+                    .font(.ui(12))
             }
             .navigationTitle("Settings")
             .navigationBarTitleDisplayMode(.inline)

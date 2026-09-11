@@ -15,9 +15,9 @@ struct EditorView: View {
                 ForEach(store.drafts) { draft in
                     Button { editing = draft } label: {
                         VStack(alignment: .leading, spacing: 2) {
-                            Text(draft.title).font(.mono(15)).foregroundStyle(flavour(.text))
+                            Text(draft.title).font(.ui(15)).foregroundStyle(flavour(.text))
                             Text(draft.edited.formatted(date: .abbreviated, time: .shortened))
-                                .font(.mono(11)).foregroundStyle(flavour(.subtext0))
+                                .font(.ui(11)).foregroundStyle(flavour(.subtext0))
                         }
                     }
                     .listRowBackground(flavour(.mantle))
@@ -26,7 +26,7 @@ struct EditorView: View {
             }
             .scrollContentBackground(.hidden)
             .background(flavour(.base))
-            .overlay { if store.drafts.isEmpty { Text("No Drafts yet").font(.mono(15)) } }
+            .overlay { if store.drafts.isEmpty { Text("No Drafts yet").font(.ui(15)) } }
             .navigationTitle("Editor")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {

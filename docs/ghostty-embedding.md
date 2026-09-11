@@ -51,3 +51,9 @@
   `smartQuotesType`, `smartDashesType`, `smartInsertDeleteType`, `autocorrectionType`,
   `spellCheckingType` and `autocapitalizationType` off, or `printf '\033]0;x\007'` reaches
   the shell with typographic quotes.
+- `ghostty_surface_clear_selection` is exported by the fork but absent from `ghostty.h`;
+  the bridging header declares it by symbol, like `free_text`.
+- Do not host a keys row as `inputAccessoryView` together with a zero-height
+  `inputView`: on a device the keyboard frame flapped and the terminal grid with it.
+  A blank `inputView` alone is fine for keeping first responder without a keyboard.
+- OSC 52: implement `write_clipboard_cb`; contents arrive as (mime, data) pairs.

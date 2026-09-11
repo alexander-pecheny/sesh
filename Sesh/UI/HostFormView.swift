@@ -39,7 +39,7 @@ struct HostFormView: View {
                     if let error { Text(error).foregroundStyle(.red) }
                 }
             }
-            .font(.mono(14))
+            .font(.ui(14))
             .navigationTitle(host.name.isEmpty ? "New Host" : host.name)
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {

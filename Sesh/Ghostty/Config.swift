@@ -7,6 +7,8 @@ extension Ghostty {
             theme = light:Catppuccin Latte,dark:Catppuccin Mocha
             font-family = JetBrainsMono NF
             font-size = 12
+            clipboard-read = deny
+            clipboard-write = allow
             """
 
         // iOS has no XDG config dir, so we hand libghostty a file we write ourselves.

@@ -9,9 +9,12 @@ struct SessionTab: View {
     private var flavour: Catppuccin.Flavour { colorScheme == .dark ? .mocha : .latte }
 
     var body: some View {
-        Ghostty.Terminal(view: session.terminal)
-            .overlay(alignment: .topLeading) { copyButton }
-            .overlay { disconnected }
+        VStack(spacing: 0) {
+            Ghostty.Terminal(view: session.terminal)
+                .overlay(alignment: .topLeading) { copyButton }
+                .overlay { disconnected }
+            KeysRow(input: session.terminal.input) { session.terminal.perform($0) }
+        }
             .sheet(isPresented: $session.editing) {
                 EditorView { text, enter in session.sendDraft(text, enter: enter) }
                     .environmentObject(store)
@@ -33,11 +36,11 @@ struct SessionTab: View {
         if session.ended {
             VStack(spacing: 12) {
                 Text(session.reason)
-                    .font(.mono(13))
+                    .font(.ui(13))
                     .multilineTextAlignment(.center)
                     .foregroundStyle(flavour(.text))
                 Button("Reconnect") { session.reconnect() }
-                    .font(.mono(14))
+                    .font(.ui(14))
                     .buttonStyle(.borderedProminent)
                     .tint(flavour(.mauve))
             }
@@ -51,7 +54,7 @@ struct SessionTab: View {
     @ViewBuilder private var copyButton: some View {
         if let anchor = session.selection {
             Button("Copy") { session.copySelection() }
-                .font(.mono(13))
+                .font(.ui(13))
                 .padding(.horizontal, 12)
                 .padding(.vertical, 6)
                 .background(flavour(.surface1), in: .capsule)
@@ -73,13 +76,13 @@ struct HostKeySheet: View {
                     Text(question.previous == nil
                          ? "\(host.address) has not been seen before. Accept its key?"
                          : "The key for \(host.address) is not the one recorded. Someone may be listening.")
-                        .font(.mono(13))
+                        .font(.ui(13))
                 }
                 if let previous = question.previous {
-                    LabeledContent("Recorded") { Text(previous).font(.mono(11)) }
+                    LabeledContent("Recorded") { Text(previous).font(.ui(11)) }
                 }
                 LabeledContent(question.previous == nil ? "Fingerprint" : "Offered") {
-                    Text(question.fingerprint).font(.mono(11))
+                    Text(question.fingerprint).font(.ui(11))
                 }
             }
             .navigationTitle("Host key")
@@ -112,7 +115,7 @@ struct AuthSheet: View {
         NavigationStack {
             Form {
                 if !question.instruction.isEmpty {
-                    Text(question.instruction).font(.mono(13))
+                    Text(question.instruction).font(.ui(13))
                 }
                 ForEach(Array(question.prompts.enumerated()), id: \.offset) { index, prompt in
                     if prompt.echo {
@@ -123,7 +126,7 @@ struct AuthSheet: View {
                 }
                 Toggle("Save password", isOn: $savePassword)
             }
-            .font(.mono(14))
+            .font(.ui(14))
             .textInputAutocapitalization(.never)
             .navigationTitle(question.title.isEmpty ? "Authentication" : question.title)
             .navigationBarTitleDisplayMode(.inline)

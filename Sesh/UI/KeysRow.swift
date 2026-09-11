@@ -79,7 +79,7 @@ struct KeysRow: View {
         let held = input.locked.contains(mod) ? flavour(.peach)
             : input.armed.contains(mod) ? flavour(.mauve) : nil
         return Button { input.tap(mod) } label: {
-            label(Text(title).font(.mono(12)), background: held ?? flavour(.surface0),
+            label(Text(title).font(.ui(12)), background: held ?? flavour(.surface0),
                   foreground: held == nil ? flavour(.text) : flavour(.crust))
         }
         .accessibilityLabel(mod.label)
@@ -87,7 +87,7 @@ struct KeysRow: View {
     }
 
     private func cap(_ title: String, name: String? = nil, action: @escaping () -> Void) -> some View {
-        Button(action: action) { label(Text(title).font(.mono(12))) }
+        Button(action: action) { label(Text(title).font(.ui(12))) }
             .accessibilityLabel(name ?? title)
     }
 

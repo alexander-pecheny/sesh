@@ -36,7 +36,7 @@ extension Ghostty {
                 action_cb: { app, target, action in App.perform(app, target, action) },
                 read_clipboard_cb: { _, _, _ in },
                 confirm_read_clipboard_cb: { _, _, _, _ in },
-                write_clipboard_cb: { _, _, _, _, _ in },
+                write_clipboard_cb: { _, _, contents, count, _ in App.writeClipboard(contents, count) },
                 close_surface_cb: { _, _ in })
 
             guard let app = ghostty_app_new(&runtime, config) else {
@@ -95,6 +95,15 @@ extension Ghostty {
         private static func registerBundledFonts() {
             for url in Bundle.main.urls(forResourcesWithExtension: "ttf", subdirectory: "Fonts") ?? [] {
                 CTFontManagerRegisterFontsForURL(url as CFURL, .process, nil)
+            }
+        }
+
+        // OSC 52 writes land here; the remote program can set the phone's clipboard.
+        private static func writeClipboard(_ contents: UnsafePointer<ghostty_clipboard_content_s>?, _ count: Int) {
+            guard let contents else { return }
+            for i in 0..<count where String(cString: contents[i].mime) == "text/plain" {
+                let text = String(cString: contents[i].data)
+                DispatchQueue.main.async { UIPasteboard.general.string = text }
             }
         }
     }

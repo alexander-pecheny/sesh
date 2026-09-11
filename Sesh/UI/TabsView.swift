@@ -30,12 +30,12 @@ private struct TabBar: View {
 
     var body: some View {
         HStack(spacing: 8) {
-            Text(session.name).font(.mono(14)).lineLimit(1).foregroundStyle(flavour(.text))
+            Text(session.name).font(.ui(14)).lineLimit(1).foregroundStyle(flavour(.text))
             Spacer(minLength: 4)
-            Text(session.status).font(.mono(11)).lineLimit(1).foregroundStyle(flavour(.subtext0))
+            Text(session.status).font(.ui(11)).lineLimit(1).foregroundStyle(flavour(.subtext0))
             Button(action: switcher) {
                 Text("\(tabs.sessions.count)")
-                    .font(.mono(12))
+                    .font(.ui(12))
                     .frame(minWidth: 22, minHeight: 22)
                     .background(flavour(.surface0), in: .rect(cornerRadius: 5))
                     .foregroundStyle(flavour(.text))
@@ -86,7 +86,7 @@ struct SwitcherView: View {
                     tabs.showHosts()
                     dismiss()
                 }
-                .font(.mono(15))
+                .font(.ui(15))
                 .listRowBackground(flavour(.mantle))
             }
             .scrollContentBackground(.hidden)
@@ -109,8 +109,8 @@ private struct Row: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 2) {
-            Text(session.name).font(.mono(15)).foregroundStyle(flavour(.text))
-            Text(session.status).font(.mono(11)).foregroundStyle(flavour(.subtext0))
+            Text(session.name).font(.ui(15)).foregroundStyle(flavour(.text))
+            Text(session.status).font(.ui(11)).foregroundStyle(flavour(.subtext0))
         }
         .frame(maxWidth: .infinity, alignment: .leading)
     }

@@ -48,9 +48,9 @@ struct HostListView: View {
     private var empty: some View {
         VStack(spacing: 16) {
             Image(systemName: "terminal").font(.system(size: 48)).foregroundStyle(flavour(.overlay1))
-            Text("No Hosts yet").font(.mono(17)).foregroundStyle(flavour(.text))
+            Text("No Hosts yet").font(.ui(17)).foregroundStyle(flavour(.text))
             Button("Add a Host") { editing = Host() }
-                .font(.mono(15))
+                .font(.ui(15))
                 .buttonStyle(.borderedProminent)
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -61,8 +61,8 @@ struct HostListView: View {
             ForEach(store.hosts) { host in
                 Button { open(host) } label: {
                     VStack(alignment: .leading, spacing: 2) {
-                        Text(host.title).font(.mono(16)).foregroundStyle(flavour(.text))
-                        Text(host.subtitle).font(.mono(12)).foregroundStyle(flavour(.subtext0))
+                        Text(host.title).font(.ui(16)).foregroundStyle(flavour(.text))
+                        Text(host.subtitle).font(.ui(12)).foregroundStyle(flavour(.subtext0))
                     }
                 }
                 .listRowBackground(flavour(.mantle))
@@ -77,5 +77,5 @@ struct HostListView: View {
 }
 
 extension Font {
-    static func mono(_ size: CGFloat) -> Font { .custom("JetBrainsMono NF", size: size) }
+    static func ui(_ size: CGFloat) -> Font { .system(size: size) }
 }
