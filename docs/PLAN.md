@@ -27,6 +27,7 @@ is the spec for the implementing agents. Decisions here were settled with the ow
   see `~/cmux/scripts/download-prebuilt-ghosttykit.sh` and
   `~/cmux/scripts/ghosttykit-checksums.txt` for the pattern and the checksum for that
   commit. A copy of the built framework is in `~/.cache/cmux/ghosttykit/<sha>/`.
+- Phase 1 findings on the embedded API live in `docs/ghostty-embedding.md`. Read it.
 - Manual I/O in the fork: `ghostty_surface_config_s.io_mode = GHOSTTY_SURFACE_IO_MANUAL`
   with `io_write_cb`/`io_write_userdata` receiving what the terminal wants sent to the
   remote, and `ghostty_surface_process_output(surface, bytes, len)` pushing remote
@@ -46,7 +47,8 @@ is the spec for the implementing agents. Decisions here were settled with the ow
 
 - Transports: SSH via `russh` and mosh via rmosh, both inside one Rust crate
   `core/sesh-core` exposing a C ABI, built into `SeshCore.xcframework` (ADR 0002).
-- libghostty from the cmux fork for manual I/O (ADR 0001). No zig build; download.
+- libghostty from the cmux fork for manual I/O (ADR 0001). Built from source by
+  `just ghosttykit` with the libxev patch; the fork's prebuilt frameworks hang on iOS.
 - rmosh is a git submodule at `vendor/rmosh`. The client session loop moves from
   `crates/mosh-client/src/main.rs` into the library, taking an input byte source, an
   output byte sink and a size signal instead of a tty fd. The binary stays as a thin

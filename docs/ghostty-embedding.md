@@ -1,0 +1,31 @@
+# Embedding libghostty on iOS: what phase 1 learned
+
+- Surface: `ghostty_surface_config_new()`, `platform_tag = GHOSTTY_PLATFORM_IOS`,
+  `platform.ios.uiview` = unretained view pointer, `io_mode = GHOSTTY_SURFACE_IO_MANUAL`,
+  `io_write_cb` + `io_write_userdata`. `ghostty_surface_new` returns non-null even when
+  broken; it is not a health check.
+- The Metal layer is ours to size. libghostty adds an `IOSurfaceLayer` sublayer to the
+  view's layer, sets its `contentsScale` once at creation and never again, and reads
+  that layer's bounds × scale as the drawable size. If that disagrees with
+  `ghostty_surface_set_size` it draws nothing. `layoutSubviews` must set
+  `sublayer.frame = layer.bounds` and `sublayer.contentsScale` alongside
+  `set_content_scale` and `set_size`. No `layerClass` override.
+- Threads: `io_write_cb` fires on ghostty's I/O thread; hop to main (or hand straight to
+  the Rust session) and never call back into the surface synchronously from it.
+  `ghostty_surface_process_output` is safe from any thread and runs the VT parser on the
+  caller. Call `_key`, `_text`, `_set_size`, `_set_focus`, `_update_config` on main.
+- Actions matter: answer `GHOSTTY_ACTION_RELOAD_CONFIG` by loading a fresh config and
+  calling `ghostty_app_update_config` / `ghostty_surface_update_config`, or the
+  light/dark theme never switches. Later phases need `SET_TITLE`, `RING_BELL`,
+  `CLOSE_WINDOW`, `SHOW_ON_SCREEN_KEYBOARD` and the clipboard callbacks.
+- Config: no default files on iOS. Write text to a file, `ghostty_config_load_file`.
+  `setenv("GHOSTTY_RESOURCES_DIR", <bundle>/ghostty)` before `ghostty_init` so
+  `themes/<name>` resolve.
+- Keys: `ghostty_input_key_s.keycode` is a macOS virtual keycode (Enter 0x24,
+  Backspace 0x33; table in ghostty `src/input/keycodes.zig`). Printable text goes via
+  `ghostty_surface_text`, which takes the paste path and so honours bracketed paste.
+  `UIKeyInput.insertText("\n")` must become an Enter key event.
+- Logs: subsystem `com.mitchellh.ghostty`;
+  `xcrun simctl spawn <udid> log show --predicate 'subsystem CONTAINS "ghostty"' --info`.
+- Simulator: keyboard forced to `en_US@sw=QWERTY;hw=US` because `hw=Automatic` follows
+  the host's Russian layout and `axe type` produced Cyrillic.
