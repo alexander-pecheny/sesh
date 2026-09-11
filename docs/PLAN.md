@@ -10,7 +10,10 @@ is the spec for the implementing agents. Decisions here were settled with the ow
 - Xcode 26.3, iOS 26.2 simulator, an iPhone 17 Pro simulator is booted (udid
   `466D3ACF-302A-40B8-8570-719088AF057C`). Drive it headlessly: `xcodebuild`,
   `xcrun simctl install/launch`, `axe`. Never `open -a Simulator`.
-- Signing: Apple Development identity for team `9JTT8XLTCV`, bundle id `me.pecheny.sesh`.
+- Signing: Apple Development certificate "ap@pecheny.me (9JTT8XLTCV)" whose team is
+  `B5T934YFU5`; a managed wildcard profile for that team covers the paired iPhone 17 Pro.
+  Xcode has no signed-in account, so `just device` signs the bundle by hand. Bundle id
+  `me.pecheny.sesh`.
 - Rust 1.96 with targets `aarch64-apple-ios` and `aarch64-apple-ios-sim` installed.
   `cbindgen` is not installed: `cargo install cbindgen`.
 - `xcodegen`, `just`, `zig 0.15.2`, `mosh-server` (Homebrew), `protoc` available.

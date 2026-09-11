@@ -35,3 +35,7 @@ sshd-stop:
 
 e2e: build
     uv run scripts/e2e.py
+
+# Build, sign and install on the paired iPhone (see scripts/install-device.sh).
+device:
+    ./scripts/install-device.sh

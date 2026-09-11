@@ -8,7 +8,7 @@ options:
 settings:
   base:
     SWIFT_VERSION: "5.0"
-    DEVELOPMENT_TEAM: 9JTT8XLTCV
+    DEVELOPMENT_TEAM: B5T934YFU5
     CODE_SIGN_STYLE: Automatic
     TARGETED_DEVICE_FAMILY: "1,2"
     OTHER_LDFLAGS: -lstdc++
