@@ -12,6 +12,7 @@ extension Ghostty {
         private var writesAtPress = 0
         private var shiftBypass = false
         private var panAnchor = CGPoint.zero
+        private var touchStart = CGPoint.zero
         private var pinchBase = 0.0
         private var fontSize: Double
 
@@ -254,6 +255,11 @@ extension Ghostty {
             }
         }
 
+        override func touchesBegan(_ touches: Set<UITouch>, with event: UIEvent?) {
+            super.touchesBegan(touches, with: event)
+            if let touch = touches.first { touchStart = touch.location(in: self) }
+        }
+
         func gestureRecognizer(
             _ recogniser: UIGestureRecognizer,
             shouldRecognizeSimultaneouslyWith other: UIGestureRecognizer
@@ -285,9 +291,7 @@ extension Ghostty {
             var point = recogniser.location(in: self)
             switch recogniser.state {
             case .began:
-                let start = recogniser.translation(in: self)
-                point.x -= start.x
-                point.y -= start.y
+                point = touchStart
                 writesAtPress = writes
                 ghostty_surface_mouse_pos(surface, point.x, point.y, mods)
                 _ = ghostty_surface_mouse_button(surface, GHOSTTY_MOUSE_PRESS, GHOSTTY_MOUSE_LEFT, mods)

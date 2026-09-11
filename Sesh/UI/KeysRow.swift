@@ -35,13 +35,14 @@ struct KeysRow: View {
                     arrow("chevron.right", "right", Keycode.right)
                 }
                 .padding(.horizontal, 4)
+                .fixedSize(horizontal: true, vertical: false)
             }
             HStack(spacing: 4) {
                 cap(icon: "doc.on.clipboard", name: "paste") { send(.paste) }
                 Button { input.mode = input.mode.next } label: {
                     HStack(spacing: 3) {
                         Image(systemName: input.mode.icon)
-                        Text(input.mode.label).font(.mono(11))
+                        Text(input.mode.label).font(.mono(11)).lineLimit(1).fixedSize()
                     }
                     .padding(.horizontal, 8)
                     .frame(height: 32)
