@@ -31,3 +31,23 @@
   `xcrun simctl spawn <udid> log show --predicate 'subsystem CONTAINS "ghostty"' --info`.
 - Simulator: keyboard forced to `en_US@sw=QWERTY;hw=US` because `hw=Automatic` follows
   the host's Russian layout and `axe type` produced Cyrillic.
+
+## Phases 4 and 5
+
+- `ghostty_surface_free_text` is declared in `ghostty.h` with two parameters but exported
+  with one. The bridging header aliases the real symbol as `sesh_ghostty_free_text`.
+- `ghostty_surface_mouse_pos` takes points, not pixels: pass the view coordinate
+  untouched, never multiplied by the content scale.
+- There is no font-size entry point. `ghostty_surface_binding_action(surface,
+  "set_font_size:12.0", len)` is how pinch-to-zoom changes one surface's size.
+- `GHOSTTY_ACTION_SET_TITLE` arrives with `target.tag == GHOSTTY_TARGET_SURFACE`;
+  `ghostty_surface_userdata` gives back the pointer passed as
+  `ghostty_surface_config_s.userdata`, which is how the action finds the view. The title
+  pointer is borrowed, so copy it, and the action runs off the main thread.
+- `ghostty_surface_set_occlusion(surface, visible)` takes visibility, not occlusion. A
+  Tab that is not on screen sets it false: the renderer stands down while
+  `ghostty_surface_process_output` keeps feeding the VT.
+- A `UIKeyInput` view gets iOS smart punctuation unless it says otherwise. Set
+  `smartQuotesType`, `smartDashesType`, `smartInsertDeleteType`, `autocorrectionType`,
+  `spellCheckingType` and `autocapitalizationType` off, or `printf '\033]0;x\007'` reaches
+  the shell with typographic quotes.
