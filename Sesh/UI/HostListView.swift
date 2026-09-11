@@ -77,5 +77,5 @@ struct HostListView: View {
 }
 
 extension Font {
-    static func mono(_ size: CGFloat) -> Font { .custom("JetBrains Mono", size: size) }
+    static func mono(_ size: CGFloat) -> Font { .custom("JetBrainsMono NF", size: size) }
 }

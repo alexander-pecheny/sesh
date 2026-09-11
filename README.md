@@ -55,7 +55,7 @@ patches them.
   connects to. `just e2e` runs `scripts/e2e.py` against it and the booted simulator,
   printing a pass or fail line per check.
 
-Bundled JetBrains Mono is under the SIL Open Font License, copied into `Resources/Fonts`
+Bundled JetBrainsMono Nerd Font is under the SIL Open Font License, copied into `Resources/Fonts`
 with its licence.
 
 ## Extra flags

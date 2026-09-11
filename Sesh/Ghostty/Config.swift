@@ -5,7 +5,7 @@ extension Ghostty {
     enum Config {
         static let source = """
             theme = light:Catppuccin Latte,dark:Catppuccin Mocha
-            font-family = JetBrains Mono
+            font-family = JetBrainsMono NF
             font-size = 12
             """
 
