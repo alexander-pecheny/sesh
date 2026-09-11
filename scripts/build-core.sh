@@ -13,20 +13,14 @@ for target in "${targets[@]}"; do
     cargo build --release --target "$target" -p sesh-core
 done
 
-headers=$(mktemp -d)
-trap 'rm -rf "$headers"' EXIT
-cbindgen --config cbindgen.toml --crate sesh-core --output "$headers/sesh.h" --quiet
-cat > "$headers/module.modulemap" <<MAP
-module SeshCore {
-    header "sesh.h"
-    export *
-}
-MAP
+# The header goes next to the bridging header, not into the xcframework: GhosttyKit's
+# module map claims every header in the shared include/ directory as its own.
+cbindgen --config cbindgen.toml --crate sesh-core --output "$root/Sesh/sesh.h" --quiet
 
 output="$root/Frameworks/SeshCore.xcframework"
 rm -rf "$output"
 xcodebuild -create-xcframework \
-    -library "target/aarch64-apple-ios/release/libsesh_core.a" -headers "$headers" \
-    -library "target/aarch64-apple-ios-sim/release/libsesh_core.a" -headers "$headers" \
+    -library "target/aarch64-apple-ios/release/libsesh_core.a" \
+    -library "target/aarch64-apple-ios-sim/release/libsesh_core.a" \
     -output "$output" >/dev/null
 echo "built $output"

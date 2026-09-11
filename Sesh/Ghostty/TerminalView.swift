@@ -9,7 +9,9 @@ extension Ghostty {
         private static let backspaceKeycode: UInt32 = 0x33
 
         private var surface: ghostty_surface_t?
+        private var grid: (UInt16, UInt16) = (0, 0)
         var onWrite: ((Data) -> Void)?
+        var onResize: ((UInt16, UInt16) -> Void)?
 
         init(app: ghostty_app_t) {
             super.init(frame: CGRect(x: 0, y: 0, width: 800, height: 600))
@@ -72,6 +74,11 @@ extension Ghostty {
                 surface,
                 UInt32(bounds.width * scale),
                 UInt32(bounds.height * scale))
+
+            let size = ghostty_surface_size(surface)
+            guard size.columns > 0, size.rows > 0, (size.columns, size.rows) != grid else { return }
+            grid = (size.columns, size.rows)
+            onResize?(size.columns, size.rows)
         }
 
         override func didMoveToWindow() {

@@ -34,4 +34,5 @@ targets:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: me.pecheny.sesh
         INFOPLIST_FILE: Sesh/Info.plist
+        SWIFT_OBJC_BRIDGING_HEADER: Sesh/Sesh-Bridging-Header.h
         GENERATE_INFOPLIST_FILE: NO

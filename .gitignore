@@ -7,3 +7,4 @@ DerivedData/
 xcuserdata/
 *.xcframework
 core/target/
+Sesh/sesh.h

@@ -42,6 +42,9 @@ pub struct sesh_callbacks_t {
     pub on_auth_prompt: Option<
         extern "C" fn(*mut c_void, u32, *const c_char, *const c_char, *const *const c_char, *const bool, usize),
     >,
+    /// The last call on `userdata`: no callback runs after it, so it is where the embedder
+    /// releases whatever `userdata` points at.
+    pub on_release: Option<extern "C" fn(*mut c_void)>,
 }
 
 /// Optional fields are NULL when unset. `term` defaults to `xterm-256color`.
@@ -74,6 +77,14 @@ struct Sink {
 // The embedder owns `userdata` and promises it outlives the Session; see the module note.
 unsafe impl Send for Sink {}
 unsafe impl Sync for Sink {}
+
+impl Drop for Sink {
+    fn drop(&mut self) {
+        if let Some(callback) = self.callbacks.on_release {
+            callback(self.userdata);
+        }
+    }
+}
 
 impl ssh::Events for Sink {
     fn output(&self, bytes: &[u8]) {
