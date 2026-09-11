@@ -1,0 +1,35 @@
+name: Sesh
+options:
+  bundleIdPrefix: me.pecheny
+  deploymentTarget:
+    iOS: "18.0"
+  createIntermediateGroups: true
+
+settings:
+  base:
+    SWIFT_VERSION: "5.0"
+    DEVELOPMENT_TEAM: 9JTT8XLTCV
+    CODE_SIGN_STYLE: Automatic
+    TARGETED_DEVICE_FAMILY: "1,2"
+    OTHER_LDFLAGS: -lstdc++
+
+targets:
+  Sesh:
+    type: application
+    platform: iOS
+    sources:
+      - path: Sesh
+      - path: Resources/Fonts
+        type: folder
+        buildPhase: resources
+      - path: Resources/ghostty
+        type: folder
+        buildPhase: resources
+    dependencies:
+      - framework: Frameworks/GhosttyKit.xcframework
+        embed: false
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: me.pecheny.sesh
+        INFOPLIST_FILE: Sesh/Info.plist
+        GENERATE_INFOPLIST_FILE: NO
