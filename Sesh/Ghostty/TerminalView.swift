@@ -48,6 +48,7 @@ extension Ghostty {
 
             surface = ghostty_surface_new(app, &config)
             if surface == nil { logger.critical("ghostty_surface_new failed") }
+            input.onMode = { [weak self] in self?.reloadInputViews() }
             isAccessibilityElement = true
             accessibilityLabel = "Terminal"
             accessibilityIdentifier = "terminal"
@@ -132,6 +133,11 @@ extension Ghostty {
 
         override var inputAccessoryView: UIView? { accessory }
 
+        // Click and Select put the keyboard away without resigning, so the keys row stays.
+        override var inputView: UIView? { input.mode.keyboard ? nil : blankKeyboard }
+
+        private let blankKeyboard = UIView(frame: .zero)
+
         private lazy var accessory: UIView = {
             let row = KeysRow(input: input) { [weak self] in self?.perform($0) }
             let host = UIHostingController(rootView: row)
@@ -167,7 +173,6 @@ extension Ghostty {
             case .character(let character): send(character: character, extra: input.consume())
             case .paste: paste(UIPasteboard.general.string ?? "")
             case .editor: onEditor?()
-            case .hide: _ = resignFirstResponder()
             }
         }
 
@@ -287,15 +292,14 @@ extension Ghostty {
         @objc private func onTap(_ recogniser: UITapGestureRecognizer) {
             focus()
             let point = recogniser.location(in: self)
-            switch input.mode {
-            case .click:
+            guard input.mode == .select else {
                 let mods = input.consume()
                 click(mods.contains(.rightClick) ? GHOSTTY_MOUSE_RIGHT : GHOSTTY_MOUSE_LEFT,
                       at: point, mods: mods.subtracting(.rightClick))
-            case .select:
-                click(GHOSTTY_MOUSE_LEFT, at: point, mods: selectMods)
-                onSelection?(nil)
+                return
             }
+            click(GHOSTTY_MOUSE_LEFT, at: point, mods: selectMods)
+            onSelection?(nil)
         }
 
         @objc private func onPan(_ recogniser: UIPanGestureRecognizer) {

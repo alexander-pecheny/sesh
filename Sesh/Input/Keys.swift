@@ -99,26 +99,49 @@ enum Keycode {
     ]
 }
 
-enum TouchMode: String {
-    case click, select
+enum TouchMode: String, CaseIterable, Identifiable {
+    case type, click, select
 
-    var next: TouchMode { self == .click ? .select : .click }
-    var label: String { self == .click ? "Click" : "Select" }
-    var icon: String { self == .click ? "hand.tap" : "selection.pin.in.out" }
+    var id: String { rawValue }
+    var label: String { rawValue.capitalized }
+    var keyboard: Bool { self == .type }
+
+    var icon: String {
+        switch self {
+        case .type: "keyboard"
+        case .click: "hand.tap"
+        case .select: "selection.pin.in.out"
+        }
+    }
 }
 
-/// Armed and locked modifiers plus the touch mode: the keys row writes it, the terminal
+/// Armed and locked modifiers plus the Touch mode: the keys row writes it, the terminal
 /// view reads it.
 @MainActor
 final class InputState: ObservableObject {
     @Published private(set) var armed: Mods = []
     @Published private(set) var locked: Mods = []
     @Published var mode: TouchMode {
-        didSet { UserDefaults.standard.set(mode.rawValue, forKey: "touchMode") }
+        didSet {
+            UserDefaults.standard.set(mode.rawValue, forKey: "touchMode")
+            onMode?()
+        }
     }
 
+    /// The terminal view swaps its input view when the mode changes.
+    var onMode: (() -> Void)?
+
     init() {
-        mode = UserDefaults.standard.string(forKey: "touchMode").flatMap(TouchMode.init) ?? .click
+        let defaults = UserDefaults.standard
+        let stored = defaults.string(forKey: "touchMode")
+        // Two-mode installs called today's Type mode "click".
+        if !defaults.bool(forKey: "touchModes3") {
+            defaults.set(true, forKey: "touchModes3")
+            mode = stored == "select" ? .select : .type
+            defaults.set(mode.rawValue, forKey: "touchMode")
+        } else {
+            mode = stored.flatMap(TouchMode.init) ?? .type
+        }
     }
 
     var active: Mods { armed.union(locked) }

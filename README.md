@@ -17,6 +17,12 @@ one C ABI. Keys and saved passwords live in the Keychain; Hosts, Drafts and know
 are JSON in Application Support. Several Tabs may be open at once; a Tab that is not
 visible keeps its Session running and only stops drawing.
 
+Fingers are read in one of three Touch modes, picked from the selector at the right of the
+keys row: Type taps as a mouse with the on-screen keyboard up, Click does the same with
+the keyboard down so a TUI can be worked by touch, and Select drags out a selection to
+copy. The keys row stays on screen in all three, and a hardware keyboard works in all
+three.
+
 ## Prerequisites
 
 Xcode 26.3 with an iOS 26 simulator, `just`, `xcodegen`, `zig` 0.15.2, `protoc`, `uv`,

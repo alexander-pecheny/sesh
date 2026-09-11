@@ -67,8 +67,8 @@ remote program sees no mouse events at all.
 _Avoid_: copy mode, selection mode
 
 **Keys row**:
-The strip above the keyboard holding modifiers, arrows, symbols, paste, the mode toggle,
-the Editor button and hide-keyboard.
+The strip above the keyboard holding modifiers, arrows, symbols, paste, the Editor button
+and the Touch mode selector. It stays on screen in every Touch mode.
 
 **Modifier**:
 A keys-row key that changes the next key or tap: ctrl, alt, shift, cmd and right-click.

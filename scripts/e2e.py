@@ -17,6 +17,11 @@ Traps this script works around:
     a far key needs the row scrolled first.
   - `xcrun simctl pbcopy` fills the simulator pasteboard; a long key goes in that way and
     is pasted with cmd+V rather than typed.
+  - the keys row moves down when Click or Select puts the keyboard away, so its y is
+    measured again before every tap into it.
+  - a form field's keyboard covers the rest of the form; every field is submitted with
+    Return before the next control is tapped, and a Toggle only flips at the activation
+    point axe resolves, not at the centre of its row.
 """
 
 import json
@@ -279,6 +284,18 @@ def tap_key(label, row_y):
     tap(found[0]["x"], row_y, settle=0.4)
 
 
+def check_modes():
+    keys = keys_row()
+    mode("Click")
+    check("Click mode puts the keyboard down", not match(label="q") and bool(match(label="esc")))
+    selector = element("mode", timeout=5)
+    check("the selector carries the mode", selector and selector["value"] == "Click", str(selector))
+    shell(f"echo CLICKMODE > {marker('click.txt')}")
+    check("a hardware keyboard types in Click mode", "CLICKMODE" in wait_marker("click.txt", timeout=8))
+    mode("Type")
+    check("Type mode brings the keyboard back", bool(match(label="q")) and abs(keys_row() - keys) < 1)
+
+
 def check_interrupt():
     row = keys_row()
     shell("sleep 100", settle=1.5)
@@ -289,13 +306,16 @@ def check_interrupt():
     check("ctrl-c interrupts sleep 100", "INTERRUPTED" in wait_marker("sigint.txt", timeout=8))
 
 
+def mode(name):
+    tap_key(name, keys_row())
+
+
 def check_selection():
-    row = keys_row()
     shell("clear; echo WORDMARKER", settle=1.2)
+    subprocess.run(["xcrun", "simctl", "pbcopy", UDID], input="", text=True)
+    mode("Select")
     frame = terminal()
     line = frame["y"] + 8
-    subprocess.run(["xcrun", "simctl", "pbcopy", UDID], input="", text=True)
-    tap_key("mode", row)
     axe("drag", "--start-x", f"{frame['x'] + 2:.0f}", "--start-y", f"{line:.0f}",
         "--end-x", f"{frame['x'] + frame['width'] - 4:.0f}", "--end-y", f"{line:.0f}",
         "--duration", "1.0")
@@ -305,7 +325,7 @@ def check_selection():
         tap_label("Copy", settle=1.0)
         copied = run("xcrun", "simctl", "pbpaste", UDID).stdout
     check("select mode copies a word", "WORDMARKER" in copied, copied.strip())
-    tap_key("mode", keys_row())
+    mode("Type")
 
 
 def check_draft():
@@ -352,6 +372,44 @@ def check_second_tab(name):
     count = element("Tabs", timeout=10)
     check("a second Tab is open", count and count["value"] == "2", str(count))
     shot("tabs")
+
+
+def show_tab(name):
+    tap_label("Tabs")
+    row = element(contains=f"{name},", timeout=10)
+    tap(row["x"], row["y"], settle=1.5)
+
+
+def copy_screen():
+    subprocess.run(["xcrun", "simctl", "pbcopy", UDID], input="", text=True)
+    frame = terminal()
+    mode("Select")
+    axe("drag", "--start-x", f"{frame['x'] + 2:.0f}", "--start-y", f"{frame['y'] + 8:.0f}",
+        "--end-x", f"{frame['x'] + frame['width'] - 4:.0f}",
+        "--end-y", f"{frame['y'] + frame['height'] - 24:.0f}", "--duration", "1.2")
+    time.sleep(1)
+    text = ""
+    if element("Copy", timeout=6):
+        tap_label("Copy", settle=1.0)
+        text = run("xcrun", "simctl", "pbpaste", UDID).stdout
+    mode("Type")
+    return text
+
+
+def check_hidden_tab(here, there):
+    shell("(sleep 8; echo HIDDENOUT) &", settle=1.0)
+    show_tab(there)
+    time.sleep(12)
+    show_tab(here)
+    check("a hidden Tab keeps reading its Session", "HIDDENOUT" in copy_screen())
+
+
+def check_close_all():
+    for _ in range(6):
+        if not match(label="Close"):
+            break
+        tap_label("Close", settle=1.2)
+    check("closing the last Tab shows the Host list", bool(match(label="Add Host")))
 
 
 def check_mosh(name):
@@ -402,6 +460,7 @@ def main():
     check_agent(True, "agent forwarding lists the Key on the remote")
     check_title()
     check_density()
+    check_modes()
     check_interrupt()
     check_selection()
     check_draft()
@@ -409,8 +468,10 @@ def main():
 
     check_second_tab("plain")
     check_agent(False, "a Host without the toggle has no agent")
+    check_hidden_tab("plain", "SESHTITLE")
     check_mosh("moshy")
     shot("final")
+    check_close_all()
 
     failed = [name for name, ok in results if not ok]
     print(f"\n{len(results) - len(failed)}/{len(results)} checks passed")

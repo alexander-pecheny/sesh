@@ -4,7 +4,7 @@ struct KeysRow: View {
     enum Action {
         case key(UInt32)
         case character(Character)
-        case paste, editor, hide
+        case paste, editor
     }
 
     static let height: CGFloat = 46
@@ -39,19 +39,33 @@ struct KeysRow: View {
             }
             HStack(spacing: 3) {
                 cap(icon: "doc.on.clipboard", name: "paste") { send(.paste) }
-                Button { input.mode = input.mode.next } label: {
-                    label(Image(systemName: input.mode.icon))
-                }
-                .accessibilityLabel("mode")
-                .accessibilityValue(input.mode.label)
                 cap(icon: "square.and.pencil", name: "editor") { send(.editor) }
-                cap(icon: "keyboard.chevron.compact.down", name: "hide") { send(.hide) }
+                modes
             }
-            .padding(.trailing, 3)
+            .padding(.trailing, 5)
         }
         .frame(height: Self.height)
         .frame(maxWidth: .infinity)
         .background(flavour(.mantle))
+    }
+
+    private var modes: some View {
+        HStack(spacing: 1) {
+            ForEach(TouchMode.allCases) { mode in
+                Button { input.mode = mode } label: {
+                    Image(systemName: mode.icon)
+                        .font(.system(size: 13))
+                        .frame(width: 30, height: 28)
+                        .background(mode == input.mode ? flavour(.mauve) : flavour(.surface0))
+                        .foregroundStyle(mode == input.mode ? flavour(.crust) : flavour(.text))
+                }
+                .accessibilityLabel(mode.label)
+            }
+        }
+        .clipShape(.rect(cornerRadius: 6))
+        .accessibilityElement(children: .contain)
+        .accessibilityLabel("mode")
+        .accessibilityValue(input.mode.label)
     }
 
     private static let names: [Character: String] = ["~": "tilde", "|": "pipe", "/": "slash", "-": "dash"]
@@ -78,7 +92,7 @@ struct KeysRow: View {
     }
 
     private func cap(icon: String, name: String, action: @escaping () -> Void) -> some View {
-        Button(action: action) { label(Image(systemName: icon)) }
+        Button(action: action) { label(Image(systemName: icon), width: 22) }
             .accessibilityLabel(name)
     }
 
@@ -89,10 +103,11 @@ struct KeysRow: View {
     }
 
     private func label(
-        _ content: some View, background: Color? = nil, foreground: Color? = nil
+        _ content: some View, background: Color? = nil, foreground: Color? = nil,
+        width: CGFloat = 26
     ) -> some View {
         content
-            .frame(minWidth: 26)
+            .frame(minWidth: width)
             .frame(height: 32)
             .padding(.horizontal, 3)
             .background(background ?? flavour(.surface0), in: .rect(cornerRadius: 6))
