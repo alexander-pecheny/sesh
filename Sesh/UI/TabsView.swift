@@ -43,7 +43,7 @@ private struct TabBar: View {
             .accessibilityLabel("Tabs")
             .accessibilityValue("\(tabs.sessions.count)")
             Button { tabs.close(session) } label: {
-                Image(systemName: "xmark.circle.fill").foregroundStyle(flavour(.overlay1))
+                Image.lucide("circle-x").foregroundStyle(flavour(.overlay1))
             }
             .accessibilityLabel("Close")
         }
@@ -75,7 +75,7 @@ struct SwitcherView: View {
                             tabs.close(session)
                             if tabs.sessions.isEmpty { dismiss() }
                         } label: {
-                            Image(systemName: "xmark").foregroundStyle(flavour(.overlay1))
+                            Image.lucide("x", size: 15).foregroundStyle(flavour(.overlay1))
                         }
                         .buttonStyle(.plain)
                         .accessibilityLabel("Close \(session.name)")

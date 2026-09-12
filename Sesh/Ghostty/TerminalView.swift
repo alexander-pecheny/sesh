@@ -5,10 +5,11 @@ import GhosttyKit
 extension Ghostty {
     /// A libghostty surface in manual I/O mode: `onWrite` receives what the terminal wants
     /// sent to the remote, `process(_:)` pushes remote output back in.
-    final class TerminalView: UIView, UIKeyInput, UIGestureRecognizerDelegate {
+    final class TerminalView: UIView, UIKeyInput, UIGestureRecognizerDelegate, UIScrollViewDelegate {
         private var surface: ghostty_surface_t?
         private var grid: (UInt16, UInt16) = (0, 0)
-        private var panAnchor = CGPoint.zero
+        private let scroller = Scroller()
+        private var scrollerOffset = 0.0
         private var touchStart = CGPoint.zero
         private var pinchBase = 0.0
         private var fontSize: Double
@@ -45,12 +46,13 @@ extension Ghostty {
 
             surface = ghostty_surface_new(app, &config)
             if surface == nil { logger.critical("ghostty_surface_new failed") }
-            input.onMode = { [weak self] in self?.reloadInputViews() }
+            input.onMode = { [weak self] in self?.modeChanged() }
             isAccessibilityElement = true
             accessibilityLabel = "Terminal"
             accessibilityIdentifier = "terminal"
 
             addGestures()
+            addScroller()
         }
 
         required init?(coder: NSCoder) { fatalError("unsupported") }
@@ -81,10 +83,13 @@ extension Ghostty {
 
             // libghostty renders into a sublayer it adds to us but never sizes; it reads
             // that layer's bounds and contentsScale back as its own drawable size.
-            layer.sublayers?.forEach {
-                $0.frame = layer.bounds
-                $0.contentsScale = scale
+            layer.sublayers?.forEach { sublayer in
+                guard !(sublayer.delegate is UIView) else { return }
+                sublayer.frame = layer.bounds
+                sublayer.contentsScale = scale
             }
+            scroller.frame = bounds
+            recentreScroller()
 
             updateColorScheme()
             ghostty_surface_set_content_scale(surface, scale, scale)
@@ -246,19 +251,68 @@ extension Ghostty {
             let tap = UITapGestureRecognizer(target: self, action: #selector(onTap))
             let pan = UIPanGestureRecognizer(target: self, action: #selector(onPan))
             pan.maximumNumberOfTouches = 1
-            let twoFinger = UIPanGestureRecognizer(target: self, action: #selector(onScroll))
-            twoFinger.minimumNumberOfTouches = 2
             let pinch = UIPinchGestureRecognizer(target: self, action: #selector(onPinch))
-            for recogniser in [tap, pan, twoFinger, pinch] as [UIGestureRecognizer] {
+            for recogniser in [tap, pan, pinch] as [UIGestureRecognizer] {
                 recogniser.delegate = self
                 addGestureRecognizer(recogniser)
             }
         }
 
-        override func touchesBegan(_ touches: Set<UITouch>, with event: UIEvent?) {
-            super.touchesBegan(touches, with: event)
-            if let touch = touches.first { touchStart = touch.location(in: self) }
+        // An invisible UIScrollView on top supplies native scrolling with inertia; its
+        // offset changes become precision wheel events in pixels, which is what ghostty
+        // measures against its cell height. One finger scrolls, except in Select mode
+        // where one finger selects and two scroll.
+        private final class Scroller: UIScrollView {
+            var touchDown: ((CGPoint) -> Void)?
+
+            override func touchesBegan(_ touches: Set<UITouch>, with event: UIEvent?) {
+                if let touch = touches.first, let view = superview {
+                    touchDown?(touch.location(in: view))
+                }
+                super.touchesBegan(touches, with: event)
+            }
         }
+
+        private static let scrollerSpan: CGFloat = 200_000
+
+        private func addScroller() {
+            scroller.delegate = self
+            scroller.backgroundColor = .clear
+            scroller.showsVerticalScrollIndicator = false
+            scroller.showsHorizontalScrollIndicator = false
+            scroller.contentInsetAdjustmentBehavior = .never
+            scroller.contentSize = CGSize(width: 0, height: Self.scrollerSpan)
+            scroller.touchDown = { [weak self] point in self?.touchStart = point }
+            addSubview(scroller)
+            modeChanged()
+        }
+
+        private func modeChanged() {
+            scroller.panGestureRecognizer.minimumNumberOfTouches = input.mode == .select ? 2 : 1
+            reloadInputViews()
+        }
+
+        private func recentreScroller() {
+            scrollerOffset = (Self.scrollerSpan - bounds.height) / 2
+            scroller.contentOffset = CGPoint(x: 0, y: scrollerOffset)
+        }
+
+        func scrollViewDidScroll(_ scrollView: UIScrollView) {
+            guard let surface, scrollView.isDragging || scrollView.isDecelerating else { return }
+            let dy = scrollView.contentOffset.y - scrollerOffset
+            scrollerOffset = scrollView.contentOffset.y
+            guard dy != 0 else { return }
+            let scale = window?.screen.scale ?? traitCollection.displayScale
+            let point = scroller.panGestureRecognizer.location(in: self)
+            ghostty_surface_mouse_pos(surface, point.x, point.y, GHOSTTY_MODS_NONE)
+            ghostty_surface_mouse_scroll(surface, 0, -dy * scale, 1)
+        }
+
+        func scrollViewDidEndDragging(_ scrollView: UIScrollView, willDecelerate decelerate: Bool) {
+            if !decelerate { recentreScroller() }
+        }
+
+        func scrollViewDidEndDecelerating(_ scrollView: UIScrollView) { recentreScroller() }
 
         func gestureRecognizer(
             _ recogniser: UIGestureRecognizer,
@@ -279,11 +333,7 @@ extension Ghostty {
         }
 
         @objc private func onPan(_ recogniser: UIPanGestureRecognizer) {
-            guard input.mode == .select else {
-                onScroll(recogniser)
-                return
-            }
-            guard let surface else { return }
+            guard input.mode == .select, let surface else { return }
             // Shift keeps a select-mode drag local: ghostty never reports it to the program.
             let mods = Mods.shift.ghostty
             var point = recogniser.location(in: self)
@@ -298,18 +348,6 @@ extension Ghostty {
                 _ = ghostty_surface_mouse_button(surface, GHOSTTY_MOUSE_RELEASE, GHOSTTY_MOUSE_LEFT, mods)
                 onSelection?(selection()?.anchor)
             }
-        }
-
-        @objc private func onScroll(_ recogniser: UIPanGestureRecognizer) {
-            guard let surface else { return }
-            let translation = recogniser.translation(in: self)
-            if recogniser.state == .began { panAnchor = translation }
-            let delta = CGPoint(x: translation.x - panAnchor.x, y: translation.y - panAnchor.y)
-            panAnchor = translation
-            guard recogniser.state == .changed else { return }
-            let point = recogniser.location(in: self)
-            ghostty_surface_mouse_pos(surface, point.x, point.y, GHOSTTY_MODS_NONE)
-            ghostty_surface_mouse_scroll(surface, delta.x, delta.y, 1)
         }
 
         @objc private func onPinch(_ recogniser: UIPinchGestureRecognizer) {

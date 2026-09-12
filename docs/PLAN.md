@@ -87,7 +87,7 @@ is the spec for the implementing agents. Decisions here were settled with the ow
   that starts a new Session in the same Tab. No keepalive tricks, no retry loops.
   Session restore across app termination is phase two of the product, out of scope now.
 - Keys row, left to right: `esc ctrl alt shift cmd right-click tab` | `~ | / -` |
-  arrows (plain taps, no repeat) | pinned: paste, Editor, and the three-way Touch mode selector.
+  arrows left up down right, then home pgup pgdn end | pinned: paste, Editor, and the three-way Touch mode selector.
   No separate hide-keyboard button: Click and Select modes put the keyboard down.
   Modifiers: one tap arms for the next key or tap, two taps lock, tap again to clear;
   highlighted while armed or locked. `cmd` is ghostty's super. The row scrolls sideways

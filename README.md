@@ -56,6 +56,7 @@ patches them.
   printing a pass or fail line per check.
 
 Bundled JetBrainsMono Nerd Font is under the SIL Open Font License, copied into `Resources/Fonts`
+Icons are [Lucide](https://lucide.dev), ISC licence, in `Resources/LICENSE-lucide.txt`.
 with its licence.
 
 ## Extra flags

@@ -54,6 +54,10 @@ enum Keycode {
     static let right: UInt32 = 0x7c
     static let down: UInt32 = 0x7d
     static let up: UInt32 = 0x7e
+    static let pageUp: UInt32 = 0x74
+    static let pageDown: UInt32 = 0x79
+    static let home: UInt32 = 0x73
+    static let end: UInt32 = 0x77
 
     struct Stroke {
         let code: UInt32
@@ -81,6 +85,10 @@ enum Keycode {
         case .keyboardRightArrow: right
         case .keyboardDownArrow: down
         case .keyboardUpArrow: up
+        case .keyboardPageUp: pageUp
+        case .keyboardPageDown: pageDown
+        case .keyboardHome: home
+        case .keyboardEnd: end
         default: nil
         }
     }
@@ -109,8 +117,8 @@ enum TouchMode: String, CaseIterable, Identifiable {
     var icon: String {
         switch self {
         case .type: "keyboard"
-        case .click: "hand.tap"
-        case .select: "selection.pin.in.out"
+        case .click: "pointer"
+        case .select: "square-dashed-mouse-pointer"
         }
     }
 }

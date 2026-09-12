@@ -29,17 +29,22 @@ struct KeysRow: View {
                         }
                     }
                     separator
-                    arrow("chevron.left", "left", Keycode.left)
-                    arrow("chevron.down", "down", Keycode.down)
-                    arrow("chevron.up", "up", Keycode.up)
-                    arrow("chevron.right", "right", Keycode.right)
+                    arrow("chevron-left", "left", Keycode.left)
+                    arrow("chevron-up", "up", Keycode.up)
+                    arrow("chevron-down", "down", Keycode.down)
+                    arrow("chevron-right", "right", Keycode.right)
+                    separator
+                    arrow("arrow-left-to-line", "home", Keycode.home)
+                    arrow("arrow-up-to-line", "pgup", Keycode.pageUp)
+                    arrow("arrow-down-to-line", "pgdn", Keycode.pageDown)
+                    arrow("arrow-right-to-line", "end", Keycode.end)
                 }
                 .padding(.horizontal, 3)
                 .fixedSize(horizontal: true, vertical: false)
             }
             HStack(spacing: 3) {
-                cap(icon: "doc.on.clipboard", name: "paste") { send(.paste) }
-                cap(icon: "square.and.pencil", name: "editor") { send(.editor) }
+                cap(icon: "clipboard-paste", name: "paste") { send(.paste) }
+                cap(icon: "square-pen", name: "editor") { send(.editor) }
                 modes
             }
             .padding(.trailing, 5)
@@ -53,8 +58,7 @@ struct KeysRow: View {
         HStack(spacing: 1) {
             ForEach(TouchMode.allCases) { mode in
                 Button { input.mode = mode } label: {
-                    Image(systemName: mode.icon)
-                        .font(.system(size: 13))
+                    Image.lucide(mode.icon, size: 15)
                         .frame(width: 30, height: 28)
                         .background(mode == input.mode ? flavour(.mauve) : flavour(.surface0))
                         .foregroundStyle(mode == input.mode ? flavour(.crust) : flavour(.text))
@@ -92,12 +96,12 @@ struct KeysRow: View {
     }
 
     private func cap(icon: String, name: String, action: @escaping () -> Void) -> some View {
-        Button(action: action) { label(Image(systemName: icon), width: 22) }
+        Button(action: action) { label(Image.lucide(icon, size: 16), width: 22) }
             .accessibilityLabel(name)
     }
 
     private func arrow(_ icon: String, _ name: String, _ code: UInt32) -> some View {
-        Button { send(.key(code)) } label: { label(Image(systemName: icon)) }
+        Button { send(.key(code)) } label: { label(Image.lucide(icon, size: 16)) }
             .accessibilityLabel(name)
     }
 

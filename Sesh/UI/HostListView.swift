@@ -20,20 +20,20 @@ struct HostListView: View {
             .navigationTitle("Hosts")
             .toolbar {
                 ToolbarItem(placement: .topBarLeading) {
-                    Button { showingKeys = true } label: { Label("Keys", systemImage: "key") }
+                    Button { showingKeys = true } label: { Label("Keys", image: "key-round") }
                 }
                 ToolbarItem(placement: .topBarLeading) {
                     Button { showingSettings = true } label: {
-                        Label("Settings", systemImage: "gearshape")
+                        Label("Settings", image: "settings")
                     }
                 }
                 ToolbarItem(placement: .topBarTrailing) {
-                    Button { editing = Host() } label: { Label("Add Host", systemImage: "plus") }
+                    Button { editing = Host() } label: { Label("Add Host", image: "plus") }
                 }
                 if let session = tabs.sessions.last {
                     ToolbarItem(placement: .topBarTrailing) {
                         Button { tabs.show(session) } label: {
-                            Label("Tabs", systemImage: "rectangle.stack")
+                            Label("Tabs", image: "layers")
                         }
                     }
                 }
@@ -47,7 +47,7 @@ struct HostListView: View {
 
     private var empty: some View {
         VStack(spacing: 16) {
-            Image(systemName: "terminal").font(.system(size: 48)).foregroundStyle(flavour(.overlay1))
+            Image.lucide("terminal", size: 48).foregroundStyle(flavour(.overlay1))
             Text("No Hosts yet").font(.ui(17)).foregroundStyle(flavour(.text))
             Button("Add a Host") { editing = Host() }
                 .font(.ui(15))
@@ -73,6 +73,13 @@ struct HostListView: View {
             }
         }
         .scrollContentBackground(.hidden)
+    }
+}
+
+extension Image {
+    /// A Lucide icon from the asset catalog, sized like a symbol of that point size.
+    static func lucide(_ name: String, size: CGFloat = 17) -> some View {
+        Image(name).resizable().frame(width: size, height: size)
     }
 }
 

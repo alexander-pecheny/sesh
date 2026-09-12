@@ -32,7 +32,7 @@ struct EditorView: View {
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) { Button("Done") { dismiss() } }
                 ToolbarItem(placement: .topBarTrailing) {
-                    Button { editing = Draft() } label: { Label("New Draft", systemImage: "plus") }
+                    Button { editing = Draft() } label: { Label("New Draft", image: "plus") }
                 }
             }
             .navigationDestination(item: $editing) { draft in

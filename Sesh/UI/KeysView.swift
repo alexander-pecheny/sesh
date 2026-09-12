@@ -27,7 +27,7 @@ struct KeysView: View {
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) { Button("Done") { dismiss() } }
                 ToolbarItem(placement: .confirmationAction) {
-                    Button { importing = true } label: { Label("Import", systemImage: "plus") }
+                    Button { importing = true } label: { Label("Import", image: "plus") }
                 }
             }
         }
