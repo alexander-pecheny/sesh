@@ -2,6 +2,7 @@
 name = "sesh-core"
 version.workspace = true
 edition.workspace = true
+license = "MIT"
 
 [lib]
 crate-type = ["staticlib", "rlib"]

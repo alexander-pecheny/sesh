@@ -71,6 +71,16 @@ Bundled JetBrainsMono Nerd Font is under the SIL Open Font License, copied into
 in `Resources/LICENSE-lucide.txt`. The app-icon cloud photographs in
 `Resources/icon-clouds` are CC0; `SOURCES.md` there names them.
 
+## Licence
+
+Sesh's own source is MIT, in `LICENSE`. A built app is GPL-3.0-or-later, in `COPYING`,
+because `sesh-core` links mosh through rmosh and the binary is then a derivative of it.
+Anyone handed that binary is owed its corresponding source and the licence text.
+
+Mosh's copyright holders waived the clash between the GPL and Apple's terms in
+`COPYING.iOS`, so the App Store is open to a build that meets the GPL in every other
+respect. `docs/LICENSES.md` lists what the binary carries and what a release still needs.
+
 ## Extra flags
 
 A Host's Extra flags are parsed against a subset and anything else is refused before

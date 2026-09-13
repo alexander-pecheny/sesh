@@ -13,20 +13,24 @@ GPL in every other respect, which means giving users the source and the licence 
 That is how Blink ships: the whole app is GPL-3.0, the source is public, and it sells on
 the App Store. VLC had no such waiver in 2011, which is why it was pulled.
 
-So mosh is not a blocker. The conditions are, and Sesh meets none of them yet:
+So mosh is not a blocker. The waiver's conditions are what is left:
 
-1. **Licence the app GPL-3.0-or-later.** `sesh-core` links mosh, so the combined work is
-   already a derivative. There is no licence file in this repo at all. Add `COPYING` with
-   the GPL v3 text and a `license` field to `sesh-core`.
-2. **Publish the corresponding source** for whatever build reaches TestFlight, and keep it
+1. ~~Licence the code.~~ Sesh's own source is MIT in `LICENSE`, `sesh-core` declares MIT,
+   rmosh stays GPL-3.0-or-later, and a built app is GPL-3.0-or-later because it links
+   mosh. `COPYING` carries the GPL v3 text.
+2. ~~Carry the waiver.~~ `COPYING.iOS` sits in this repo and in rmosh.
+3. **Publish the corresponding source** for whatever build reaches TestFlight, and keep it
    reachable for as long as the build is out there.
-3. **Show users the licence and where the source lives**, from the Licences page.
-4. Copy `COPYING.iOS` into `vendor/rmosh` and this repo, so the waiver travels with the
-   code rather than living only in upstream's tree.
+4. **Show users the licence and where the source lives**, from the Licences page. This is
+   a GPL requirement, not a courtesy.
 
 Worth noting that rmosh is a hand port by the same person who owns Sesh, so its new code
 is ours to license; the parts that derive from mosh carry upstream's GPL and upstream's
 waiver.
+
+One inaccuracy to fix in rmosh when convenient: its `Cargo.toml` sets
+`repository = "https://github.com/mobile-shell/mosh"`, which points at upstream rather
+than at rmosh itself.
 
 ## What ships
 
