@@ -33,6 +33,18 @@ One inaccuracy to fix in rmosh when convenient: its `Cargo.toml` sets
 `repository = "https://github.com/mobile-shell/mosh"`, which points at upstream rather
 than at rmosh itself.
 
+## The name
+
+Mosh is a registered trademark. Keith Winstein has asked apps that reimplement the
+protocol rather than ship mosh to call themselves mosh-compatible, and pressed Termius
+over exactly that. Sesh links code derived from mosh, so calling it mosh is the honest
+description, but the trademark is worth knowing about before a store listing is written.
+
+Closed-source terminals avoid the GPL by not carrying mosh at all. Termius and Panic's
+Prompt reimplemented the protocol from scratch and say so; Moshi says the same in the
+README of its author's `mosh-android` repository. Blink is the only one that ships mosh
+itself, and it is GPL-3.0 with public source, which is the path Sesh is on.
+
 ## What ships
 
 | Component | Licence | Where |
