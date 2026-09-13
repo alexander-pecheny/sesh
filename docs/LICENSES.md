@@ -20,7 +20,8 @@ So mosh is not a blocker. The waiver's conditions are what is left:
    mosh. `COPYING` carries the GPL v3 text.
 2. ~~Carry the waiver.~~ `COPYING.iOS` sits in this repo and in rmosh.
 3. **Publish the corresponding source** for whatever build reaches TestFlight, and keep it
-   reachable for as long as the build is out there.
+   reachable for as long as the build is out there. `pecheny/rmosh` is public;
+   `pecheny/sesh` is still private, and it has to be readable by anyone handed a build.
 4. **Show users the licence and where the source lives**, from the Licences page. This is
    a GPL requirement, not a courtesy.
 
