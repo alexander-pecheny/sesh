@@ -8,3 +8,5 @@ xcuserdata/
 *.xcframework
 core/target/
 Sesh/sesh.h
+
+__pycache__/

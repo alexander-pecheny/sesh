@@ -17,11 +17,17 @@ one C ABI. Keys and saved passwords live in the Keychain; Hosts, Drafts and know
 are JSON in Application Support. Several Tabs may be open at once; a Tab that is not
 visible keeps its Session running and only stops drawing.
 
-Fingers are read in one of three Touch modes, picked from the selector at the right of the
+Fingers are read in one of three Touch modes, picked from the selector at the left of the
 keys row: Type taps as a mouse with the on-screen keyboard up, Click does the same with
 the keyboard down so a TUI can be worked by touch, and Select drags out a selection to
 copy. The keys row stays on screen in all three, and a hardware keyboard works in all
 three.
+
+The keys come in two rows, each scrolling on its own when it runs past the screen. The
+first holds the mode selector, paste, the Editor, Enter, Shift-Enter, right-click and the
+arrows; the second holds Home to End, the modifiers with esc and tab, and the symbols.
+Shift-Enter sends Enter with Shift rather than a bare newline, so a remote program that
+reads the Kitty keyboard protocol can tell the two apart.
 
 ## Prerequisites
 
@@ -54,10 +60,16 @@ patches them.
   test key under `.local/`, and `just sshd-stop` stops it; that is what the simulator
   connects to. `just e2e` runs `scripts/e2e.py` against it and the booted simulator,
   printing a pass or fail line per check.
+- `just icons` renders every app-icon variant to `build/icons` with a contact sheet, and
+  `just icon NAME` installs one into `Resources/Icons.xcassets/AppIcon.appiconset`. The
+  icon is generated, not drawn: `scripts/appicon.py` maps a cloud photograph's luminance
+  onto a Catppuccin Mocha ramp and screens a neon "sesh" over it. A variant name joins a
+  cloud, a ramp and a glow recipe, all listed in that script.
 
-Bundled JetBrainsMono Nerd Font is under the SIL Open Font License, copied into `Resources/Fonts`
-Icons are [Lucide](https://lucide.dev), ISC licence, in `Resources/LICENSE-lucide.txt`.
-with its licence.
+Bundled JetBrainsMono Nerd Font is under the SIL Open Font License, copied into
+`Resources/Fonts` with its licence. Icons are [Lucide](https://lucide.dev), ISC licence,
+in `Resources/LICENSE-lucide.txt`. The app-icon cloud photographs in
+`Resources/icon-clouds` are CC0; `SOURCES.md` there names them.
 
 ## Extra flags
 

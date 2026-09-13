@@ -153,6 +153,7 @@ extension Ghostty {
         func perform(_ action: KeysRow.Action) {
             switch action {
             case .key(let code): send(keycode: code, mods: input.consume())
+            case .shifted(let code): send(keycode: code, mods: input.consume().union(.shift))
             case .character(let character): send(character: character, extra: input.consume())
             case .paste: paste(UIPasteboard.general.string ?? "")
             case .editor: onEditor?()

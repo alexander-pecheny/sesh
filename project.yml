@@ -33,8 +33,9 @@ targets:
         embed: false
     settings:
       base:
-        ASSETCATALOG_COMPILER_APPICON_NAME: ""
+        ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
         PRODUCT_BUNDLE_IDENTIFIER: me.pecheny.sesh
         INFOPLIST_FILE: Sesh/Info.plist
+        CODE_SIGN_ENTITLEMENTS: Sesh/Sesh.entitlements
         SWIFT_OBJC_BRIDGING_HEADER: Sesh/Sesh-Bridging-Header.h
         GENERATE_INFOPLIST_FILE: NO

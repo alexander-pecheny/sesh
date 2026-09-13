@@ -10,7 +10,7 @@ struct Mods: OptionSet, Hashable {
     static let cmd = Mods(rawValue: 1 << 3)
     static let rightClick = Mods(rawValue: 1 << 4)
 
-    static let all: [Mods] = [.ctrl, .alt, .shift, .cmd, .rightClick]
+    static let keyboard: [Mods] = [.ctrl, .alt, .shift, .cmd]
 
     init(rawValue: Int) { self.rawValue = rawValue }
 

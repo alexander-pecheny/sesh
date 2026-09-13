@@ -14,7 +14,7 @@ Traps this script works around:
   - with the software keyboard up, `shift` matches two elements, so the keys row's own
     keys are tapped by coordinate inside the row, never by label.
   - keys scrolled out of the row's ScrollView still report their content coordinates, so
-    a far key needs the row scrolled first.
+    `tap_key` drags the row until the key it wants is on screen.
   - `xcrun simctl pbcopy` fills the simulator pasteboard; a long key goes in that way and
     is pasted with cmd+V rather than typed.
   - the keys row moves down when Click or Select puts the keyboard away, so its y is
@@ -40,6 +40,8 @@ SHOTS = os.path.join(LOCAL)
 USER = os.environ.get("USER", "")
 
 results = []
+WIDTH = None
+ROW = 40  # KeysRow.row
 
 
 # ---------------------------------------------------------------- simulator plumbing
@@ -106,6 +108,15 @@ def wait_for(predicate, timeout=20, step=0.5):
 
 def element(label=None, timeout=15, **kwargs):
     return wait_for(lambda: (match(label=label, **kwargs) or [None])[0], timeout)
+
+
+def screen_width():
+    """The window, not the tree: the keys row reports content wider than the screen."""
+    global WIDTH
+    if WIDTH is None:
+        window = element(kind="Application", timeout=10)
+        WIDTH = window["frame"]["width"]
+    return WIDTH
 
 
 def tap(x, y, settle=0.6):
@@ -271,17 +282,38 @@ def check_title():
 
 def keys_row():
     """The row's own frame, so its keys are tapped by coordinate and never by label."""
-    esc = element("esc", timeout=10)
-    if not esc:
+    anchor = element("right-click", timeout=10)
+    if not anchor:
         raise RuntimeError("the keys row is not on screen")
-    return esc["frame"]["y"] + esc["frame"]["height"] / 2
+    return anchor["frame"]["y"] + anchor["frame"]["height"] / 2
+
+
+def in_row(label, row_y):
+    """Either key row: the second sits one row height below the first."""
+    found = [e for e in match(label=label) if -24 < e["y"] - row_y < 24 + ROW]
+    if not found:
+        raise RuntimeError(f"no keys-row key {label!r}")
+    return found[0]
 
 
 def tap_key(label, row_y):
-    found = [e for e in match(label=label) if abs(e["y"] - row_y) < 24]
-    if not found:
-        raise RuntimeError(f"no keys-row key {label!r}")
-    tap(found[0]["x"], row_y, settle=0.4)
+    """Both rows scroll, so the key is dragged into view along its own row first."""
+    key = in_row(label, row_y)
+    for _ in range(8):
+        box = key["frame"]
+        if box["x"] >= 0 and box["x"] + box["width"] <= screen_width():
+            break
+        near, far = 30, screen_width() - 20
+        start, end = (far, near) if box["x"] > near else (near, far)
+        # a drag, not a swipe: a flick's momentum carries the row past the key
+        axe("drag", "--start-x", f"{start:.0f}", "--start-y", f"{key['y']:.0f}",
+            "--end-x", f"{end:.0f}", "--end-y", f"{key['y']:.0f}", "--duration", "0.5")
+        time.sleep(0.4)
+        key = in_row(label, row_y)
+    box = key["frame"]
+    if box["x"] < 0 or box["x"] + box["width"] > screen_width():
+        raise RuntimeError(f"{label!r} would not scroll into the keys row")
+    tap(key["x"], key["y"], settle=0.4)
 
 
 def check_modes():
@@ -429,14 +461,12 @@ def check_mosh(name):
 
 def check_density():
     row = keys_row()
-    wanted = ["esc", "ctrl", "alt", "shift", "cmd", "rclk"]
-    visible = []
-    for label in wanted:
-        found = [e for e in match(label="right-click" if label == "rclk" else label)
-                 if abs(e["y"] - row) < 24]
-        if found and found[0]["frame"]["x"] + found[0]["frame"]["width"] <= 402:
-            visible.append(label)
-    check("the keys row shows esc to right-click without scrolling", visible == wanted, str(visible))
+    top = [in_row(label, row)["y"] for label in ["mode", "paste", "editor", "enter",
+                                                 "shift enter", "right-click", "right"]]
+    bottom = [in_row(label, row)["y"] for label in ["home", "end", "ctrl", "tab", "dash"]]
+    check("the first row runs from the modes to the arrows", len(set(top)) == 1, str(top))
+    check("the second row carries home to the symbols", len(set(bottom)) == 1, str(bottom))
+    check("the second row sits below the first", bottom[0] > top[0] + 20)
 
 
 # ------------------------------------------------------------------------------- main

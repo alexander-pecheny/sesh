@@ -24,6 +24,13 @@ run: build
 core:
     ./scripts/build-core.sh
 
+# Render every app-icon variant to build/icons; `just icon NAME` installs one.
+icons:
+    uv run scripts/appicon.py --sheet
+
+icon name:
+    uv run scripts/appicon.py --install {{name}}
+
 core-test:
     cd core && cargo test
 

@@ -3,11 +3,13 @@ import SwiftUI
 struct KeysRow: View {
     enum Action {
         case key(UInt32)
+        case shifted(UInt32)
         case character(Character)
         case paste, editor
     }
 
-    static let height: CGFloat = 46
+    static let row: CGFloat = 40
+    static let height: CGFloat = row * 2
 
     @ObservedObject var input: InputState
     @Environment(\.colorScheme) private var colorScheme
@@ -16,42 +18,51 @@ struct KeysRow: View {
     private var flavour: Catppuccin.Flavour { colorScheme == .dark ? .mocha : .latte }
 
     var body: some View {
-        HStack(spacing: 3) {
-            ScrollView(.horizontal, showsIndicators: false) {
-                HStack(spacing: 3) {
-                    cap("esc") { send(.key(Keycode.escape)) }
-                    ForEach(Mods.all, id: \.rawValue) { modKey($0) }
-                    cap("tab") { send(.key(Keycode.tab)) }
-                    separator
-                    ForEach(Array("~|/-"), id: \.self) { character in
-                        cap(String(character), name: Self.names[character]) {
-                            send(.character(character))
-                        }
-                    }
-                    separator
-                    arrow("chevron-left", "left", Keycode.left)
-                    arrow("chevron-up", "up", Keycode.up)
-                    arrow("chevron-down", "down", Keycode.down)
-                    arrow("chevron-right", "right", Keycode.right)
-                    separator
-                    arrow("arrow-left-to-line", "home", Keycode.home)
-                    arrow("arrow-up-to-line", "pgup", Keycode.pageUp)
-                    arrow("arrow-down-to-line", "pgdn", Keycode.pageDown)
-                    arrow("arrow-right-to-line", "end", Keycode.end)
-                }
-                .padding(.horizontal, 3)
-                .fixedSize(horizontal: true, vertical: false)
-            }
-            HStack(spacing: 3) {
+        VStack(spacing: 0) {
+            row {
+                modes
                 cap(icon: "clipboard-paste", name: "paste") { send(.paste) }
                 cap(icon: "square-pen", name: "editor") { send(.editor) }
-                modes
+                cap(icon: "corner-down-left", name: "enter") { send(.key(Keycode.enter)) }
+                cap(icon: "text-wrap", name: "shift enter") { send(.shifted(Keycode.enter)) }
+                modKey(.rightClick) { Image.lucide("mouse", size: 16) }
+                separator
+                arrow("chevron-left", "left", Keycode.left)
+                arrow("chevron-up", "up", Keycode.up)
+                arrow("chevron-down", "down", Keycode.down)
+                arrow("chevron-right", "right", Keycode.right)
             }
-            .padding(.trailing, 5)
+            row {
+                arrow("arrow-left-to-line", "home", Keycode.home)
+                arrow("arrow-up-to-line", "pgup", Keycode.pageUp)
+                arrow("arrow-down-to-line", "pgdn", Keycode.pageDown)
+                arrow("arrow-right-to-line", "end", Keycode.end)
+                separator
+                ForEach(Mods.keyboard, id: \.rawValue) { mod in
+                    modKey(mod) { Text(mod.label).font(.ui(12)) }
+                }
+                cap("esc") { send(.key(Keycode.escape)) }
+                cap("tab") { send(.key(Keycode.tab)) }
+                separator
+                ForEach(Array("~|/-"), id: \.self) { character in
+                    cap(String(character), name: Self.names[character]) {
+                        send(.character(character))
+                    }
+                }
+            }
         }
         .frame(height: Self.height)
         .frame(maxWidth: .infinity)
         .background(flavour(.mantle))
+    }
+
+    private func row(@ViewBuilder content: () -> some View) -> some View {
+        ScrollView(.horizontal, showsIndicators: false) {
+            HStack(spacing: 3) { content() }
+                .padding(.horizontal, 5)
+                .fixedSize(horizontal: true, vertical: false)
+        }
+        .frame(height: Self.row)
     }
 
     private var modes: some View {
@@ -78,12 +89,11 @@ struct KeysRow: View {
         Rectangle().fill(flavour(.surface1)).frame(width: 1, height: 24)
     }
 
-    private func modKey(_ mod: Mods) -> some View {
-        let title = mod == .rightClick ? "rclk" : mod.label
+    private func modKey(_ mod: Mods, @ViewBuilder title: () -> some View) -> some View {
         let held = input.locked.contains(mod) ? flavour(.peach)
             : input.armed.contains(mod) ? flavour(.mauve) : nil
         return Button { input.tap(mod) } label: {
-            label(Text(title).font(.ui(12)), background: held ?? flavour(.surface0),
+            label(title(), background: held ?? flavour(.surface0),
                   foreground: held == nil ? flavour(.text) : flavour(.crust))
         }
         .accessibilityLabel(mod.label)
