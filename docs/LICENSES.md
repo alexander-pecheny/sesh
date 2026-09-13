@@ -3,39 +3,37 @@
 What Sesh ships inside its binary, and what a Licences page has to name. Gathered for a
 TestFlight release; nothing here is legal advice.
 
-## The mosh problem
+## Mosh on the App Store
 
-Sesh cannot go on TestFlight or the App Store as it stands.
+Mosh's copyright holders have waived the conflict. `COPYING.iOS` in the mosh tree, drafted
+with the Software Freedom Law Center, says they will not pursue a violation that results
+solely from the clash between the GPL v3 and Apple's terms, as long as you comply with the
+GPL in every other respect, which means giving users the source and the licence text.
 
-`sesh-core` links `mosh`, `mosh-client` and `mosh-sys` from `vendor/rmosh`, and rmosh is
-**GPL-3.0-or-later**. Its `COPYING` is the GPL v3, its `Cargo.toml` says
-`license = "GPL-3.0-or-later"`, and its `AUTHORS` lists Keith Winstein and the other
-upstream mosh authors. The README calls rmosh a port of mosh written module by module
-against the C++, so it is a derivative work and cannot be relicensed by us alone.
+That is how Blink ships: the whole app is GPL-3.0, the source is public, and it sells on
+the App Store. VLC had no such waiver in 2011, which is why it was pulled.
 
-Apple's distribution terms restrict what a recipient may do with the binary, which is the
-conflict the GPL's section 6 and section 12 describe. VLC was pulled from the App Store
-over the same clash in 2011 and had to move to the LGPL. TestFlight is the same act of
-conveying a binary through the same terms, so it carries the same problem.
+So mosh is not a blocker. The conditions are, and Sesh meets none of them yet:
 
-Three ways out, in the order I would try them:
+1. **Licence the app GPL-3.0-or-later.** `sesh-core` links mosh, so the combined work is
+   already a derivative. There is no licence file in this repo at all. Add `COPYING` with
+   the GPL v3 text and a `license` field to `sesh-core`.
+2. **Publish the corresponding source** for whatever build reaches TestFlight, and keep it
+   reachable for as long as the build is out there.
+3. **Show users the licence and where the source lives**, from the Licences page.
+4. Copy `COPYING.iOS` into `vendor/rmosh` and this repo, so the waiver travels with the
+   code rather than living only in upstream's tree.
 
-1. Ship an App Store build with ssh only, and keep mosh for builds installed by hand.
-   `sesh-core` would need mosh behind a cargo feature so the GPL crates are not linked at
-   all. This is the only option that is entirely in our hands.
-2. Ask mosh's copyright holders to relicense. Mosh has many contributors and all of them
-   would have to agree, so this is slow and probably fails.
-3. Distribute outside the App Store, through an alternative marketplace in the EU or a
-   sideloading route. That gives up TestFlight.
-
-Everything below assumes this gets resolved.
+Worth noting that rmosh is a hand port by the same person who owns Sesh, so its new code
+is ours to license; the parts that derive from mosh carry upstream's GPL and upstream's
+waiver.
 
 ## What ships
 
 | Component | Licence | Where |
 | --- | --- | --- |
 | libghostty, from the [cmux fork](https://github.com/manaflow-ai/ghostty) at `bc9be90` | MIT, Mitchell Hashimoto and Ghostty contributors | `Frameworks/GhosttyKit.xcframework` |
-| [rmosh](https://code.pecheny.me/pecheny/rmosh), 8 crates | **GPL-3.0-or-later** | `vendor/rmosh`, see above |
+| [rmosh](https://code.pecheny.me/pecheny/rmosh), 8 crates | GPL-3.0-or-later, with upstream's App Store waiver | `vendor/rmosh`, see above |
 | [russh](https://crates.io/crates/russh) and 220-odd other Rust crates | permissive, see below | `Frameworks/SeshCore.xcframework` |
 | JetBrainsMono Nerd Font | SIL Open Font License 1.1 | `Resources/Fonts`, licence in `OFL.txt` |
 | [Lucide](https://lucide.dev) icons | ISC, Lucide Icons and Contributors | `Resources/Icons.xcassets`, licence in `Resources/LICENSE-lucide.txt` |
@@ -58,7 +56,8 @@ Everything below assumes this gets resolved.
 Two `r-efi` versions carry an LGPL-2.1 option, but they build only for UEFI targets, are
 never linked into iOS, and offer MIT anyway.
 
-`sesh-core` itself has no `license` field. Set one before release.
+`sesh-core` itself has no `license` field. It has to be GPL-3.0-or-later, because it
+links mosh.
 
 Regenerate the list with:
 
