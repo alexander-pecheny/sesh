@@ -10,3 +10,4 @@ core/target/
 Sesh/sesh.h
 
 __pycache__/
+.env

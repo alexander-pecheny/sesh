@@ -83,6 +83,25 @@ cd core && cargo metadata --format-version 1 --all-features \
   | python3 -c 'import json,sys; [print(p["name"], p["version"], p.get("license")) for p in json.load(sys.stdin)["packages"]]'
 ```
 
+## Export compliance
+
+`ITSAppUsesNonExemptEncryption` is `false` in `Sesh/Info.plist`, so App Store Connect
+stops asking per build and nothing has to be uploaded.
+
+That answer rests on the source being public. A [BIS final rule of 29 March 2021][bis]
+removed the email notification that EAR 742.15(b) used to require before publicly
+available encryption source code fell outside the EAR, and [BIS's guidance][not-subject]
+puts object code outside it too when the corresponding source is publicly available.
+Sesh and rmosh are both public and the build is free, so no year-end
+self-classification report follows. If Sesh is ever sold, or either repository stops
+being public, this has to be looked at again.
+
+Blink, which ships OpenSSH, OpenSSL and mosh, answers `false`; so do Signal, WireGuard
+and Firefox on iOS.
+
+[bis]: https://sanctionsnews.bakermckenzie.com/bis-updates-reporting-requirements-relating-to-mass-market-encryption-items-and-publicly-available-software-and-also-updates-certain-classifications/
+[not-subject]: https://www.bis.gov/learn-support/encryption-controls/encryption-items-not-subject-to-ear
+
 ## Still to gather
 
 - The full licence text for every crate, not just the SPDX name. MIT and BSD ask for the

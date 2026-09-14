@@ -46,3 +46,7 @@ e2e: build
 # Build, sign and install on the paired iPhone (see scripts/install-device.sh).
 device:
     ./scripts/install-device.sh
+
+# Archive and upload a build to TestFlight (see scripts/testflight.sh).
+testflight:
+    ./scripts/testflight.sh

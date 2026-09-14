@@ -65,6 +65,11 @@ patches them.
   icon is generated, not drawn: `scripts/appicon.py` maps a cloud photograph's luminance
   onto a Catppuccin Mocha ramp and screens a neon "sesh" over it. A variant name joins a
   cloud, a ramp and a glow recipe, all listed in that script.
+- `just testflight` archives, exports and uploads a build to TestFlight. It reads
+  `DEVELOPMENT_TEAM`, `ASC_KEY_ID` and `ASC_ISSUER_ID` from an untracked `.env`; no Apple
+  ID is signed into Xcode, so `xcodebuild` authenticates with the same App Store Connect
+  API key the upload uses and mints the distribution certificate itself. The build number
+  is the commit count.
 
 Bundled JetBrainsMono Nerd Font is under the SIL Open Font License, copied into
 `Resources/Fonts` with its licence. Icons are [Lucide](https://lucide.dev), ISC licence,
