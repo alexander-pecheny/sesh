@@ -89,7 +89,9 @@ def main():
         e["texts"] = [pool.setdefault(t, len(pool)) for t in e.pop("text")]
     out = ROOT / "Resources/licenses.json"
     gpl = pool.setdefault((ROOT / "COPYING").read_text().strip(), len(pool))
-    out.write_text(json.dumps({"texts": list(pool), "components": entries, "gpl": gpl}))
+    waiver = pool.setdefault((ROOT / "COPYING.iOS").read_text().strip(), len(pool))
+    out.write_text(json.dumps({"texts": list(pool), "components": entries,
+                               "gpl": gpl, "waiver": waiver}))
     print(f"{len(entries)} components -> {out.relative_to(ROOT)}")
     if missing:
         print("no licence text found for:", ", ".join(missing), file=sys.stderr)

@@ -8,12 +8,13 @@ struct Licenses: Decodable {
     let texts: [String]
     let components: [Component]
     let gpl: Int
+    let waiver: Int
 
     static let bundled: Licenses = {
         guard let url = Bundle.main.url(forResource: "licenses", withExtension: "json"),
               let data = try? Data(contentsOf: url),
               let parsed = try? JSONDecoder().decode(Licenses.self, from: data)
-        else { return Licenses(texts: [], components: [], gpl: 0) }
+        else { return Licenses(texts: [], components: [], gpl: 0, waiver: 0) }
         return parsed
     }()
 }
@@ -42,6 +43,17 @@ struct LicensesView: View {
                     NavigationLink("GNU General Public License v3") {
                         TextScreen(title: "GPL v3",
                                    body: licenses.texts[safe: licenses.gpl] ?? "")
+                    }
+                    .font(.ui(14))
+                    Text("""
+                    Sesh reaches the App Store because mosh's copyright holders \
+                    committed not to pursue the conflict between the GPL and Apple's \
+                    terms, as long as the GPL is met in every other respect. Their \
+                    waiver:
+                    """).font(.ui(13))
+                    NavigationLink("Mosh App Store exception") {
+                        TextScreen(title: "COPYING.iOS",
+                                   body: licenses.texts[safe: licenses.waiver] ?? "")
                     }
                     .font(.ui(14))
                 }
