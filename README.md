@@ -65,6 +65,10 @@ patches them.
   icon is generated, not drawn: `scripts/appicon.py` maps a cloud photograph's luminance
   onto a Catppuccin Mocha ramp and screens a neon "sesh" over it. A variant name joins a
   cloud, a ramp and a glow recipe, all listed in that script.
+- `just site` publishes `docs/site` to <https://sesh.pecheny.me>, three static pages that
+  the App Store listing needs: the app, the privacy policy and where the source lives.
+  Caddy on `vps2day-ee` serves `/home/ap/sesh_site`; the DNS record is an unproxied A
+  record in Cloudflare.
 - `just testflight` archives, exports and uploads a build to TestFlight. It reads
   `DEVELOPMENT_TEAM`, `ASC_KEY_ID` and `ASC_ISSUER_ID` from an untracked `.env`; no Apple
   ID is signed into Xcode, so `xcodebuild` authenticates with the same App Store Connect

@@ -8,6 +8,7 @@ xcuserdata/
 *.xcframework
 core/target/
 Sesh/sesh.h
+Resources/licenses.json
 
 __pycache__/
 .env

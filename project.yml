@@ -28,6 +28,7 @@ targets:
         type: folder
         buildPhase: resources
       - path: Resources/Icons.xcassets
+      - path: Resources/licenses.json
     dependencies:
       - framework: Frameworks/GhosttyKit.xcframework
         embed: false

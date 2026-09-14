@@ -9,8 +9,12 @@ ghosttykit:
 ghosttykit-prebuilt:
     ./scripts/fetch-ghosttykit.sh
 
-gen: ghosttykit core
+gen: ghosttykit core licenses
     xcodegen generate --quiet
+
+# Collects every linked crate's licence text into Resources/licenses.json.
+licenses:
+    uv run scripts/licenses.py
 
 build: gen
     xcodebuild -project Sesh.xcodeproj -scheme Sesh -configuration Debug \
@@ -46,6 +50,10 @@ e2e: build
 # Build, sign and install on the paired iPhone (see scripts/install-device.sh).
 device:
     ./scripts/install-device.sh
+
+# Publish docs/site to sesh.pecheny.me, served by Caddy on vps2day-ee.
+site:
+    rsync -av --delete docs/site/ vps2day-ee:/home/ap/sesh_site/
 
 # Archive and upload a build to TestFlight (see scripts/testflight.sh).
 testflight:

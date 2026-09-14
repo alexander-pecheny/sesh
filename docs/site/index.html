@@ -1,0 +1,44 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Sesh</title>
+<style>
+  :root { color-scheme: light dark; --fg: #1a1a1a; --muted: #666; --bg: #fff; --accent: #0a84ff; }
+  @media (prefers-color-scheme: dark) {
+    :root { --fg: #e8e8e8; --muted: #999; --bg: #16161a; --accent: #4da3ff; }
+  }
+  body {
+    margin: 0 auto; padding: 5rem 1.25rem; max-width: 34rem;
+    background: var(--bg); color: var(--fg);
+    font: 16px/1.65 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+  }
+  h1 { font-size: 2rem; margin: 0 0 .5rem; letter-spacing: -.02em; }
+  p { margin: 0 0 1.25rem; }
+  .muted { color: var(--muted); }
+  a { color: var(--accent); }
+  nav { margin-top: 2.5rem; display: flex; gap: 1.5rem; flex-wrap: wrap; }
+</style>
+</head>
+<body>
+
+<h1>Sesh</h1>
+<p class="muted">An SSH and mosh terminal for iPhone and iPad.</p>
+
+<p>Sesh reaches your own machines over SSH or mosh. Nothing runs locally: every terminal
+is a window onto a remote shell, drawn by <a href="https://ghostty.org">libghostty</a>,
+so colours, ligatures and escape sequences behave as they do on a desktop. A mosh session
+survives a lost network and a locked phone.</p>
+
+<p>Keys and passwords live in the iOS Keychain. Hosts stay on the device. Touch modes let
+you work a TUI by finger, and the two rows of keys carry the modifiers a terminal needs.</p>
+
+<nav>
+  <a href="/privacy">Privacy policy</a>
+  <a href="/source">Source and licences</a>
+  <a href="mailto:sesh@pecheny.me">Support</a>
+</nav>
+
+</body>
+</html>

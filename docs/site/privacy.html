@@ -1,0 +1,78 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Sesh — Privacy Policy</title>
+<style>
+  :root { color-scheme: light dark; --fg: #1a1a1a; --muted: #666; --bg: #fff; --accent: #0a84ff; }
+  @media (prefers-color-scheme: dark) {
+    :root { --fg: #e8e8e8; --muted: #999; --bg: #16161a; --accent: #4da3ff; }
+  }
+  body {
+    margin: 0 auto; padding: 3rem 1.25rem 5rem; max-width: 38rem;
+    background: var(--bg); color: var(--fg);
+    font: 16px/1.65 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+  }
+  h1 { font-size: 1.75rem; margin: 0 0 .25rem; letter-spacing: -.02em; }
+  h2 { font-size: 1.15rem; margin: 2.5rem 0 .5rem; letter-spacing: -.01em; }
+  .updated { color: var(--muted); font-size: .9rem; margin: 0 0 2.5rem; }
+  .lede { font-size: 1.2rem; font-weight: 600; margin: 0 0 1.5rem; }
+  a { color: var(--accent); }
+  footer { margin-top: 3.5rem; padding-top: 1.5rem; border-top: 1px solid var(--muted);
+           color: var(--muted); font-size: .9rem; }
+</style>
+</head>
+<body>
+
+<h1>Sesh Privacy Policy</h1>
+<p class="updated">Last updated: 14 September 2026</p>
+
+<p class="lede">Sesh collects no data.</p>
+
+<p>Sesh connects to the machines you name and to nothing else. There is no server the
+developer runs, no account to create, and no analytics, advertising, crash reporting or
+tracking of any kind in the app.</p>
+
+<h2>What stays on your device</h2>
+
+<p>Your Hosts, the addresses and usernames you type, the known-host fingerprints Sesh
+records on first connection, and the Drafts you write in the Editor are stored in the
+app's own container on the device. Private keys and any password you ask Sesh to save
+are held in the iOS Keychain. None of it is transmitted anywhere, and the developer has
+no way to read it.</p>
+
+<h2>What leaves your device</h2>
+
+<p>Only what a terminal session is: the keystrokes you send to a machine you chose, and
+the output it sends back, over SSH or mosh, encrypted end to end between the app and
+that machine. Sesh does not relay traffic through anything in between. What the remote
+machine logs is governed by whoever runs it — which, for most users of a terminal, is
+you.</p>
+
+<p>If a program running on the remote machine sets the clipboard through OSC 52, Sesh
+writes to the phone's clipboard. Clipboard reads from the remote machine are refused.</p>
+
+<h2>Deleting your data</h2>
+
+<p>Deleting the app removes everything Sesh holds, including its Keychain items. There
+is no account to close and no deletion request to file.</p>
+
+<h2>Children</h2>
+
+<p>Sesh is not directed at children and collects nothing from anyone, regardless of
+age.</p>
+
+<h2>Changes</h2>
+
+<p>Any change to this policy will be published at this address, with the date above
+updated.</p>
+
+<h2>Contact</h2>
+
+<p>Questions about this policy: <a href="mailto:sesh@pecheny.me">sesh@pecheny.me</a></p>
+
+<footer>Sesh — an SSH and mosh terminal for iPhone and iPad.</footer>
+
+</body>
+</html>
