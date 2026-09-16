@@ -14,6 +14,7 @@ use crate::agent::{self, Agent};
 use crate::flags::{self, SshFlags};
 use crate::known_hosts::{self, Verdict};
 use crate::session::{ask, Answers, Command, Context, Events, Prompt, Session, State};
+use crate::upload::{self, Pending};
 
 #[derive(Default)]
 pub struct Config {
@@ -138,6 +139,9 @@ async fn drive(config: Config, context: Context) -> Result<(), String> {
 
     authenticate(&mut handle, &user, &credentials(&config), &flags, events, answers).await?;
 
+    // `Handle` is not `Clone`, but `channel_open_session` takes `&self`, so an Arc lets a
+    // spawned Upload open a channel while this task keeps pumping the shell.
+    let handle = Arc::new(handle);
     let channel = handle
         .channel_open_session()
         .await
@@ -160,6 +164,7 @@ async fn drive(config: Config, context: Context) -> Result<(), String> {
     }
     .map_err(|e| format!("starting the remote command: {e}"))?;
     events.state(State::Connected, "");
+    let mut uploads = Pending::default();
 
     loop {
         tokio::select! {
@@ -178,6 +183,12 @@ async fn drive(config: Config, context: Context) -> Result<(), String> {
                 Some(Command::Resize(cols, rows)) => {
                     let _ = writer.window_change(cols.max(1) as u32, rows.max(1) as u32, 0, 0).await;
                 }
+                Some(Command::Upload(id, files)) => {
+                    let task = upload::over_ssh(
+                        handle.clone(), id, files, uploads.begin(id), events.clone());
+                    tokio::spawn(task);
+                }
+                Some(Command::CancelUpload(id)) => uploads.cancel(id),
                 Some(Command::Close) | None => break,
             },
         }
@@ -234,6 +245,47 @@ pub struct Credentials<'a> {
     pub key: Option<&'a str>,
     pub key_passphrase: Option<&'a str>,
     pub password: Option<&'a str>,
+}
+
+/// Everything a fresh SSH connection needs. A mosh Session keeps one, because its own
+/// connection ends as soon as mosh-server is running.
+pub struct Dialer {
+    pub host: String,
+    pub port: u16,
+    pub user: String,
+    pub password: Option<String>,
+    pub key: Option<String>,
+    pub key_passphrase: Option<String>,
+    pub known_hosts: PathBuf,
+    pub flags: SshFlags,
+}
+
+impl Dialer {
+    pub async fn connect(
+        &self,
+        events: &Arc<dyn Events>,
+        answers: &Arc<Answers>,
+    ) -> Result<client::Handle<Handler>, String> {
+        let config = Arc::new(client_config(&self.flags));
+        let (mut handle, _) =
+            connect_any(&config, &self.host, self.port, &self.flags, || Handler {
+                events: events.clone(),
+                answers: answers.clone(),
+                known_hosts: self.known_hosts.clone(),
+                host: self.host.clone(),
+                port: self.port,
+                agent: None,
+            })
+            .await?;
+        let credentials = Credentials {
+            host: &self.host,
+            key: self.key.as_deref(),
+            key_passphrase: self.key_passphrase.as_deref(),
+            password: self.password.as_deref(),
+        };
+        authenticate(&mut handle, &self.user, &credentials, &self.flags, events, answers).await?;
+        Ok(handle)
+    }
 }
 
 pub async fn authenticate(
@@ -411,6 +463,10 @@ mod tests {
             let sender = answers.host_key.lock().unwrap().take().unwrap();
             let _ = sender.send(true);
         }
+
+        fn upload_progress(&self, _: u32, _: u64, _: u64) {}
+
+        fn upload_done(&self, _: u32, _: &[String], _: Option<&str>) {}
 
         fn auth_prompt(&self, id: u32, _: &str, _: &str, _: &[Prompt]) {
             self.states.lock().unwrap().push("prompted");

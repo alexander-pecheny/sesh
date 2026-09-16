@@ -50,6 +50,7 @@ UsePAM no
 StrictModes no
 PrintMotd no
 LogLevel VERBOSE
+Subsystem sftp /usr/libexec/sftp-server
 CONF
 
 /usr/sbin/sshd -D -e -f "$config" > "$local/sshd.log" 2>&1 &

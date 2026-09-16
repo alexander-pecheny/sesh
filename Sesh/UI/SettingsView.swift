@@ -14,6 +14,9 @@ struct SettingsView: View {
                 .accessibilityLabel("font size")
                 Text("New Tabs use this size. Pinch inside a Tab to change that Tab only.")
                     .font(.ui(12))
+                Toggle("Compress images", isOn: $store.compressUploads).font(.ui(14))
+                Text("Uploaded images are cut to 1568px on the longest edge. Videos are never touched.")
+                    .font(.ui(12))
                 Button("Licences") { showingLicenses = true }.font(.ui(14))
             }
             .navigationTitle("Settings")

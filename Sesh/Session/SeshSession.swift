@@ -1,3 +1,4 @@
+import PhotosUI
 import UIKit
 import GhosttyKit
 
@@ -22,6 +23,13 @@ final class SeshSession: ObservableObject, Identifiable {
         case connecting, authenticating, connected, closed, failed, bootstrapping
     }
 
+    struct Progress {
+        let id: UInt32
+        var done: UInt64
+        var total: UInt64
+        var fraction: Double { total == 0 ? 0 : Double(done) / Double(total) }
+    }
+
     @Published private(set) var stage = Stage.connecting
     @Published private(set) var message = ""
     @Published var hostKeyQuestion: HostKeyQuestion?
@@ -29,6 +37,9 @@ final class SeshSession: ObservableObject, Identifiable {
     @Published var savePassword = false
     @Published var selection: CGPoint?
     @Published var editing = false
+    @Published var picking = false
+    @Published private(set) var uploading: Progress?
+    @Published var uploadError: String?
     @Published private(set) var title: String?
 
     let id = UUID()
@@ -39,6 +50,7 @@ final class SeshSession: ObservableObject, Identifiable {
     private let store: Store
     private var handle: OpaquePointer?
     private var bridge = Bridge()
+    private var finished: (([String], String?) -> Void)?
 
     init(host: Host, store: Store, app: ghostty_app_t) {
         self.host = host
@@ -50,6 +62,7 @@ final class SeshSession: ObservableObject, Identifiable {
         terminal.onResize = { [weak self] cols, rows in self?.resize(cols, rows) }
         terminal.onSelection = { [weak self] anchor in self?.selection = anchor }
         terminal.onEditor = { [weak self] in self?.editing = true }
+        terminal.onUpload = { [weak self] in self?.picking = true }
         terminal.onTitle = { [weak self] title in self?.title = title }
     }
 
@@ -150,6 +163,70 @@ final class SeshSession: ObservableObject, Identifiable {
         guard let text = terminal.selection()?.text else { return }
         UIPasteboard.general.string = text
         selection = nil
+    }
+
+    var canUpload: Bool { stage == .connected && uploading == nil }
+
+    /// Prepares the picks on a background task, then hands the core paths rather than
+    /// bytes, so a 200MB video never sits in memory. `insert` receives the remote paths,
+    /// already quoted and joined, once the whole batch has landed.
+    func upload(_ results: [PHPickerResult], insert: @escaping (String) -> Void) {
+        guard canUpload, !results.isEmpty else { return }
+        // Id 0 stands for "still preparing", which cancels without troubling the core.
+        uploading = Progress(id: 0, done: 0, total: 1)
+        Task {
+            let files: [PreparedUpload]
+            do {
+                files = try await Uploads.prepare(results, compress: store.compressUploads)
+            } catch {
+                uploading = nil
+                uploadError = error.localizedDescription
+                return
+            }
+            // Read the handle now, not before the await: a Reconnect would have freed it.
+            guard uploading != nil, let handle else { return Uploads.discard(files) }
+            let strings = CStrings()
+            let entries = files.map {
+                sesh_upload_t(local_path: strings.make($0.local.path), remote_name: strings.make($0.name))
+            }
+            let id = withExtendedLifetime(strings) {
+                entries.withUnsafeBufferPointer {
+                    sesh_session_upload(handle, $0.baseAddress, UInt($0.count))
+                }
+            }
+            guard id != 0 else {
+                uploading = nil
+                Uploads.discard(files)
+                uploadError = "the Upload could not be started"
+                return
+            }
+            uploading = Progress(id: id, done: 0, total: 1)
+            finished = { [weak self] paths, error in
+                Uploads.discard(files)
+                self?.uploading = nil
+                self?.uploadError = error
+                guard !paths.isEmpty else { return }
+                insert(Uploads.text(for: paths))
+            }
+        }
+    }
+
+    func cancelUpload() {
+        guard let uploading else { return }
+        guard uploading.id != 0 else { return self.uploading = nil }
+        guard let handle else { return }
+        sesh_session_cancel_upload(handle, uploading.id)
+    }
+
+    fileprivate func progressed(_ id: UInt32, _ done: UInt64, _ total: UInt64) {
+        guard uploading?.id == id else { return }
+        uploading = Progress(id: id, done: done, total: total)
+    }
+
+    fileprivate func uploaded(_ id: UInt32, _ paths: [String], _ error: String?) {
+        guard uploading?.id == id, let finish = finished else { return }
+        finished = nil
+        finish(paths, error)
     }
 
     func sendDraft(_ text: String, enter: Bool) {
@@ -263,6 +340,18 @@ private final class Bridge {
                 })
             let bridge = Bridge.of(userdata)
             DispatchQueue.main.async { bridge.owner?.authQuestion = question }
+        },
+        on_upload_progress: { userdata, id, done, total in
+            guard let userdata else { return }
+            let bridge = Bridge.of(userdata)
+            DispatchQueue.main.async { bridge.owner?.progressed(id, done, total) }
+        },
+        on_upload_done: { userdata, id, paths, count, error in
+            guard let userdata else { return }
+            let remote = (0..<Int(count)).compactMap { paths?[$0].map { String(cString: $0) } }
+            let message = error.map { String(cString: $0) }
+            let bridge = Bridge.of(userdata)
+            DispatchQueue.main.async { bridge.owner?.uploaded(id, remote, message) }
         },
         on_release: { userdata in
             guard let userdata else { return }

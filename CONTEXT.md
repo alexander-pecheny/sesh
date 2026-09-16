@@ -46,6 +46,14 @@ saved on the way to the background. Planned, not in the first build. Never appli
 SSH.
 _Avoid_: reconnect (that is a new Session in the same Tab)
 
+**Upload**:
+One image or video sent from the phone's library to the Host. It keeps a name carrying the
+moment it was sent, and its remote path is inserted into the terminal or the Draft being
+written, so the remote program is told where to find it. An image Upload is downscaled
+unless the user turns that off, so it need not match the photo in the library; a video
+always does. Uploads outlive the Session and the app never deletes them.
+_Avoid_: attachment, transfer, image
+
 ## Touch
 
 **Touch mode**:
@@ -69,12 +77,12 @@ _Avoid_: copy mode, selection mode
 **Keys row**:
 The strip above the keyboard holding modifiers, arrows, symbols, paste, the Editor button
 and the Touch mode selector. It stays on screen in every Touch mode.
+_Avoid_: toolbar, accessory bar, mini keys
 
 **Modifier**:
 A keys-row key that changes the next key or tap: ctrl, alt, shift, cmd and right-click.
 One tap arms it for the next input; two taps lock it until tapped again.
 _Avoid_: sticky key
-_Avoid_: toolbar, accessory bar, mini keys
 
 **Editor**:
 A plain, proportional-font place to compose long input and send it to the active Tab.

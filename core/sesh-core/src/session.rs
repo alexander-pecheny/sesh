@@ -1,5 +1,6 @@
 //! What both transports share: the handle the app holds, and the events it receives.
 
+use std::path::PathBuf;
 use std::sync::atomic::{AtomicU32, Ordering};
 use std::sync::{Arc, Mutex, OnceLock};
 
@@ -22,18 +23,51 @@ pub struct Prompt {
     pub echo: bool,
 }
 
+/// One image or video on its way to the Host. `name` is what it will be called there.
+pub struct Upload {
+    pub local: PathBuf,
+    pub name: String,
+    pub size: u64,
+}
+
 /// Every method is called from a tokio worker thread.
 pub trait Events: Send + Sync + 'static {
     fn output(&self, bytes: &[u8]);
     fn state(&self, state: State, message: &str);
     fn host_key(&self, fingerprint: &str, previous: Option<&str>);
     fn auth_prompt(&self, id: u32, name: &str, instruction: &str, prompts: &[Prompt]);
+    fn upload_progress(&self, id: u32, done: u64, total: u64);
+    /// No paths and no error means the app cancelled, which it already knows.
+    fn upload_done(&self, id: u32, paths: &[String], error: Option<&str>);
+}
+
+/// Forwards the questions a connection may ask but swallows its state and its output, so
+/// a re-authentication for an Upload does not leave the Tab reading "authenticating".
+pub struct Aside(pub Arc<dyn Events>);
+
+impl Events for Aside {
+    fn output(&self, _: &[u8]) {}
+    fn state(&self, _: State, _: &str) {}
+    fn host_key(&self, fingerprint: &str, previous: Option<&str>) {
+        self.0.host_key(fingerprint, previous)
+    }
+    fn auth_prompt(&self, id: u32, name: &str, instruction: &str, prompts: &[Prompt]) {
+        self.0.auth_prompt(id, name, instruction, prompts)
+    }
+    fn upload_progress(&self, id: u32, done: u64, total: u64) {
+        self.0.upload_progress(id, done, total)
+    }
+    fn upload_done(&self, id: u32, paths: &[String], error: Option<&str>) {
+        self.0.upload_done(id, paths, error)
+    }
 }
 
 pub enum Command {
     Write(Vec<u8>),
     Resize(u16, u16),
     Close,
+    Upload(u32, Vec<Upload>),
+    CancelUpload(u32),
 }
 
 #[derive(Default)]
@@ -53,6 +87,7 @@ pub struct Context {
 pub struct Session {
     commands: mpsc::UnboundedSender<Command>,
     answers: Arc<Answers>,
+    next_upload: AtomicU32,
 }
 
 pub fn runtime() -> &'static tokio::runtime::Runtime {
@@ -79,6 +114,7 @@ impl Session {
         let session = Session {
             commands,
             answers: answers.clone(),
+            next_upload: AtomicU32::new(0),
         };
         runtime().spawn(async move {
             let context = Context {
@@ -104,6 +140,16 @@ impl Session {
 
     pub fn close(&self) {
         let _ = self.commands.send(Command::Close);
+    }
+
+    pub fn upload(&self, files: Vec<Upload>) -> u32 {
+        let id = self.next_upload.fetch_add(1, Ordering::Relaxed) + 1;
+        let _ = self.commands.send(Command::Upload(id, files));
+        id
+    }
+
+    pub fn cancel_upload(&self, id: u32) {
+        let _ = self.commands.send(Command::CancelUpload(id));
     }
 
     pub fn answer_host_key(&self, accept: bool) {

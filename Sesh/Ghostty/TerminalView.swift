@@ -19,6 +19,7 @@ extension Ghostty {
         var onResize: ((UInt16, UInt16) -> Void)?
         var onSelection: ((CGPoint?) -> Void)?
         var onEditor: (() -> Void)?
+        var onUpload: (() -> Void)?
         var onTitle: ((String) -> Void)?
 
         var gridSize: (UInt16, UInt16) { grid }
@@ -157,6 +158,7 @@ extension Ghostty {
             case .character(let character): send(character: character, extra: input.consume())
             case .paste: paste(UIPasteboard.general.string ?? "")
             case .editor: onEditor?()
+            case .upload: onUpload?()
             }
         }
 

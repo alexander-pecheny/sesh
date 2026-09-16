@@ -13,14 +13,34 @@ struct SessionTab: View {
             Ghostty.Terminal(view: session.terminal)
                 .overlay(alignment: .topLeading) { copyButton }
                 .overlay { disconnected }
-            KeysRow(input: session.terminal.input) { session.terminal.perform($0) }
+            KeysRow(
+                input: session.terminal.input,
+                uploading: session.uploading?.fraction,
+                canUpload: session.canUpload
+            ) { action in
+                switch action {
+                case .upload where session.uploading != nil: session.cancelUpload()
+                default: session.terminal.perform(action)
+                }
+            }
         }
             .sheet(isPresented: $session.editing) {
-                EditorView { text, enter in session.sendDraft(text, enter: enter) }
+                EditorView(session: session) { text, enter in session.sendDraft(text, enter: enter) }
                     .environmentObject(store)
             }
+            .sheet(isPresented: $session.picking) {
+                PhotoPicker { results in
+                    session.picking = false
+                    session.upload(results) { session.terminal.paste($0) }
+                }
+                .ignoresSafeArea()
+            }
+            .uploadFailure($session.uploadError)
             .onChange(of: session.editing) { _, editing in
                 if !editing { _ = session.terminal.becomeFirstResponder() }
+            }
+            .onChange(of: session.picking) { _, picking in
+                if !picking { _ = session.terminal.becomeFirstResponder() }
             }
             .sheet(item: $session.hostKeyQuestion) { question in
                 HostKeySheet(question: question, host: session.host) { session.answerHostKey($0) }

@@ -13,7 +13,7 @@ use std::sync::Arc;
 
 use crate::flags::{self, Transport};
 use crate::mosh;
-use crate::session::{self, Prompt, Session, State};
+use crate::session::{self, Prompt, Session, State, Upload};
 use crate::ssh;
 
 #[repr(C)]
@@ -46,9 +46,21 @@ pub struct sesh_callbacks_t {
     pub on_auth_prompt: Option<
         extern "C" fn(*mut c_void, u32, *const c_char, *const c_char, *const *const c_char, *const bool, usize),
     >,
+    pub on_upload_progress: Option<extern "C" fn(*mut c_void, u32, u64, u64)>,
+    /// No paths and no error means the app cancelled, which it already knows.
+    pub on_upload_done:
+        Option<extern "C" fn(*mut c_void, u32, *const *const c_char, usize, *const c_char)>,
     /// The last call on `userdata`: no callback runs after it, so it is where the embedder
     /// releases whatever `userdata` points at.
     pub on_release: Option<extern "C" fn(*mut c_void)>,
+}
+
+/// One image or video to upload. `remote_name` is the name it takes on the Host, which the
+/// core suffixes if it is already taken.
+#[repr(C)]
+pub struct sesh_upload_t {
+    pub local_path: *const c_char,
+    pub remote_name: *const c_char,
 }
 
 /// Optional fields are NULL when unset. `term` defaults to `xterm-256color`.
@@ -163,6 +175,29 @@ impl session::Events for Sink {
             pointers.as_ptr(),
             echoes.as_ptr(),
             pointers.len(),
+        );
+    }
+
+    fn upload_progress(&self, id: u32, done: u64, total: u64) {
+        if let Some(callback) = self.callbacks.on_upload_progress {
+            callback(self.userdata, id, done, total);
+        }
+    }
+
+    fn upload_done(&self, id: u32, paths: &[String], error: Option<&str>) {
+        let Some(callback) = self.callbacks.on_upload_done else { return };
+        let paths: Vec<CString> = paths
+            .iter()
+            .map(|p| CString::new(p.as_str()).unwrap_or_default())
+            .collect();
+        let pointers: Vec<*const c_char> = paths.iter().map(|p| p.as_ptr()).collect();
+        let error = error.map(|e| CString::new(e).unwrap_or_default());
+        callback(
+            self.userdata,
+            id,
+            pointers.as_ptr(),
+            pointers.len(),
+            error.as_ref().map_or(std::ptr::null(), |e| e.as_ptr()),
         );
     }
 }
@@ -280,6 +315,44 @@ pub unsafe extern "C" fn sesh_session_resize(session: *mut sesh_session_t, cols:
 pub unsafe extern "C" fn sesh_session_answer_host_key(session: *mut sesh_session_t, accept: bool) {
     if let Some(session) = session.as_ref() {
         session.session.answer_host_key(accept);
+    }
+}
+
+/// Starts an Upload of `count` files and returns its id. Progress arrives on
+/// `on_upload_progress` and the remote paths on `on_upload_done`. A file the core cannot
+/// read fails the whole batch, and anything already written is unlinked.
+#[no_mangle]
+pub unsafe extern "C" fn sesh_session_upload(
+    session: *mut sesh_session_t,
+    files: *const sesh_upload_t,
+    count: usize,
+) -> u32 {
+    let Some(session) = session.as_ref() else { return 0 };
+    if files.is_null() || count == 0 {
+        return 0;
+    }
+    let files = std::slice::from_raw_parts(files, count)
+        .iter()
+        .filter_map(|file| {
+            let local = PathBuf::from(text(file.local_path)?);
+            let size = std::fs::metadata(&local).map(|m| m.len()).unwrap_or(0);
+            Some(Upload {
+                name: text(file.remote_name)?,
+                local,
+                size,
+            })
+        })
+        .collect::<Vec<_>>();
+    match files.len() == count {
+        true => session.session.upload(files),
+        false => 0,
+    }
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn sesh_session_cancel_upload(session: *mut sesh_session_t, id: u32) {
+    if let Some(session) = session.as_ref() {
+        session.session.cancel_upload(id);
     }
 }
 

@@ -9,23 +9,33 @@ this Mac; screens that have no file to leave behind are read from the accessibil
 or the pasteboard instead.
 
 Traps this script works around:
-  - `axe type` reaches the terminal only while it is the first responder; the keys row is
-    an inputAccessoryView, so it is on screen whenever the keyboard is.
-  - with the software keyboard up, `shift` matches two elements, so the keys row's own
-    keys are tapped by coordinate inside the row, never by label.
+  - `axe type` reaches the terminal only while it is the first responder.
+  - the device is booted headlessly, with no Simulator.app, so iOS treats it as having a
+    hardware keyboard attached and the software keyboard never appears — not in the
+    terminal and not in a form field. No check may assert that it is up or down; the Touch
+    modes are read from the selector and from what reaches the remote instead.
+  - `shift` names a keys-row key and a keyboard key both, so the keys row's own keys are
+    tapped by coordinate inside the row, never by label. That matters only where a software
+    keyboard exists, but tapping by coordinate is right either way.
   - keys scrolled out of the row's ScrollView still report their content coordinates, so
     `tap_key` drags the row until the key it wants is on screen.
   - `xcrun simctl pbcopy` fills the simulator pasteboard; a long key goes in that way and
     is pasted with cmd+V rather than typed.
   - the keys row moves down when Click or Select puts the keyboard away, so its y is
     measured again before every tap into it.
-  - a form field's keyboard covers the rest of the form; every field is submitted with
-    Return before the next control is tapped, and a Toggle only flips at the activation
-    point axe resolves, not at the centre of its row.
+  - a form field's keyboard, where there is one, covers the rest of the form; every field
+    is submitted with Return before the next control is tapped. A Toggle only flips at the
+    activation point axe resolves, not at the centre of its row.
+  - `PHPickerViewController` runs out of process, so it is absent from the accessibility
+    tree entirely; its cells and its confirm button are tapped by coordinate. The run adds
+    its own photo first, so the newest cell is one whose size the checks can assert.
+  - while a Draft is open, two elements are labelled "upload": the Draft's own button and
+    the keys row underneath the sheet. The Draft's is tapped by coordinate.
 """
 
 import json
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -36,6 +46,7 @@ BUNDLE = "me.pecheny.sesh"
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 LOCAL = os.path.join(ROOT, ".local")
 MARKERS = os.path.join(LOCAL, "e2e")
+UPLOADS = os.path.expanduser("~/.sesh/uploads")
 SHOTS = os.path.join(LOCAL)
 USER = os.environ.get("USER", "")
 
@@ -193,6 +204,17 @@ def terminal():
 # ------------------------------------------------------------------------- the screens
 
 
+def add_photo():
+    """A 4032px HEIC of a repo image, added last so the picker shows it first. The Upload
+    checks assert on its size, so the library cannot be left to whatever is already there."""
+    source = os.path.join(ROOT, "Resources/icon-clouds/tower.jpg")
+    big = os.path.join(LOCAL, "e2e-big.jpg")
+    heic = os.path.join(LOCAL, "e2e-photo.heic")
+    run("sips", "-z", "4032", "4032", source, "--out", big)
+    run("sips", "-s", "format", "heic", big, "--out", heic)
+    run("xcrun", "simctl", "addmedia", UDID, heic)
+
+
 def install():
     run("xcrun", "simctl", "terminate", UDID, BUNDLE)
     run("xcrun", "simctl", "uninstall", UDID, BUNDLE)
@@ -319,13 +341,18 @@ def tap_key(label, row_y):
 def check_modes():
     keys = keys_row()
     mode("Click")
-    check("Click mode puts the keyboard down", not match(label="q") and bool(match(label="esc")))
+    check("Click mode keeps the keys row on screen", bool(match(label="esc")))
     selector = element("mode", timeout=5)
     check("the selector carries the mode", selector and selector["value"] == "Click", str(selector))
     shell(f"echo CLICKMODE > {marker('click.txt')}")
     check("a hardware keyboard types in Click mode", "CLICKMODE" in wait_marker("click.txt", timeout=8))
     mode("Type")
-    check("Type mode brings the keyboard back", bool(match(label="q")) and abs(keys_row() - keys) < 1)
+    selector = element("mode", timeout=5)
+    check("the selector goes back to Type", selector and selector["value"] == "Type", str(selector))
+    check("the keys row returns to where it was", abs(keys_row() - keys) < 1)
+    shell(f"echo TYPEMODE > {marker('type.txt')}")
+    check("the terminal still takes input after the round trip",
+          "TYPEMODE" in wait_marker("type.txt", timeout=8))
 
 
 def check_interrupt():
@@ -370,13 +397,83 @@ def check_draft():
     type_text("draft line one")
     press(RETURN)
     type_text("draft line two")
-    tap_label("Send + Enter", settle=1.5)
+    tap_label("Send \u23ce", settle=1.5)
     row = keys_row()
     tap_key("ctrl", row)
     type_text("d")
     time.sleep(1)
     text = wait_marker("draft.txt", timeout=8)
     check("a two-line Draft arrives whole", "draft line one\ndraft line two" in text, repr(text))
+
+
+def pick_one_photo():
+    """The picker is another process: its first cell and its confirm tick go by coordinate."""
+    width = screen_width()
+    tap(width * 0.16, 377, settle=1.0)
+    tap(width * 0.91, 110, settle=1.0)
+
+
+def landed(before):
+    """The sshd is this Mac, so the Host's uploads directory is a local directory. The ring
+    clearing is the signal, not the file appearing: a file is on disk while still being
+    written, and the path reaches the cursor only once the whole batch is in."""
+    if not wait_for(lambda: not match(label="cancel upload"), timeout=60):
+        return []
+    found = set(os.listdir(UPLOADS)) - before if os.path.isdir(UPLOADS) else set()
+    return sorted(found)
+
+
+def check_upload():
+    before = set(os.listdir(UPLOADS)) if os.path.isdir(UPLOADS) else set()
+    row = keys_row()
+    type_text("ls ")
+    tap_key("upload", row)
+    time.sleep(3)
+    pick_one_photo()
+    files = landed(before)
+    check("an Upload reaches the Host", len(files) == 1, str(files))
+    if not files:
+        return
+    check("the Upload is named for the moment it was sent",
+          re.fullmatch(r"\d{8}-\d{6}-.+\.jpg", files[0]) is not None, files[0])
+    check("a HEIC photo arrives as a JPEG no wider than 1568px",
+          measure(os.path.join(UPLOADS, files[0])) == (1568, 1568), files[0])
+    # The line reads `ls <inserted path> > marker`, so the marker proves both at once.
+    shell(f"> {marker('upload.txt')}")
+    text = wait_marker("upload.txt", timeout=10)
+    check("the remote path lands at the cursor", files[0] in text, repr(text))
+
+
+def check_upload_draft():
+    before = set(os.listdir(UPLOADS)) if os.path.isdir(UPLOADS) else set()
+    row = keys_row()
+    tap_key("editor", row)
+    tap_label("New Draft")
+    body = element(kind="TextArea", timeout=10)
+    tap(body["x"], body["y"])
+    type_text("ls")
+    button = [e for e in match(label="upload", kind="Button") if e["y"] < 130]
+    check("the Draft has its own upload button", bool(button))
+    if not button:
+        return tap_label("Cancel")
+    tap(button[0]["x"], button[0]["y"], settle=2.0)
+    time.sleep(2)
+    pick_one_photo()
+    files = landed(before)
+    check("a Draft Upload reaches the Host", len(files) == 1, str(files))
+    if not files:
+        return tap_label("Cancel")
+    type_text(f"> {marker('draft-upload.txt')}")
+    tap_label("Send \u23ce", settle=1.5)
+    text = wait_marker("draft-upload.txt", timeout=10)
+    check("the Draft path is spaced off the word before it",
+          os.path.basename(files[0]) in text, repr(text))
+
+
+def measure(path):
+    out = run("sips", "-g", "pixelWidth", "-g", "pixelHeight", path).stdout
+    numbers = [int(n) for n in re.findall(r"pixel(?:Width|Height): (\d+)", out)]
+    return tuple(numbers) if len(numbers) == 2 else ()
 
 
 def check_reconnect():
@@ -458,6 +555,22 @@ def check_mosh(name):
     shell(f"echo MOSH-AFTER > {marker('mosh2.txt')}", settle=1.0)
     check("the mosh Session survives backgrounding", "MOSH-AFTER" in wait_marker("mosh2.txt", timeout=20))
 
+    # mosh holds no ssh connection, so this Upload has to dial and authenticate its own.
+    before = set(os.listdir(UPLOADS)) if os.path.isdir(UPLOADS) else set()
+    row = keys_row()
+    type_text("ls ")
+    tap_key("upload", row)
+    time.sleep(3)
+    pick_one_photo()
+    files = landed(before)
+    check("a mosh Upload reaches the Host", len(files) == 1, str(files))
+    if not files:
+        return
+    shell(f"> {marker('mosh-upload.txt')}")
+    text = wait_marker("mosh-upload.txt", timeout=10)
+    check("the mosh Upload's path lands at the cursor", files[0] in text, repr(text))
+    check("the mosh Tab still reads connected", bool(match(label="connected")))
+
 
 def check_density():
     row = keys_row()
@@ -478,6 +591,7 @@ def main():
     shutil.rmtree(MARKERS, ignore_errors=True)
     os.makedirs(MARKERS, exist_ok=True)
 
+    add_photo()
     install()
     import_key()
     add_host("agent", "ssh", agent=True)
@@ -494,6 +608,8 @@ def main():
     check_interrupt()
     check_selection()
     check_draft()
+    check_upload()
+    check_upload_draft()
     check_reconnect()
 
     check_second_tab("plain")

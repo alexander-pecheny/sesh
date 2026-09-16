@@ -183,6 +183,94 @@ commit. Do not start the next phase's work.
    password save, `just e2e` running the phase 2 to 4 acceptance checks with `axe`,
    README updated. Acceptance: `just e2e` passes on the booted simulator.
 
+## Phase 6: Uploads
+
+Settled with the owner on 16 September 2026. An Upload is one image or video sent from the
+phone's library to the Host; see `CONTEXT.md`.
+
+**Transport.** SFTP, via `russh-sftp` 3.0 over a channel on the live russh handle. An SSH
+Session already holds one, so an Upload costs a channel. A mosh Session dropped its handle
+after bootstrapping (`mosh.rs`), so it opens a fresh SSH connection per Upload and closes
+it after: mosh roams, and a cached socket would be stale exactly when it is wanted. The
+host key is already in `known_hosts`, so no sheet unless it genuinely changed; a Host with
+password auth and no saved password re-prompts through the existing `AuthSheet`, whose
+"Save password" toggle stops the asking.
+
+Not scp: OpenSSH 9.0 deprecated the protocol, and iOS cannot shell out to an `scp` binary
+anyway. Not `exec cat >`: SFTP gives typed status codes, so "permission denied" and "no
+space left on device" reach the user as themselves.
+
+**Destination.** `~/.sesh/uploads`, created on demand, resolved once per Session with
+SFTP `realpath` so the inserted path is absolute. A tilde only expands when a shell reads
+the word, and the path may be read by a program instead. Nothing prunes the directory;
+deleting a user's remote files on a timer they never set is worse than a directory that
+grows.
+
+**Names.** `20260916-143022-IMG_4821.jpg`: the date, the time, then the picker's suggested
+name. Sorts by date in the directory. A multi-select batch lands in the same second, so
+Rust `stat`s and suffixes on collision.
+
+**Bytes.** Swift decides the name and the format, Rust moves the bytes.
+
+- Compress on, the default: any image to at most 1568px on the longest edge, JPEG q0.8.
+  1568px is where Claude's vision tops out, so more buys nothing for the main use.
+- Compress off: HEIC becomes JPEG, everything else goes up untouched. That transcode is
+  about the Host being able to open the file, not about size.
+- Video: never touched, never compressed. Installing ffmpeg is the Host's problem.
+- `Store.compressUploads`, persisted like `fontSize`, one toggle in Settings.
+
+**Picker.** `PHPickerViewController`, `selectionLimit = 0`, filtered to images and videos.
+It runs out of process, so there is no `NSPhotoLibraryUsageDescription` and no permission
+prompt. Swift prepares each pick into the app's temp directory and passes *paths* to the
+core, never bytes, so a 200MB video never sits in memory.
+
+**Two buttons.** The Editor is a full-height sheet, so the Keys row is off screen while a
+Draft is open and one button cannot serve both. The Keys row gets one after `paste`, icon
+`image-up` (a new lucide imageset), accessibility label "upload"; the Draft toolbar gets
+one beside Send. Whichever button was tapped is the insertion target, so no code has to
+work out what has focus.
+
+**Insertion.** Paths joined by a single space. Never a newline: `terminal.paste` calls
+`ghostty_surface_text`, which is plain text input rather than a bracketed paste, so a
+newline in a Draft submits the line. Each path is shell-quoted only when it holds a
+character outside `A-Za-z0-9._/-`, which our names never do, so quoting fires only for an
+odd home directory. Prepend a space unless the character before the caret is whitespace or
+the field is empty; always append one. In a Draft, insert at the caret and replace any
+selection, using `TextEditor(text:selection:)`; append at the end if it was never focused.
+
+**While it runs.** The button becomes a determinate ring measuring bytes across the whole
+batch, and tapping it cancels. It is disabled unless the Session is connected, and while
+an Upload is in flight: the ring is the button, so it cannot also start something new.
+Tabs hold their own Sessions, so one Tab uploading never blocks another. Paths appear only
+after the whole batch lands, so a path in your text always names a file that exists.
+
+**Failure.** Any error, or a cancel, unlinks whatever already landed and inserts nothing,
+so a Draft never quietly under-describes itself. cmux does the same
+(`~/cmux/Sources/TerminalImageTransfer.swift`, `Workspace.swift:4434`). The SFTP message
+is shown in an `.alert` bound to one `@Published var uploadError: String?`, attached both
+in `SessionTab` and in the Draft, because an alert under a sheet will not appear over it.
+A cancel shows nothing; the user knows they cancelled.
+
+**Shape.** New `core/sesh-core/src/upload.rs`. Two `Command` variants carry a request in,
+two `Events` methods carry progress and the finished paths out. `ssh.rs` wraps its handle
+in an `Arc` — `Handle` is not `Clone` but `channel_open_session` takes `&self` — and
+spawns the task so the terminal keeps pumping; `mosh.rs` spawns a task that connects
+fresh. The C ABI gains:
+
+```c
+uint32_t sesh_session_upload(sesh_session_t *, const sesh_upload_t *files, size_t count);
+void sesh_session_cancel_upload(sesh_session_t *, uint32_t id);
+// in sesh_callbacks_t:
+void (*on_upload_progress)(void *userdata, uint32_t id, uint64_t done, uint64_t total);
+void (*on_upload_done)(void *userdata, uint32_t id, const char *const *paths, size_t count,
+                       const char *error);
+// sesh_upload_t { const char *local_path; const char *remote_name; }
+```
+
+Acceptance: pick three photos in the terminal, see the ring fill, see three space-separated
+absolute paths land at the cursor, and `ls -l` them on the Host. Repeat from a Draft. Kill
+the link mid-batch and confirm the uploads directory is empty.
+
 ## Follow-ups after phase 5
 
 - Bump libghostty. As of 11 September 2026 the fork's main is 2,753 commits past our

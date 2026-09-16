@@ -5,7 +5,7 @@ struct KeysRow: View {
         case key(UInt32)
         case shifted(UInt32)
         case character(Character)
-        case paste, editor
+        case paste, editor, upload
     }
 
     static let row: CGFloat = 40
@@ -13,6 +13,9 @@ struct KeysRow: View {
 
     @ObservedObject var input: InputState
     @Environment(\.colorScheme) private var colorScheme
+    /// How far the Upload in flight has got, or `nil` when none is.
+    let uploading: Double?
+    let canUpload: Bool
     let send: (Action) -> Void
 
     private var flavour: Catppuccin.Flavour { colorScheme == .dark ? .mocha : .latte }
@@ -22,6 +25,7 @@ struct KeysRow: View {
             row {
                 modes
                 cap(icon: "clipboard-paste", name: "paste") { send(.paste) }
+                upload
                 cap(icon: "square-pen", name: "editor") { send(.editor) }
                 cap(icon: "corner-down-left", name: "enter") { send(.key(Keycode.enter)) }
                 cap(icon: "text-wrap", name: "shift enter") { send(.shifted(Keycode.enter)) }
@@ -63,6 +67,22 @@ struct KeysRow: View {
                 .fixedSize(horizontal: true, vertical: false)
         }
         .frame(height: Self.row)
+    }
+
+    /// The button is the progress ring, so while it fills the only thing it can do is stop.
+    private var upload: some View {
+        Button { send(.upload) } label: {
+            label(Group {
+                if let uploading {
+                    UploadRing(fraction: uploading, colour: flavour(.mauve))
+                } else {
+                    Image.lucide("image-up", size: 16)
+                }
+            }, width: 22)
+        }
+        .disabled(uploading == nil && !canUpload)
+        .accessibilityLabel(uploading == nil ? "upload" : "cancel upload")
+        .accessibilityValue(uploading.map { "\(Int($0 * 100))%" } ?? "")
     }
 
     private var modes: some View {
@@ -129,3 +149,18 @@ struct KeysRow: View {
 }
 
 /// Hold to repeat: SwiftUI has no repeating button, and a long press fires once.
+
+extension View {
+    /// Attached on both the Tab and the Draft: an alert on a view under a sheet never
+    /// appears over it.
+    func uploadFailure(_ message: Binding<String?>) -> some View {
+        alert("Upload failed", isPresented: .init(
+            get: { message.wrappedValue != nil },
+            set: { if !$0 { message.wrappedValue = nil } }
+        )) {
+            Button("OK", role: .cancel) {}
+        } message: {
+            Text(message.wrappedValue ?? "")
+        }
+    }
+}

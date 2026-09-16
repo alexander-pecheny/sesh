@@ -8,6 +8,9 @@ final class Store: ObservableObject {
     @Published var fontSize: Double {
         didSet { UserDefaults.standard.set(fontSize, forKey: "fontSize") }
     }
+    @Published var compressUploads: Bool {
+        didSet { UserDefaults.standard.set(compressUploads, forKey: "compressUploads") }
+    }
 
     private let directory: URL
 
@@ -16,6 +19,7 @@ final class Store: ObservableObject {
         directory = support.appendingPathComponent("Sesh", isDirectory: true)
         try? FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
         fontSize = UserDefaults.standard.object(forKey: "fontSize") as? Double ?? 12
+        compressUploads = UserDefaults.standard.object(forKey: "compressUploads") as? Bool ?? true
         hosts = read("hosts.json") ?? []
         keys = read("keys.json") ?? []
         drafts = read("drafts.json") ?? []

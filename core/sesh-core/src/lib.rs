@@ -5,3 +5,4 @@ pub mod known_hosts;
 pub mod mosh;
 pub mod session;
 pub mod ssh;
+pub mod upload;

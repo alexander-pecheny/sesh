@@ -14,6 +14,7 @@ use tokio::sync::oneshot;
 use crate::flags::{self, MoshFlags, Predict, RemoteIp};
 use crate::session::{Command, Context, Events, Session, State};
 use crate::ssh::{self, Credentials};
+use crate::upload::{self, Pending};
 
 /// The locale both ends are told to use. iOS gives a process no environment to read one
 /// from, and the two ends must agree on character widths or they disagree on the screen.
@@ -76,6 +77,17 @@ async fn drive(config: Config, context: Context) -> Result<(), String> {
     };
     ssh::authenticate(&mut handle, &user, &credentials, &ssh_flags, &events, &answers).await?;
 
+    let dialer = Arc::new(ssh::Dialer {
+        host: config.host.clone(),
+        port,
+        user: user.clone(),
+        password: config.password.clone(),
+        key: config.key.clone(),
+        key_passphrase: config.key_passphrase.clone(),
+        known_hosts: config.known_hosts.clone(),
+        flags: ssh_flags.clone(),
+    });
+
     events.state(State::Bootstrapping, "");
     let mut found = Handshake::default();
     if flags.remote_ip == RemoteIp::Local {
@@ -132,6 +144,7 @@ async fn drive(config: Config, context: Context) -> Result<(), String> {
         .await
         .map_err(|_| "the mosh client did not start".to_string())??;
     events.state(State::Connected, "");
+    let mut uploads = Pending::default();
 
     loop {
         tokio::select! {
@@ -143,6 +156,13 @@ async fn drive(config: Config, context: Context) -> Result<(), String> {
                 Some(Command::Resize(cols, rows)) => {
                     client.send(Event::Resize(cols.max(1) as i32, rows.max(1) as i32))
                 }
+                Some(Command::Upload(id, files)) => {
+                    let task = upload::over_mosh(
+                        dialer.clone(), id, files, uploads.begin(id),
+                        events.clone(), answers.clone());
+                    tokio::spawn(task);
+                }
+                Some(Command::CancelUpload(id)) => uploads.cancel(id),
                 Some(Command::Close) | None => {
                     client.send(Event::Quit);
                     return worker.await.map_err(|e| format!("the mosh client stopped: {e}"))?;

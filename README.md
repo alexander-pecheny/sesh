@@ -24,10 +24,20 @@ copy. The keys row stays on screen in all three, and a hardware keyboard works i
 three.
 
 The keys come in two rows, each scrolling on its own when it runs past the screen. The
-first holds the mode selector, paste, the Editor, Enter, Shift-Enter, right-click and the
-arrows; the second holds Home to End, the modifiers with esc and tab, and the symbols.
-Shift-Enter sends Enter with Shift rather than a bare newline, so a remote program that
-reads the Kitty keyboard protocol can tell the two apart.
+first holds the mode selector, paste, upload, the Editor, Enter, Shift-Enter, right-click
+and the arrows; the second holds Home to End, the modifiers with esc and tab, and the
+symbols. Shift-Enter sends Enter with Shift rather than a bare newline, so a remote
+program that reads the Kitty keyboard protocol can tell the two apart.
+
+The upload button sends images and videos from the phone's library to the Host over SFTP
+and drops their remote paths where you were typing, so a program on the far end can be
+pointed at them. There is one in the keys row and one in the Draft toolbar, because the
+Editor covers the keys row. Files land in `~/.sesh/uploads` under a name carrying the date
+and time, and nothing ever deletes them. Images are cut to 1568px on the longest edge and
+re-encoded as JPEG unless Settings says otherwise; HEIC becomes JPEG either way, since
+little on a Linux box reads it. Videos go up untouched: reading them is the Host's
+business. A mosh Host dials a second SSH connection for each Upload, because its own ends
+once mosh-server is running.
 
 ## Prerequisites
 
