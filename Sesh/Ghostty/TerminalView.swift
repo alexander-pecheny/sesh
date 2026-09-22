@@ -218,6 +218,10 @@ extension Ghostty {
             let mods = input.consume()
             if text == "\n" {
                 send(keycode: Keycode.enter, mods: mods)
+            } else if let character = text.first, text.count == 1 {
+                // A single character goes as a keystroke, not a bracketed paste: pi puts a
+                // space before a paste that starts with ".", "/" or "~".
+                send(character: character, extra: mods)
             } else if mods.isDisjoint(with: [.ctrl, .alt, .cmd]) {
                 paste(text)
             } else {
