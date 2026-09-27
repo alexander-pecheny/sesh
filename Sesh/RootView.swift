@@ -15,7 +15,7 @@ struct RootView: View {
                 if tabs.active != nil {
                     TabsView(tabs: tabs)
                 } else {
-                    HostListView(tabs: tabs) { tabs.open($0, store: store, app: app) }
+                    HostListView(tabs: tabs) { tabs.open($0, $1, store: store, app: app) }
                 }
             } else {
                 Text("libghostty failed to start").foregroundStyle(flavour(.red))

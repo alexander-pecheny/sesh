@@ -4,7 +4,7 @@ struct HostListView: View {
     @EnvironmentObject private var store: Store
     @Environment(\.colorScheme) private var colorScheme
     @ObservedObject var tabs: Tabs
-    let open: (Host) -> Void
+    let open: (Host, Host.UIMode) -> Void
     @State private var editing: Host?
     @State private var showingKeys = false
     @State private var showingSettings = false
@@ -30,9 +30,9 @@ struct HostListView: View {
                 ToolbarItem(placement: .topBarTrailing) {
                     Button { editing = Host() } label: { Label("Add Host", image: "plus") }
                 }
-                if let session = tabs.sessions.last {
+                if let tab = tabs.all.last {
                     ToolbarItem(placement: .topBarTrailing) {
-                        Button { tabs.show(session) } label: {
+                        Button { tabs.show(tab) } label: {
                             Label("Tabs", image: "layers")
                         }
                     }
@@ -59,14 +59,18 @@ struct HostListView: View {
     private var list: some View {
         List {
             ForEach(store.hosts) { host in
-                Button { open(host) } label: {
+                Button { open(host, host.opens) } label: {
                     VStack(alignment: .leading, spacing: 2) {
                         Text(host.title).font(.ui(16)).foregroundStyle(flavour(.text))
                         Text(host.subtitle).font(.ui(12)).foregroundStyle(flavour(.subtext0))
                     }
                 }
                 .listRowBackground(flavour(.mantle))
-                .contextMenu { Button("Edit") { editing = host } }
+                .contextMenu {
+                    let other: Host.UIMode = host.opens == .terminal ? .projects : .terminal
+                    Button("Open in \(other.label)") { open(host, other) }
+                    Button("Edit") { editing = host }
+                }
                 .swipeActions {
                     Button("Delete", role: .destructive) { store.remove(host) }
                 }

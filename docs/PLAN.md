@@ -271,6 +271,54 @@ Acceptance: pick three photos in the terminal, see the ring fill, see three spac
 absolute paths land at the cursor, and `ls -l` them on the Host. Repeat from a Draft. Kill
 the link mid-batch and confirm the uploads directory is empty.
 
+## Phase 7: Projects
+
+Settled with the owner on 27 September 2026. Projects is a UI mode for someone who does
+not use a terminal; see `CONTEXT.md` and ADR 0004.
+
+**UI mode.** A Tab is a Host plus a UI mode, Terminal or Projects. The Host form gains a
+default UI mode; tapping the Host opens it, a long press offers the other. A Tab never
+switches UI mode.
+
+**Connection.** A Projects Tab holds one SSH connection, a Link, even for a mosh Host.
+Everything, listing included, runs over exec channels through `"$SHELL" -lic`, as the
+Remote command does: one `sesh_session_run` call is a smaller C ABI than SFTP directory
+calls, and `mkdir`'s stderr already names its failure. On foreground the Tab
+reconnects silently and refreshes, with no disconnected overlay. While visible it polls
+`herdr agent list` every 3 seconds.
+
+**Tools.** On connect, check `command -v herdr claude git`. A missing `herdr` or
+`claude` shows a screen naming it with its install command and a copy button; a missing
+`git` only hides the branch switch. Sesh never installs anything. If `herdr status`
+reports no server, start `herdr server` detached. Everything runs in the default herdr
+session of the Host's user.
+
+**Picker.** Starts at home and cannot go above it. Folders only, no dot-entries. "New
+folder" in every folder; names may not contain `/` or start with `.`. At the top of home,
+a section lists every `claude` agent in herdr with its state, filed under its
+workspace's folder; one on a branch carries the branch name as a subtitle.
+
+**Start.** A sheet with a name pre-filled from the folder and two words, editable,
+normalised to `[a-z][a-z0-9_-]{0,31}` and unique among live agents; and, only when the
+folder holds `.git`, an "On a new branch" switch whose branch takes the same name.
+Pressing Start finds or creates the folder's herdr workspace (or runs `herdr worktree
+create --cwd <folder> --branch <name>`), opens a pane, and runs
+`herdr agent start <name> --kind claude --pane <id> -- --remote-control <name>
+--dangerously-skip-permissions`. Permissions are always bypassed; there is no switch.
+
+**After.** Read the pane with `herdr agent read` and pull out the `https://claude.ai/code`
+link. Each Claude session row gets "Open in Claude" following it, or "Find it in the
+Claude app by name" if none was found. Claude asks once per untrusted folder tree whether to
+trust it; Sesh answers yes, since picking the folder and pressing Start is her answer. If
+start still fails or reports `blocked`, show the pane's last lines; a blocked first run means the bypass confirmation, so name
+`skipDangerousModePermissionPrompt` in `~/.claude/settings.json`. A swipe offers Stop:
+ctrl-c twice via `herdr agent send-keys`, then close the pane. Branches and their copies
+stay on disk.
+
+Acceptance: on a Host whose user has herdr and a signed-in claude, create a folder, start
+a Claude session in it and another on a new branch in a repo, open one in the Claude app
+from its link, see its state change in Projects, and stop it.
+
 ## Follow-ups after phase 5
 
 - Bump libghostty. As of 11 September 2026 the fork's main is 2,753 commits past our

@@ -12,6 +12,7 @@ use std::path::PathBuf;
 use std::sync::Arc;
 
 use crate::flags::{self, Transport};
+use crate::link::{self, Ran};
 use crate::mosh;
 use crate::session::{self, Prompt, Session, State, Upload};
 use crate::ssh;
@@ -50,6 +51,9 @@ pub struct sesh_callbacks_t {
     /// No paths and no error means the app cancelled, which it already knows.
     pub on_upload_done:
         Option<extern "C" fn(*mut c_void, u32, *const *const c_char, usize, *const c_char)>,
+    /// A command from `sesh_session_run` finished: its id, exit status (-1 when it never
+    /// ran), stdout and stderr.
+    pub on_ran: Option<extern "C" fn(*mut c_void, u32, i32, *const c_char, *const c_char)>,
     /// The last call on `userdata`: no callback runs after it, so it is where the embedder
     /// releases whatever `userdata` points at.
     pub on_release: Option<extern "C" fn(*mut c_void)>,
@@ -101,6 +105,21 @@ pub struct sesh_mosh_config_t {
     pub extra_flags: *const c_char,
     pub cols: u16,
     pub rows: u16,
+}
+
+/// A Link runs commands for Projects and has no terminal. `extra_flags` takes the subset
+/// of `transport`; a mosh Host is still reached over plain SSH.
+#[repr(C)]
+pub struct sesh_link_config_t {
+    pub host: *const c_char,
+    pub port: u16,
+    pub user: *const c_char,
+    pub password: *const c_char,
+    pub key_pem: *const c_char,
+    pub key_passphrase: *const c_char,
+    pub known_hosts_path: *const c_char,
+    pub extra_flags: *const c_char,
+    pub transport: sesh_transport_t,
 }
 
 pub struct sesh_session_t {
@@ -200,6 +219,13 @@ impl session::Events for Sink {
             error.as_ref().map_or(std::ptr::null(), |e| e.as_ptr()),
         );
     }
+
+    fn ran(&self, id: u32, ran: &Ran) {
+        let Some(callback) = self.callbacks.on_ran else { return };
+        let stdout = CString::new(ran.stdout.replace('\0', "")).unwrap_or_default();
+        let stderr = CString::new(ran.stderr.replace('\0', "")).unwrap_or_default();
+        callback(self.userdata, id, ran.status, stdout.as_ptr(), stderr.as_ptr());
+    }
 }
 
 unsafe fn text(pointer: *const c_char) -> Option<String> {
@@ -224,6 +250,13 @@ unsafe fn keys(
             text(*pems.add(i)).map(|pem| (pem, passphrase))
         })
         .collect()
+}
+
+fn transport(transport: sesh_transport_t) -> Transport {
+    match transport {
+        sesh_transport_t::SESH_TRANSPORT_SSH => Transport::Ssh,
+        sesh_transport_t::SESH_TRANSPORT_MOSH => Transport::Mosh,
+    }
 }
 
 fn raw(text: String) -> *mut c_char {
@@ -291,6 +324,44 @@ pub unsafe extern "C" fn sesh_mosh_connect(
         Arc::new(Sink { callbacks, userdata }),
     );
     Box::into_raw(Box::new(sesh_session_t { session }))
+}
+
+/// Opens a Link and returns immediately; its state arrives on `on_state`. Returns NULL
+/// only when `config` is NULL.
+#[no_mangle]
+pub unsafe extern "C" fn sesh_link_connect(
+    config: *const sesh_link_config_t,
+    callbacks: sesh_callbacks_t,
+    userdata: *mut c_void,
+) -> *mut sesh_session_t {
+    let Some(config) = config.as_ref() else {
+        return std::ptr::null_mut();
+    };
+    let session = link::connect(
+        link::Config {
+            host: text(config.host).unwrap_or_default(),
+            port: if config.port == 0 { 22 } else { config.port },
+            user: text(config.user).unwrap_or_default(),
+            password: text(config.password),
+            key: text(config.key_pem),
+            key_passphrase: text(config.key_passphrase),
+            known_hosts: text(config.known_hosts_path).map(PathBuf::from).unwrap_or_default(),
+            extra_flags: text(config.extra_flags).unwrap_or_default(),
+            transport: transport(config.transport),
+        },
+        Arc::new(Sink { callbacks, userdata }),
+    );
+    Box::into_raw(Box::new(sesh_session_t { session }))
+}
+
+/// Runs `command` in the login shell of a Link's Host and returns its id; the result
+/// arrives on `on_ran`. Returns 0 when there is no session or no command.
+#[no_mangle]
+pub unsafe extern "C" fn sesh_session_run(session: *mut sesh_session_t, command: *const c_char) -> u32 {
+    match (session.as_ref(), text(command)) {
+        (Some(session), Some(command)) => session.session.run(command),
+        _ => 0,
+    }
 }
 
 #[no_mangle]
@@ -396,11 +467,7 @@ pub unsafe extern "C" fn sesh_parse_flags(
     input: *const c_char,
     error: *mut *mut c_char,
 ) -> bool {
-    let transport = match transport {
-        sesh_transport_t::SESH_TRANSPORT_SSH => Transport::Ssh,
-        sesh_transport_t::SESH_TRANSPORT_MOSH => Transport::Mosh,
-    };
-    match flags::validate(transport, &text(input).unwrap_or_default()) {
+    match flags::validate(self::transport(transport), &text(input).unwrap_or_default()) {
         Ok(()) => true,
         Err(message) => {
             if !error.is_null() {

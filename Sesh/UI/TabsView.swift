@@ -10,9 +10,12 @@ struct TabsView: View {
 
     var body: some View {
         VStack(spacing: 0) {
-            if let session = tabs.active {
-                TabBar(tabs: tabs, session: session) { switching = true }
-                SessionTab(session: session).id(session.id)
+            if let tab = tabs.active {
+                TabBar(tabs: tabs, tab: tab) { switching = true }
+                switch tab {
+                case .terminal(let session): SessionTab(session: session).id(tab.id)
+                case .projects(let projects): ProjectsView(projects: projects).id(tab.id)
+                }
             }
         }
         .background(flavour(.base))
@@ -23,26 +26,28 @@ struct TabsView: View {
 private struct TabBar: View {
     @Environment(\.colorScheme) private var colorScheme
     @ObservedObject var tabs: Tabs
-    @ObservedObject var session: SeshSession
+    let tab: Tab
     let switcher: () -> Void
 
     private var flavour: Catppuccin.Flavour { colorScheme == .dark ? .mocha : .latte }
 
     var body: some View {
         HStack(spacing: 8) {
-            Text(session.name).font(.ui(14)).lineLimit(1).foregroundStyle(flavour(.text))
-            Spacer(minLength: 4)
-            Text(session.status).font(.ui(11)).lineLimit(1).foregroundStyle(flavour(.subtext0))
+            TabTitle(tab: tab) { name, status in
+                Text(name).font(.ui(14)).lineLimit(1).foregroundStyle(flavour(.text))
+                Spacer(minLength: 4)
+                Text(status).font(.ui(11)).lineLimit(1).foregroundStyle(flavour(.subtext0))
+            }
             Button(action: switcher) {
-                Text("\(tabs.sessions.count)")
+                Text("\(tabs.all.count)")
                     .font(.ui(12))
                     .frame(minWidth: 22, minHeight: 22)
                     .background(flavour(.surface0), in: .rect(cornerRadius: 5))
                     .foregroundStyle(flavour(.text))
             }
             .accessibilityLabel("Tabs")
-            .accessibilityValue("\(tabs.sessions.count)")
-            Button { tabs.close(session) } label: {
+            .accessibilityValue("\(tabs.all.count)")
+            Button { tabs.close(tab) } label: {
                 Image.lucide("circle-x").foregroundStyle(flavour(.overlay1))
             }
             .accessibilityLabel("Close")
@@ -63,22 +68,28 @@ struct SwitcherView: View {
     var body: some View {
         NavigationStack {
             List {
-                ForEach(tabs.sessions) { session in
+                ForEach(tabs.all) { tab in
                     HStack {
                         Button {
-                            tabs.show(session)
+                            tabs.show(tab)
                             dismiss()
                         } label: {
-                            Row(session: session)
+                            TabTitle(tab: tab) { name, status in
+                                VStack(alignment: .leading, spacing: 2) {
+                                    Text(name).font(.ui(15)).foregroundStyle(flavour(.text))
+                                    Text(status).font(.ui(11)).foregroundStyle(flavour(.subtext0))
+                                }
+                                .frame(maxWidth: .infinity, alignment: .leading)
+                            }
                         }
                         Button {
-                            tabs.close(session)
-                            if tabs.sessions.isEmpty { dismiss() }
+                            tabs.close(tab)
+                            if tabs.all.isEmpty { dismiss() }
                         } label: {
                             Image.lucide("x", size: 15).foregroundStyle(flavour(.overlay1))
                         }
                         .buttonStyle(.plain)
-                        .accessibilityLabel("Close \(session.name)")
+                        .accessibilityLabel("Close \(tab.content.name)")
                     }
                     .listRowBackground(flavour(.mantle))
                 }
@@ -98,20 +109,5 @@ struct SwitcherView: View {
             }
         }
         .tint(flavour(.mauve))
-    }
-}
-
-private struct Row: View {
-    @Environment(\.colorScheme) private var colorScheme
-    @ObservedObject var session: SeshSession
-
-    private var flavour: Catppuccin.Flavour { colorScheme == .dark ? .mocha : .latte }
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 2) {
-            Text(session.name).font(.ui(15)).foregroundStyle(flavour(.text))
-            Text(session.status).font(.ui(11)).foregroundStyle(flavour(.subtext0))
-        }
-        .frame(maxWidth: .infinity, alignment: .leading)
     }
 }

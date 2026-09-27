@@ -290,7 +290,7 @@ final class SeshSession: ObservableObject, Identifiable {
     }
 }
 
-private final class CStrings {
+final class CStrings {
     private var allocated: [UnsafeMutablePointer<CChar>] = []
 
     func make(_ value: String?) -> UnsafePointer<CChar>? {
@@ -353,6 +353,7 @@ private final class Bridge {
             let bridge = Bridge.of(userdata)
             DispatchQueue.main.async { bridge.owner?.uploaded(id, remote, message) }
         },
+        on_ran: nil,
         on_release: { userdata in
             guard let userdata else { return }
             Unmanaged<Bridge>.fromOpaque(userdata).release()

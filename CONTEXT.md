@@ -38,7 +38,29 @@ user closes it.
 _Avoid_: terminal, connection
 
 **Tab**:
-The screen that shows one Session. Several Tabs may be open at once; one is active.
+The screen that shows one Host in one UI mode. Several Tabs may be open at once; one is
+active.
+
+**UI mode**:
+What a Tab shows for its Host: Terminal or Projects. A Host carries a default UI mode,
+and a long press opens it in the other one. A Tab never changes UI mode; switching means
+opening another Tab.
+_Avoid_: view, app mode
+
+**Terminal**:
+The UI mode that shows one Session.
+
+**Projects**:
+The UI mode for someone who does not use a terminal: browse and create folders on the
+Host and start Claude in one.
+_Avoid_: file browser, workspace
+
+**Claude session**:
+One Claude Code conversation running on the Host in one folder, optionally on its own
+branch, driven from the Claude app. It outlives every Session and Tab. Projects lists all
+of them on the Host, including those started outside Sesh. Always "Claude session" in
+full; a bare Session is the SSH or mosh connection.
+_Avoid_: thread, agent
 
 **Session restore**:
 Bringing a mosh Session back after iOS has terminated the app, from state the client

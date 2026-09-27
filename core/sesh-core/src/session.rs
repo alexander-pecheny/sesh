@@ -39,6 +39,7 @@ pub trait Events: Send + Sync + 'static {
     fn upload_progress(&self, id: u32, done: u64, total: u64);
     /// No paths and no error means the app cancelled, which it already knows.
     fn upload_done(&self, id: u32, paths: &[String], error: Option<&str>);
+    fn ran(&self, _id: u32, _ran: &crate::link::Ran) {}
 }
 
 /// Forwards the questions a connection may ask but swallows its state and its output, so
@@ -68,6 +69,7 @@ pub enum Command {
     Close,
     Upload(u32, Vec<Upload>),
     CancelUpload(u32),
+    Run(u32, String),
 }
 
 #[derive(Default)]
@@ -87,7 +89,7 @@ pub struct Context {
 pub struct Session {
     commands: mpsc::UnboundedSender<Command>,
     answers: Arc<Answers>,
-    next_upload: AtomicU32,
+    next_request: AtomicU32,
 }
 
 pub fn runtime() -> &'static tokio::runtime::Runtime {
@@ -114,7 +116,7 @@ impl Session {
         let session = Session {
             commands,
             answers: answers.clone(),
-            next_upload: AtomicU32::new(0),
+            next_request: AtomicU32::new(0),
         };
         runtime().spawn(async move {
             let context = Context {
@@ -143,8 +145,14 @@ impl Session {
     }
 
     pub fn upload(&self, files: Vec<Upload>) -> u32 {
-        let id = self.next_upload.fetch_add(1, Ordering::Relaxed) + 1;
+        let id = self.next_request.fetch_add(1, Ordering::Relaxed) + 1;
         let _ = self.commands.send(Command::Upload(id, files));
+        id
+    }
+
+    pub fn run(&self, command: String) -> u32 {
+        let id = self.next_request.fetch_add(1, Ordering::Relaxed) + 1;
+        let _ = self.commands.send(Command::Run(id, command));
         id
     }
 
