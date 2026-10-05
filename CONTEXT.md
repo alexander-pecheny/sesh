@@ -52,15 +52,31 @@ The UI mode that shows one Session.
 
 **Projects**:
 The UI mode for someone who does not use a terminal: browse and create folders on the
-Host and start Claude in one.
+Host and start an Agent session in one.
 _Avoid_: file browser, workspace
 
-**Claude session**:
-One Claude Code conversation running on the Host in one folder, optionally on its own
-branch, driven from the Claude app. It outlives every Session and Tab. Projects lists all
-of them on the Host, including those started outside Sesh. Always "Claude session" in
-full; a bare Session is the SSH or mosh connection.
-_Avoid_: thread, agent
+**Agent**:
+The coding agent behind an Agent session: Claude, Codex or pi. Other coding agents running
+on the Host are not Agents, and Sesh does not show them.
+_Avoid_: model, tool, kind
+
+**Agent session**:
+One conversation with one Agent, running on the Host in one folder, optionally on its own
+branch. It outlives every Session and Tab. Projects lists all of them on the Host,
+including those started outside Sesh, and can start one of any Agent. When the Agent
+clears or resumes, it moves to another Transcript but stays the same Agent session.
+Always "Agent session" in full; a bare Session is the SSH or mosh connection.
+_Avoid_: Claude session, thread, agent pane
+
+**Transcript**:
+The record an Agent writes of one conversation, held on the Host. An Agent session has
+one current Transcript; a Conversation shows only that one, marking each switch.
+_Avoid_: log, history
+
+**Conversation**:
+The screen that shows one Agent session as chat and takes the user's messages. It is
+opened from Projects, never from a Terminal Tab.
+_Avoid_: chat view, thread
 
 **Session restore**:
 Bringing a mosh Session back after iOS has terminated the app, from state the client

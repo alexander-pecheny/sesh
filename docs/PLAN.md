@@ -319,6 +319,97 @@ Acceptance: on a Host whose user has herdr and a signed-in claude, create a fold
 a Claude session in it and another on a new branch in a repo, open one in the Claude app
 from its link, see its state change in Projects, and stop it.
 
+## Phase 8: Conversations
+
+Settled with the owner on 5 October 2026, building on a September session that was never
+written down. See `CONTEXT.md` (Agent, Agent session, Transcript, Conversation) and ADR
+0005. Two agents in parallel: one in the herdr fork (`~/herdr`), one in Sesh. The
+protocol below is the contract between them.
+
+### herdr fork
+
+**Transcript paths.** `session_ref_from_report` keeps `agent_session_path` for every
+Agent, not only pi and omp. The Codex hook sends `transcript_path` as
+`agent_session_path`. `agent list` reports both id and path. Resume keeps working.
+
+**Permission hooks.** `herdr integration install claude|codex` also installs a
+`PermissionRequest` hook. It reports the tool, its input and any reason to herdr over the
+socket and returns at once with no decision, so the Agent draws its usual prompt.
+
+**`herdr agent follow <pane> [--since <cursor>] [--last N]`.** Long-running. Writes one
+JSON object per line, flushed per line, until killed. N defaults to 200 entries.
+`herdr agent follow --protocol` prints the protocol number, `1`, and exits.
+
+```
+{"t":"hello","protocol":1,"agent":"claude|codex|pi","transcript":"<path>"}
+{"t":"entry", ...entry}
+{"t":"state","state":"idle|working|blocked|done"}
+{"t":"switch","reason":"clear|resume|new|compact|fork|other","transcript":"<path>"}
+{"t":"permission","id":"<id>","tool":"<raw name>","summary":"<one line>","command":"<shell, if any>","file":"<path, if any>","reason":"<text, if any>"}
+{"t":"permission_done","id":"<id>"}
+{"t":"cursor","cursor":"<opaque>"}
+```
+
+Every entry has `id` (stable across reconnects), `kind`, `summary` (one plain line, used
+for kinds Sesh does not know) and `at` (RFC 3339). Kinds:
+
+- `user`: `text`, `images` (remote paths).
+- `text`: `text`, markdown.
+- `thinking`: `text`, `seconds` if known.
+- `tool`: `tool` (one of `edit write bash read search fetch task other`), `name` (raw),
+  `file`, `command`, `description` as they apply.
+- `result`: `call` (the `tool` entry's id), `text`, `diff` (unified, for edit and write),
+  `added`, `removed`, `error` (bool), `truncated` (bool).
+- `todo`: `items`, each `text` and `status` (`pending in_progress completed`).
+- `question`: Claude's `AskUserQuestion`: `questions`, each `question`, `header`,
+  `multi`, `options` (each `label`, `description`).
+
+`result.text` and `diff` are cut to the first and last 40 lines and 16 KB; `truncated`
+says so. `herdr agent entry <pane> <id>` prints that entry whole, as one JSON line.
+
+A `cursor` follows each burst of lines; after `--since` nothing is repeated or missed.
+A switch to another Transcript emits `switch`, then that Transcript's last N entries.
+`permission_done` follows when the prompt is answered anywhere or the Agent moves on.
+Lines Sesh does not need (system, meta, usage, snapshots) never leave herdr. pi's
+Transcript is a tree; follow its current branch.
+
+**Answering.** `herdr agent answer <pane> --json '<answers>'` plays Claude's question menu
+(a digit per option, "Type something" plus text plus Enter, then Enter on Submit).
+`herdr agent permit <pane> allow|deny` presses the Agent's key. Both read the screen
+afterwards and exit non-zero with the screen text if the menu is still open.
+
+### Sesh
+
+**Core.** `sesh_session_run` gains a streaming form: a callback per chunk of stdout and a
+handle to cancel it. Sesh splits lines; the core knows nothing about transcripts.
+
+**Projects.** On connect, `herdr agent follow --protocol` must print a number Sesh knows,
+else a screen says "This Host needs Sesh's herdr" with the install steps and Projects
+does nothing else. It lists Agent sessions whose Agent is claude, codex or pi and hides
+the rest. The Start sheet gains an Agent picker, Claude by default, remembering the last
+one; Codex starts with `--dangerously-bypass-approvals-and-sandbox`, pi with no flag.
+`command -v` checks the picked Agent instead of `claude`. After Start, the Conversation
+opens with the input focused. Tapping an Agent session opens its Conversation; "Open in
+Claude" moves into the Conversation's toolbar and shows for Claude only.
+
+**Conversation.** A screen pushed from Projects that runs `follow` and resumes with
+`--since` after a reconnect. User messages are right-aligned bubbles with images; agent
+text is markdown without a bubble; thinking is one collapsed line; edit and write cards
+show the file and +/− counts and expand to the diff; bash cards show the command and
+expand to the output; consecutive read, search and fetch calls group into one line; the
+newest todo list is pinned above the input; a task is one card with its description;
+a question is a card with option lists, a free-text field and Send, calling
+`agent answer`; a permission is a card with the command and Allow and Deny, calling
+`agent permit`, gone on `permission_done`. Unknown kinds show `summary`. Expanding a
+truncated card runs `agent entry` once. A switch draws a divider. The input box sends
+through `herdr agent prompt`, has a photo button reusing Upload, and turns Send into Stop
+(Esc via `agent send-keys`) while the state is working. No slash-command menu.
+
+Acceptance: on localhost with the fork installed, start one Agent session of each Agent
+from Projects, exchange a message with each, see an edit card's diff, answer a Claude
+question and a permission prompt from the phone, and reconnect mid-reply without a gap
+or repeat.
+
 ## Follow-ups after phase 5
 
 - Bump libghostty. As of 11 September 2026 the fork's main is 2,753 commits past our
