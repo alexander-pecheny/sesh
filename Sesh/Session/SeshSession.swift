@@ -185,16 +185,7 @@ final class SeshSession: ObservableObject, Identifiable {
             }
             // Read the handle now, not before the await: a Reconnect would have freed it.
             guard uploading != nil, let handle else { return Uploads.discard(files) }
-            let strings = CStrings()
-            let entries = files.map {
-                sesh_upload_t(local_path: strings.make($0.local.path), remote_name: strings.make($0.name))
-            }
-            let id = withExtendedLifetime(strings) {
-                entries.withUnsafeBufferPointer {
-                    sesh_session_upload(handle, $0.baseAddress, UInt($0.count))
-                }
-            }
-            guard id != 0 else {
+            guard let id = Uploads.start(files, on: handle) else {
                 uploading = nil
                 Uploads.discard(files)
                 uploadError = "the Upload could not be started"
@@ -354,6 +345,7 @@ private final class Bridge {
             DispatchQueue.main.async { bridge.owner?.uploaded(id, remote, message) }
         },
         on_ran: nil,
+        on_chunk: nil,
         on_release: { userdata in
             guard let userdata else { return }
             Unmanaged<Bridge>.fromOpaque(userdata).release()

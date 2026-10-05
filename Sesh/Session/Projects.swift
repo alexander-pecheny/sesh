@@ -1,7 +1,33 @@
+import PhotosUI
 import SwiftUI
 
+/// The coding agents Projects can start and show. Anything else herdr finds stays hidden.
+enum Agent: String, CaseIterable, Identifiable {
+    case claude, codex, pi
+
+    var id: String { rawValue }
+    var title: String { self == .pi ? "pi" : rawValue.capitalized }
+
+    /// Permissions are always bypassed: she cannot be at the terminal to approve them.
+    func flags(_ name: String) -> String {
+        switch self {
+        case .claude: "--remote-control \(quote(name)) --dangerously-skip-permissions"
+        case .codex: "--dangerously-bypass-approvals-and-sandbox"
+        case .pi: ""
+        }
+    }
+
+    var install: String {
+        switch self {
+        case .claude: "curl -fsSL https://claude.ai/install.sh | bash"
+        case .codex: "npm install -g @openai/codex"
+        case .pi: "npm install -g @mariozechner/pi-coding-agent"
+        }
+    }
+}
+
 /// A Projects Tab: one Link to the Host, on which it lists folders and drives herdr to run
-/// Claude sessions. Core callbacks arrive on tokio threads and hop to main in `LinkBridge`.
+/// Agent sessions. Core callbacks arrive on tokio threads and hop to main in `LinkBridge`.
 @MainActor
 final class Projects: ObservableObject, Identifiable {
     struct Ran {
@@ -18,9 +44,10 @@ final class Projects: ObservableObject, Identifiable {
         }
     }
 
-    struct ClaudeSession: Identifiable, Equatable {
+    struct AgentSession: Identifiable, Equatable {
         let id: String
         let name: String
+        let agent: Agent
         let pane: String
         let state: String
         let folder: String
@@ -36,6 +63,11 @@ final class Projects: ObservableObject, Identifiable {
         let folders: [String]
     }
 
+    enum Place: Hashable {
+        case folder(String)
+        case conversation(pane: String, fresh: Bool)
+    }
+
     enum Stage: Equatable {
         case connecting, authenticating, checking, ready, failed
     }
@@ -47,7 +79,11 @@ final class Projects: ObservableObject, Identifiable {
     @Published var savePassword = false
     @Published private(set) var home = ""
     @Published private(set) var missing: [String] = []
-    @Published private(set) var sessions: [ClaudeSession] = []
+    @Published private(set) var herdrProtocol: Int?
+    @Published private(set) var sessions: [AgentSession] = []
+    @Published var route: [Place] = []
+    @Published private(set) var uploading: SeshSession.Progress?
+    @Published var uploadError: String?
 
     let id = UUID()
     let host: Host
@@ -55,10 +91,12 @@ final class Projects: ObservableObject, Identifiable {
     private var handle: OpaquePointer?
     private var bridge = LinkBridge()
     private var waiting: [UInt32: CheckedContinuation<Ran, Never>] = [:]
+    private var streams: [UInt32: (buffer: Data, line: (String) -> Void)] = [:]
     private var linking: [CheckedContinuation<Bool, Never>] = []
     private var linked = false
     private var paused = false
     private var links: [String: URL] = [:]
+    private var uploaded: (([String], String?) -> Void)?
 
     init(host: Host, store: Store) {
         self.host = host
@@ -80,6 +118,11 @@ final class Projects: ObservableObject, Identifiable {
     }
 
     var canBranch: Bool { !missing.contains("git") }
+
+    /// herdr's own build cannot follow a Transcript, so Projects needs the fork (ADR 0005).
+    var needsHerdr: Bool {
+        missing.contains("herdr") || !Conversation.protocols.contains(herdrProtocol ?? 0)
+    }
 
     /// Also called on the way to the background: iOS would freeze the socket, and a command
     /// sent on it after waking would wait minutes for TCP to admit it is dead.
@@ -132,7 +175,15 @@ final class Projects: ObservableObject, Identifiable {
 
     // MARK: Commands on the Host
 
-    func run(_ command: String) async -> Ran {
+    func run(_ command: String) async -> Ran { await call(command, line: nil) }
+
+    /// Runs `command` until it exits or the calling task is cancelled, handing each line of
+    /// its stdout to `line` as it arrives.
+    func stream(_ command: String, line: @escaping (String) -> Void) async -> Ran {
+        await call(command, line: line)
+    }
+
+    private func call(_ command: String, line: ((String) -> Void)?) async -> Ran {
         guard !paused else { return Ran(status: -1, out: "", err: "not connected") }
         if !linked {
             if handle == nil { connect() }
@@ -140,17 +191,26 @@ final class Projects: ObservableObject, Identifiable {
                 return Ran(status: -1, out: "", err: message.isEmpty ? "not connected" : message)
             }
         }
-        guard let handle else { return Ran(status: -1, out: "", err: "not connected") }
-        let id = sesh_session_run(handle, command)
+        guard let handle, !Task.isCancelled else { return Ran(status: -1, out: "", err: "not connected") }
+        let id = line == nil ? sesh_session_run(handle, command) : sesh_session_stream(handle, command)
         guard id != 0 else { return Ran(status: -1, out: "", err: "not connected") }
-        return await withCheckedContinuation { waiting[id] = $0 }
+        if let line { streams[id] = (Data(), line) }
+        return await withTaskCancellationHandler {
+            await withCheckedContinuation { waiting[id] = $0 }
+        } onCancel: {
+            Task { @MainActor [weak self] in
+                guard let self, let handle = self.handle else { return }
+                sesh_session_cancel(handle, id)
+            }
+        }
     }
 
     private func check() async {
         stage = .checking
         let ran = await run("""
-            for t in herdr claude git; do command -v "$t" >/dev/null 2>&1 || printf '%s ' "$t"; done
+            for t in herdr claude codex pi git; do command -v "$t" >/dev/null 2>&1 || printf '%s ' "$t"; done
             echo; printf '%s\\n' "$HOME"
+            herdr agent follow --protocol 2>/dev/null || echo
             if command -v herdr >/dev/null 2>&1 && ! herdr workspace list >/dev/null 2>&1; then
                 nohup herdr server </dev/null >/dev/null 2>&1 &
                 for i in 1 2 3 4 5; do sleep 1; herdr workspace list >/dev/null 2>&1 && break; done
@@ -158,15 +218,16 @@ final class Projects: ObservableObject, Identifiable {
             """)
         guard stage == .checking else { return }
         let lines = ran.out.components(separatedBy: "\n")
-        guard ran.ok, lines.count > 1 else { return fail(ran.problem) }
+        guard ran.ok, lines.count > 2 else { return fail(ran.problem) }
         missing = lines[0].split(separator: " ").map(String.init)
         home = lines[1]
+        herdrProtocol = Int(lines[2].trimmingCharacters(in: .whitespaces))
         stage = .ready
         await refresh()
     }
 
     func refresh() async {
-        guard stage == .ready, !missing.contains("herdr") else { return }
+        guard stage == .ready, !needsHerdr else { return }
         let ran = await run("herdr agent list && herdr workspace list")
         let lines = ran.out.split(separator: "\n").map { Data($0.utf8) }
         guard ran.ok, lines.count == 2,
@@ -176,11 +237,13 @@ final class Projects: ObservableObject, Identifiable {
         let worktrees = Dictionary(
             workspaces.compactMap { w in w.worktree.flatMap { $0.is_linked_worktree ? (w.workspace_id, $0) : nil } },
             uniquingKeysWith: { first, _ in first })
-        sessions = agents.filter { $0.agent == "claude" }.map { agent in
+        sessions = agents.compactMap { agent in
+            guard let kind = Agent(rawValue: agent.agent) else { return nil }
             let worktree = worktrees[agent.workspace_id]
-            return ClaudeSession(
+            return AgentSession(
                 id: agent.pane_id,
                 name: agent.name ?? (agent.cwd as NSString).lastPathComponent,
+                agent: kind,
                 pane: agent.pane_id,
                 state: agent.agent_status,
                 folder: worktree?.repo_root ?? agent.cwd,
@@ -208,17 +271,17 @@ final class Projects: ObservableObject, Identifiable {
         return ran.ok ? nil : ran.problem
     }
 
-    /// Starts a Claude session in `folder`, or on a new branch of it, and returns what went
-    /// wrong, if anything. The pane is closed on failure so no half-started Claude lingers.
-    func start(_ name: String, in folder: String, branch: Bool) async -> String? {
+    /// Starts an Agent session in `folder`, or on a new branch of it, and returns its pane.
+    /// The pane is closed on failure so no half-started Agent lingers.
+    func start(_ name: String, agent: Agent, in folder: String, branch: Bool) async -> Result<String, Failure> {
         let pane: String
         switch await paneFor(name, in: folder, branch: branch) {
-        case .failure(let failure): return failure.message
+        case .failure(let failure): return .failure(failure)
         case .success(let id): pane = id
         }
         var ran = await run(
-            "herdr agent start \(quote(name)) --kind claude --pane \(quote(pane)) --timeout 60000"
-                + " -- --remote-control \(quote(name)) --dangerously-skip-permissions")
+            "herdr agent start \(quote(name)) --kind \(agent.rawValue) --pane \(quote(pane)) --timeout 60000"
+                + " -- \(agent.flags(name))")
         if !ran.ok, (ran.err + ran.out).contains("agent_not_ready") {
             // Claude asks once per new folder tree whether to trust it; she picked this
             // folder and pressed Start, which is her answer.
@@ -232,11 +295,11 @@ final class Projects: ObservableObject, Identifiable {
             let screen = await run("herdr pane read \(quote(pane)) --source recent-unwrapped --lines 40")
             _ = await run("herdr pane close \(quote(pane))")
             let tail = screen.out.split(separator: "\n").filter { !$0.allSatisfy(\.isWhitespace) }.suffix(12)
-            return ([ran.problem] + tail.map(String.init)).joined(separator: "\n")
+            return .failure(Failure(message: ([ran.problem] + tail.map(String.init)).joined(separator: "\n")))
         }
-        _ = await link(for: pane)
+        if agent == .claude { _ = await link(for: pane) }
         await refresh()
-        return nil
+        return .success(pane)
     }
 
     private func paneFor(_ name: String, in folder: String, branch: Bool) async -> Result<String, Failure> {
@@ -279,7 +342,7 @@ final class Projects: ObservableObject, Identifiable {
         return links[pane]
     }
 
-    func stop(_ session: ClaudeSession) async {
+    func stop(_ session: AgentSession) async {
         let pane = quote(session.pane)
         _ = await run("herdr agent send-keys \(pane) ctrl+c ctrl+c; sleep 1; herdr pane close \(pane)")
         links[session.pane] = nil
@@ -318,6 +381,55 @@ final class Projects: ObservableObject, Identifiable {
         "willow", "orchid", "summit", "breeze", "canyon", "ember", "finch", "grove", "lagoon", "moss",
     ]
 
+    // MARK: Uploads
+
+    var canUpload: Bool { linked && uploading == nil }
+
+    /// As in a Terminal Tab, but over the Link: the paths reach `insert` once all have landed.
+    func upload(_ results: [PHPickerResult], insert: @escaping (String) -> Void) {
+        guard canUpload, !results.isEmpty else { return }
+        uploading = SeshSession.Progress(id: 0, done: 0, total: 1)
+        Task {
+            let files: [PreparedUpload]
+            do {
+                files = try await Uploads.prepare(results, compress: store.compressUploads)
+            } catch {
+                uploading = nil
+                uploadError = error.localizedDescription
+                return
+            }
+            guard uploading != nil, let handle, let id = Uploads.start(files, on: handle) else {
+                if uploading != nil { uploadError = "the Upload could not be started" }
+                uploading = nil
+                return Uploads.discard(files)
+            }
+            uploading = SeshSession.Progress(id: id, done: 0, total: 1)
+            uploaded = { [weak self] paths, error in
+                Uploads.discard(files)
+                self?.uploading = nil
+                self?.uploadError = error
+                if !paths.isEmpty { insert(Uploads.text(for: paths)) }
+            }
+        }
+    }
+
+    func cancelUpload() {
+        guard let uploading else { return }
+        guard uploading.id != 0, let handle else { return self.uploading = nil }
+        sesh_session_cancel_upload(handle, uploading.id)
+    }
+
+    fileprivate func uploadProgressed(_ id: UInt32, _ done: UInt64, _ total: UInt64) {
+        guard uploading?.id == id else { return }
+        uploading = SeshSession.Progress(id: id, done: done, total: total)
+    }
+
+    fileprivate func uploadDone(_ id: UInt32, _ paths: [String], _ error: String?) {
+        guard uploading?.id == id, let finish = uploaded else { return }
+        uploaded = nil
+        finish(paths, error)
+    }
+
     // MARK: From the core
 
     private func fail(_ problem: String) {
@@ -329,12 +441,28 @@ final class Projects: ObservableObject, Identifiable {
     private func finishAll(_ problem: String) {
         let pending = waiting
         waiting = [:]
+        streams = [:]
         pending.values.forEach { $0.resume(returning: Ran(status: -1, out: "", err: problem)) }
     }
 
     fileprivate func ran(_ id: UInt32, _ result: Ran) {
+        if let rest = streams.removeValue(forKey: id), !rest.buffer.isEmpty {
+            rest.line(String(decoding: rest.buffer, as: UTF8.self))
+        }
         waiting.removeValue(forKey: id)?.resume(returning: result)
         if result.status == -1, result.err.hasPrefix("the connection to the Host is gone") { drop(result.err) }
+    }
+
+    fileprivate func chunk(_ id: UInt32, _ data: Data) {
+        guard var stream = streams[id] else { return }
+        stream.buffer.append(data)
+        var lines: [String] = []
+        while let end = stream.buffer.firstIndex(of: UInt8(ascii: "\n")) {
+            lines.append(String(decoding: stream.buffer[..<end], as: UTF8.self))
+            stream.buffer.removeSubrange(...end)
+        }
+        streams[id] = stream
+        lines.forEach(stream.line)
     }
 
     fileprivate func apply(_ state: UInt32, _ message: String) {
@@ -456,8 +584,18 @@ private final class LinkBridge {
             let bridge = LinkBridge.of(userdata)
             DispatchQueue.main.async { bridge.owner?.authQuestion = question }
         },
-        on_upload_progress: nil,
-        on_upload_done: nil,
+        on_upload_progress: { userdata, id, done, total in
+            guard let userdata else { return }
+            let bridge = LinkBridge.of(userdata)
+            DispatchQueue.main.async { bridge.owner?.uploadProgressed(id, done, total) }
+        },
+        on_upload_done: { userdata, id, paths, count, error in
+            guard let userdata else { return }
+            let remote = (0..<Int(count)).compactMap { paths?[$0].map { String(cString: $0) } }
+            let message = error.map { String(cString: $0) }
+            let bridge = LinkBridge.of(userdata)
+            DispatchQueue.main.async { bridge.owner?.uploadDone(id, remote, message) }
+        },
         on_ran: { userdata, id, status, out, err in
             guard let userdata else { return }
             let result = Projects.Ran(
@@ -466,6 +604,12 @@ private final class LinkBridge {
                 err: err.map { String(cString: $0) } ?? "")
             let bridge = LinkBridge.of(userdata)
             DispatchQueue.main.async { bridge.owner?.ran(id, result) }
+        },
+        on_chunk: { userdata, id, bytes, len in
+            guard let userdata, let bytes else { return }
+            let data = Data(bytes: bytes, count: Int(len))
+            let bridge = LinkBridge.of(userdata)
+            DispatchQueue.main.async { bridge.owner?.chunk(id, data) }
         },
         on_release: { userdata in
             guard let userdata else { return }

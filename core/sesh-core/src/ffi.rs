@@ -54,6 +54,9 @@ pub struct sesh_callbacks_t {
     /// A command from `sesh_session_run` finished: its id, exit status (-1 when it never
     /// ran), stdout and stderr.
     pub on_ran: Option<extern "C" fn(*mut c_void, u32, i32, *const c_char, *const c_char)>,
+    /// A piece of stdout from `sesh_session_stream`, as it arrives and with no regard for
+    /// line ends. The command's `on_ran` follows the last piece, with empty stdout.
+    pub on_chunk: Option<extern "C" fn(*mut c_void, u32, *const u8, usize)>,
     /// The last call on `userdata`: no callback runs after it, so it is where the embedder
     /// releases whatever `userdata` points at.
     pub on_release: Option<extern "C" fn(*mut c_void)>,
@@ -226,6 +229,12 @@ impl session::Events for Sink {
         let stderr = CString::new(ran.stderr.replace('\0', "")).unwrap_or_default();
         callback(self.userdata, id, ran.status, stdout.as_ptr(), stderr.as_ptr());
     }
+
+    fn chunk(&self, id: u32, bytes: &[u8]) {
+        if let (Some(callback), false) = (self.callbacks.on_chunk, bytes.is_empty()) {
+            callback(self.userdata, id, bytes.as_ptr(), bytes.len());
+        }
+    }
 }
 
 unsafe fn text(pointer: *const c_char) -> Option<String> {
@@ -361,6 +370,24 @@ pub unsafe extern "C" fn sesh_session_run(session: *mut sesh_session_t, command:
     match (session.as_ref(), text(command)) {
         (Some(session), Some(command)) => session.session.run(command),
         _ => 0,
+    }
+}
+
+/// Like `sesh_session_run`, but stdout arrives on `on_chunk` while the command runs, until
+/// it exits or `sesh_session_cancel` stops it. Either way `on_ran` comes last.
+#[no_mangle]
+pub unsafe extern "C" fn sesh_session_stream(session: *mut sesh_session_t, command: *const c_char) -> u32 {
+    match (session.as_ref(), text(command)) {
+        (Some(session), Some(command)) => session.session.stream(command),
+        _ => 0,
+    }
+}
+
+/// Stops a command from `sesh_session_stream`: TERM, then the channel is closed.
+#[no_mangle]
+pub unsafe extern "C" fn sesh_session_cancel(session: *mut sesh_session_t, id: u32) {
+    if let Some(session) = session.as_ref() {
+        session.session.cancel(id);
     }
 }
 
