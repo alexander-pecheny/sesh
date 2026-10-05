@@ -76,31 +76,33 @@ struct ConversationView: View {
     }
 
     private var input: some View {
-        HStack(alignment: .bottom, spacing: 8) {
+        HStack(alignment: .bottom, spacing: Metric.gap) {
             if let projects = conversation.projects {
                 UploadButton(projects: projects) { picking = true }
             } else {
-                Image.lucide("image-up", size: 20).foregroundStyle(flavour(.overlay0)).frame(width: 38, height: 38)
+                Image.lucide("image-up", size: 20).foregroundStyle(flavour(.overlay0))
+                    .frame(width: Metric.control, height: Metric.control)
             }
             TextField("Message", text: $draft, axis: .vertical)
-                .font(.ui(16))
+                .font(.ui(Metric.title))
                 .lineLimit(1...6)
                 .focused($focused)
-                .padding(.horizontal, 14)
-                .padding(.vertical, 9)
-                .background(flavour(.base), in: .rect(cornerRadius: 19))
+                .padding(.horizontal, Metric.pad)
+                .padding(.vertical, Metric.gap)
+                .frame(minHeight: Metric.control)
+                .background(flavour(.base), in: .rect(cornerRadius: Metric.control / 2))
                 .foregroundStyle(flavour(.text))
             Button { Task { await sendOrStop() } } label: {
                 Image.lucide(working ? "square" : "arrow-up", size: 18)
                     .foregroundStyle(flavour(.base))
-                    .frame(width: 38, height: 38)
+                    .frame(width: Metric.control, height: Metric.control)
                     .background(flavour(working ? .red : .mauve).opacity(canSend || working ? 1 : 0.4), in: .circle)
             }
             .disabled(!canSend && !working)
             .accessibilityLabel(working ? "Stop" : "Send")
         }
-        .padding(.horizontal, 12)
-        .padding(.vertical, 8)
+        .padding(.horizontal, Metric.pad)
+        .padding(.vertical, Metric.gap)
         .background(flavour(.mantle))
         .sheet(isPresented: $picking) {
             PhotoPicker { results in
@@ -372,17 +374,17 @@ private struct Card<Header: View, Detail: View>: View {
     private var flavour: Catppuccin.Flavour { colorScheme == .dark ? .mocha : .latte }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 10) {
+        VStack(alignment: .leading, spacing: Metric.pad) {
             Button {
                 guard opens else { return }
                 open.toggle()
                 if open { opened() }
             } label: {
-                HStack(alignment: .top, spacing: 10) {
-                    Image.lucide(icon, size: 15).foregroundStyle(flavour(tint)).padding(.top, 1)
+                HStack(alignment: .top, spacing: Metric.pad) {
+                    Image.lucide(icon, size: Metric.body).foregroundStyle(flavour(tint)).padding(.top, 1)
                     header().frame(maxWidth: .infinity, alignment: .leading)
                     if opens {
-                        Image.lucide(open ? "chevron-down" : "chevron-right", size: 13).foregroundStyle(flavour(.overlay1))
+                        Image.lucide(open ? "chevron-down" : "chevron-right", size: Metric.note).foregroundStyle(flavour(.overlay1))
                     }
                 }
                 .contentShape(.rect)
@@ -390,8 +392,8 @@ private struct Card<Header: View, Detail: View>: View {
             .buttonStyle(.plain)
             if open { detail() }
         }
-        .padding(12)
-        .background(flavour(.mantle), in: .rect(cornerRadius: 10))
+        .padding(Metric.pad)
+        .background(flavour(.mantle), in: .rect(cornerRadius: Metric.corner))
     }
 }
 
@@ -409,39 +411,39 @@ private struct ToolCard: View {
         case "edit", "write":
             Card(icon: entry.tool == "edit" ? "file-pen" : "file-plus", tint: failed ? .red : .blue,
                  opens: result?.diff != nil || result?.text != nil) {
-                HStack(spacing: 8) {
+                HStack(spacing: Metric.gap) {
                     Text(entry.file.map { ($0 as NSString).lastPathComponent } ?? entry.summary)
-                        .font(.ui(14).weight(.medium)).foregroundStyle(flavour(.text)).lineLimit(1)
-                    Spacer(minLength: 4)
+                        .font(.ui(Metric.label).weight(.medium)).foregroundStyle(flavour(.text)).lineLimit(1)
+                    Spacer(minLength: Metric.tiny)
                     if let added = result?.added, added > 0 { Text("+\(added)").foregroundStyle(flavour(.green)) }
                     if let removed = result?.removed, removed > 0 { Text("\u{2212}\(removed)").foregroundStyle(flavour(.red)) }
                 }
-                .font(.system(size: 12, design: .monospaced))
+                .font(.system(size: Metric.caption, design: .monospaced))
             } detail: {
                 if let diff = result?.diff { Diff(text: diff, truncated: result?.truncated == true) } else { output }
             } opened: { expand() }
         case "bash":
             Card(icon: "terminal", tint: failed ? .red : .green, opens: result != nil) {
-                VStack(alignment: .leading, spacing: 3) {
+                VStack(alignment: .leading, spacing: Metric.tiny) {
                     if let description = entry.description {
-                        Text(description).font(.ui(13)).foregroundStyle(flavour(.subtext0))
+                        Text(description).font(.ui(Metric.note)).foregroundStyle(flavour(.subtext0))
                     }
                     Text(entry.command ?? entry.summary)
-                        .font(.system(size: 12, design: .monospaced)).foregroundStyle(flavour(.text)).lineLimit(3)
+                        .font(.system(size: Metric.caption, design: .monospaced)).foregroundStyle(flavour(.text)).lineLimit(3)
                 }
             } detail: { output } opened: { expand() }
         case "task":
             Card(icon: "bot", tint: .mauve, opens: result != nil) {
-                VStack(alignment: .leading, spacing: 3) {
-                    Text("Task").font(.ui(12)).foregroundStyle(flavour(.subtext0))
-                    Text(entry.description ?? entry.summary).font(.ui(14)).foregroundStyle(flavour(.text))
+                VStack(alignment: .leading, spacing: Metric.tiny) {
+                    Text("Task").font(.ui(Metric.caption)).foregroundStyle(flavour(.subtext0))
+                    Text(entry.description ?? entry.summary).font(.ui(Metric.label)).foregroundStyle(flavour(.text))
                 }
             } detail: {
                 Markdown(text: result?.text ?? "")
             } opened: { expand() }
         default:
             Card(icon: "wrench", tint: failed ? .red : .overlay1, opens: result?.text != nil) {
-                Text(entry.summary).font(.ui(14)).foregroundStyle(flavour(.text))
+                Text(entry.summary).font(.ui(Metric.label)).foregroundStyle(flavour(.text))
             } detail: { output } opened: { expand() }
         }
     }
@@ -567,30 +569,30 @@ private struct QuestionCard: View {
     private var questions: [Conversation.Question] { entry.questions ?? [] }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 16) {
+        VStack(alignment: .leading, spacing: Metric.wide) {
             ForEach(Array(questions.enumerated()), id: \.offset) { index, question in
-                VStack(alignment: .leading, spacing: 8) {
+                VStack(alignment: .leading, spacing: Metric.gap) {
                     if let header = question.header {
-                        Text(header.uppercased()).font(.ui(11).weight(.semibold)).foregroundStyle(flavour(.mauve))
+                        Text(header.uppercased()).font(.ui(Metric.small).weight(.semibold)).foregroundStyle(flavour(.mauve))
                     }
-                    Text(question.question).font(.ui(15).weight(.medium)).foregroundStyle(flavour(.text))
-                    if result == nil {
+                    Text(question.question).font(.ui(Metric.body).weight(.medium)).foregroundStyle(flavour(.text))
+                    if let answer = result?.answers?[safe: index] {
+                        answered(answer)
+                    } else if result == nil {
                         ForEach(question.options, id: \.label) { option in
                             choice(option, multi: question.multi == true, in: index)
                         }
                         TextField("Something else", text: Binding(get: { typed[index, default: ""] }, set: { typed[index] = $0 }))
-                            .font(.ui(14))
-                            .padding(10)
-                            .background(flavour(.base), in: .rect(cornerRadius: 8))
+                            .font(.ui(Metric.label))
+                            .padding(Metric.pad)
+                            .background(flavour(.base), in: .rect(cornerRadius: Metric.corner))
                     }
                 }
             }
             if let result {
-                Label { Text(result.text ?? "Answered") } icon: { Image.lucide("circle-check", size: 14) }
-                    .font(.ui(13))
-                    .foregroundStyle(flavour(.subtext0))
+                if result.answers == nil { answered(result.text ?? "Answered") }
             } else {
-                if let problem { Text(problem).font(.system(size: 11, design: .monospaced)).foregroundStyle(flavour(.red)) }
+                if let problem { Text(problem).font(.system(size: Metric.small, design: .monospaced)).foregroundStyle(flavour(.red)) }
                 Button { Task { await send() } } label: {
                     Text(sending ? "Sending…" : "Send").frame(maxWidth: .infinity)
                 }
@@ -599,10 +601,16 @@ private struct QuestionCard: View {
                 .disabled(sending || !complete)
             }
         }
-        .padding(14)
+        .padding(Metric.pad)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .background(flavour(.mantle), in: .rect(cornerRadius: 10))
-        .overlay(RoundedRectangle(cornerRadius: 10).stroke(flavour(result == nil ? .mauve : .mantle).opacity(0.5)))
+        .background(flavour(.mantle), in: .rect(cornerRadius: Metric.corner))
+        .overlay(RoundedRectangle(cornerRadius: Metric.corner).stroke(flavour(result == nil ? .mauve : .mantle).opacity(0.5)))
+    }
+
+    private func answered(_ text: String) -> some View {
+        Label { Text(text) } icon: { Image.lucide("circle-check", size: Metric.label) }
+            .font(.ui(Metric.label))
+            .foregroundStyle(flavour(.subtext0))
     }
 
     private var complete: Bool {
@@ -616,13 +624,13 @@ private struct QuestionCard: View {
             if on { set.remove(option.label) } else { set.insert(option.label) }
             picked[index] = set
         } label: {
-            HStack(alignment: .top, spacing: 10) {
+            HStack(alignment: .top, spacing: Metric.pad) {
                 Image.lucide(on ? (multi ? "circle-check" : "circle-dot") : "circle", size: 16)
                     .foregroundStyle(flavour(on ? .mauve : .overlay1))
                 VStack(alignment: .leading, spacing: 2) {
-                    Text(option.label).font(.ui(14)).foregroundStyle(flavour(.text))
+                    Text(option.label).font(.ui(Metric.label)).foregroundStyle(flavour(.text))
                     if let description = option.description {
-                        Text(description).font(.ui(12)).foregroundStyle(flavour(.subtext0))
+                        Text(description).font(.ui(Metric.caption)).foregroundStyle(flavour(.subtext0))
                     }
                 }
                 Spacer(minLength: 0)
@@ -651,23 +659,23 @@ private struct PermissionCard: View {
     private var flavour: Catppuccin.Flavour { colorScheme == .dark ? .mocha : .latte }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            HStack(spacing: 8) {
-                Image.lucide("shield-alert", size: 16).foregroundStyle(flavour(.peach))
-                Text(permission.summary).font(.ui(15).weight(.medium)).foregroundStyle(flavour(.text))
+        VStack(alignment: .leading, spacing: Metric.pad) {
+            HStack(spacing: Metric.gap) {
+                Image.lucide("shield-alert", size: Metric.title).foregroundStyle(flavour(.peach))
+                Text(permission.summary).font(.ui(Metric.body).weight(.medium)).foregroundStyle(flavour(.text))
             }
             if let detail = permission.command ?? permission.file {
                 Text(detail)
-                    .font(.system(size: 12, design: .monospaced))
+                    .font(.system(size: Metric.caption, design: .monospaced))
                     .foregroundStyle(flavour(.text))
-                    .padding(10)
+                    .padding(Metric.pad)
                     .frame(maxWidth: .infinity, alignment: .leading)
                     .background(flavour(.base), in: .rect(cornerRadius: 6))
             }
             if let reason = permission.reason {
-                Text(reason).font(.ui(13)).foregroundStyle(flavour(.subtext0))
+                Text(reason).font(.ui(Metric.note)).foregroundStyle(flavour(.subtext0))
             }
-            HStack(spacing: 10) {
+            HStack(spacing: Metric.pad) {
                 Button { Task { await answer(false) } } label: { Text("Deny").frame(maxWidth: .infinity) }
                     .buttonStyle(.bordered)
                     .tint(flavour(.red))
@@ -677,9 +685,9 @@ private struct PermissionCard: View {
             }
             .disabled(answering)
         }
-        .padding(14)
-        .background(flavour(.mantle), in: .rect(cornerRadius: 10))
-        .overlay(RoundedRectangle(cornerRadius: 10).stroke(flavour(.peach).opacity(0.6)))
+        .padding(Metric.pad)
+        .background(flavour(.mantle), in: .rect(cornerRadius: Metric.corner))
+        .overlay(RoundedRectangle(cornerRadius: Metric.corner).stroke(flavour(.peach).opacity(0.6)))
     }
 
     private func answer(_ allow: Bool) async {
@@ -701,32 +709,32 @@ private struct TodoBar: View {
     }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 8) {
+        VStack(alignment: .leading, spacing: Metric.gap) {
             Button { open.toggle() } label: {
-                HStack(spacing: 8) {
-                    Image.lucide("list-checks", size: 15).foregroundStyle(flavour(.mauve))
-                    Text("\(done)/\(items.count)").font(.ui(13).monospacedDigit()).foregroundStyle(flavour(.subtext0))
-                    Text(current?.text ?? "All done").font(.ui(13)).foregroundStyle(flavour(.text)).lineLimit(1)
-                    Spacer(minLength: 4)
-                    Image.lucide(open ? "chevron-down" : "chevron-up", size: 13).foregroundStyle(flavour(.overlay1))
+                HStack(spacing: Metric.gap) {
+                    Image.lucide("list-checks", size: Metric.body).foregroundStyle(flavour(.mauve))
+                    Text("\(done)/\(items.count)").font(.ui(Metric.note).monospacedDigit()).foregroundStyle(flavour(.subtext0))
+                    Text(current?.text ?? "All done").font(.ui(Metric.note)).foregroundStyle(flavour(.text)).lineLimit(1)
+                    Spacer(minLength: Metric.tiny)
+                    Image.lucide(open ? "chevron-down" : "chevron-up", size: Metric.note).foregroundStyle(flavour(.overlay1))
                 }
                 .contentShape(.rect)
             }
             .buttonStyle(.plain)
             if open {
                 ForEach(items, id: \.self) { item in
-                    HStack(alignment: .top, spacing: 8) {
+                    HStack(alignment: .top, spacing: Metric.gap) {
                         Image.lucide(icon(item.status), size: 14).foregroundStyle(flavour(tint(item.status)))
                         Text(item.text)
-                            .font(.ui(13))
+                            .font(.ui(Metric.note))
                             .strikethrough(item.status == "completed")
                             .foregroundStyle(flavour(item.status == "completed" ? .subtext0 : .text))
                     }
                 }
             }
         }
-        .padding(.horizontal, 16)
-        .padding(.vertical, 10)
+        .padding(.horizontal, Metric.wide)
+        .padding(.vertical, Metric.pad)
         .background(flavour(.mantle))
         .overlay(alignment: .bottom) { Rectangle().fill(flavour(.surface0)).frame(height: 1) }
     }

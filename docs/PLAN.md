@@ -359,7 +359,8 @@ for kinds Sesh does not know) and `at` (RFC 3339). Kinds:
 - `tool`: `tool` (one of `edit write bash read search fetch task other`), `name` (raw),
   `file`, `command`, `description` as they apply.
 - `result`: `call` (the `tool` entry's id), `text`, `diff` (unified, for edit and write),
-  `added`, `removed`, `error` (bool), `truncated` (bool).
+  `added`, `removed`, `error` (bool), `truncated` (bool), `answers` (for a question, one
+  per question).
 - `todo`: `items`, each `text` and `status` (`pending in_progress completed`).
 - `question`: Claude's `AskUserQuestion`: `questions`, each `question`, `header`,
   `multi`, `options` (each `label`, `description`).

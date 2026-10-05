@@ -26,6 +26,7 @@ final class Conversation: ObservableObject {
         var truncated: Bool?
         var items: [Todo]?
         var questions: [Question]?
+        var answers: [String]?
     }
 
     struct Todo: Decodable, Equatable, Hashable {

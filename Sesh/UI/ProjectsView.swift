@@ -274,15 +274,15 @@ private struct SessionRow: View {
     }
 
     var body: some View {
-        HStack(spacing: 12) {
+        HStack(spacing: Metric.pad) {
             VStack(alignment: .leading, spacing: 2) {
-                Text(session.name).font(.ui(16)).foregroundStyle(flavour(.text))
-                Text(subtitle).font(.ui(12)).foregroundStyle(flavour(.subtext0)).lineLimit(1)
+                Text(session.name).font(.ui(Metric.title)).foregroundStyle(flavour(.text))
+                Text(subtitle).font(.ui(Metric.caption)).foregroundStyle(flavour(.subtext0)).lineLimit(1)
             }
-            Spacer(minLength: 8)
+            Spacer(minLength: Metric.gap)
             Text(state.0)
-                .font(.ui(12))
-                .padding(.horizontal, 8)
+                .font(.ui(Metric.caption))
+                .padding(.horizontal, Metric.gap)
                 .padding(.vertical, 3)
                 .background(flavour(state.1).opacity(0.18), in: .capsule)
                 .foregroundStyle(flavour(state.1))

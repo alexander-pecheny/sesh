@@ -90,3 +90,19 @@ extension Image {
 extension Font {
     static func ui(_ size: CGFloat) -> Font { .system(size: size) }
 }
+
+/// Sizes the Conversation and Projects share, so their rows and cards line up.
+enum Metric {
+    static let tiny: CGFloat = 4
+    static let gap: CGFloat = 8
+    static let pad: CGFloat = 12
+    static let wide: CGFloat = 16
+    static let corner: CGFloat = 10
+    static let control: CGFloat = 38
+    static let small: CGFloat = 11
+    static let caption: CGFloat = 12
+    static let note: CGFloat = 13
+    static let label: CGFloat = 14
+    static let body: CGFloat = 15
+    static let title: CGFloat = 16
+}
