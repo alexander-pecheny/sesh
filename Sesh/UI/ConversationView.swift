@@ -11,6 +11,8 @@ struct ConversationView: View {
     @State private var picking = false
     @State private var lost = false
     @StateObject private var field = PlainField()
+    @State private var position = ScrollPosition(edge: .bottom)
+    @State private var atBottom = true
 
     private var flavour: Catppuccin.Flavour { colorScheme == .dark ? .mocha : .latte }
     private var working: Bool { conversation.state == "working" }
@@ -25,7 +27,13 @@ struct ConversationView: View {
             }
             .padding(16)
         }
-        .defaultScrollAnchor(.bottom)
+        .scrollPosition($position)
+        .onScrollGeometryChange(for: Bool.self) { geometry in
+            geometry.contentOffset.y + geometry.containerSize.height >= geometry.contentSize.height - Metric.control
+        } action: { _, bottom in atBottom = bottom }
+        .onChange(of: conversation.items.count + conversation.permissions.count) {
+            if atBottom { position.scrollTo(edge: .bottom) }
+        }
         .scrollDismissesKeyboard(.interactively)
         .safeAreaInset(edge: .bottom, spacing: 0) {
             VStack(spacing: 0) {

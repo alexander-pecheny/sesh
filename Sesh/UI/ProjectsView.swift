@@ -165,17 +165,23 @@ private struct FolderView: View {
     private var flavour: Catppuccin.Flavour { colorScheme == .dark ? .mocha : .latte }
     private var isHome: Bool { path == projects.home }
     private var title: String { isHome ? "Home" : (path as NSString).lastPathComponent }
-    private var here: [Projects.AgentSession] {
-        isHome ? projects.sessions : projects.sessions.filter { $0.folder == path }
+    /// At Home, every Agent session under its herdr workspace; in a folder, that folder's.
+    private var groups: [(Projects.Workspace?, [Projects.AgentSession])] {
+        guard isHome else {
+            let here = projects.sessions.filter { $0.folder == path }
+            return here.isEmpty ? [] : [(nil, here)]
+        }
+        let order = projects.sessions.map(\.workspace).reduce(into: [Projects.Workspace]()) { if !$0.contains($1) { $0.append($1) } }
+        return order.map { workspace in (workspace, projects.sessions.filter { $0.workspace == workspace }) }
     }
 
     var body: some View {
         List {
-            if !here.isEmpty {
-                Section("Agent sessions") {
-                    ForEach(here) { session in
+            ForEach(groups, id: \.0) { workspace, sessions in
+                Section(workspace?.label ?? "Agent sessions") {
+                    ForEach(sessions) { session in
                         NavigationLink(value: Projects.Place.conversation(pane: session.pane, fresh: false)) {
-                            SessionRow(session: session, home: projects.home, showFolder: isHome)
+                            SessionRow(session: session)
                         }
                         .swipeActions {
                             Button("Stop", role: .destructive) { Task { await projects.stop(session) } }
@@ -255,16 +261,11 @@ private struct FolderView: View {
 private struct SessionRow: View {
     @Environment(\.colorScheme) private var colorScheme
     let session: Projects.AgentSession
-    let home: String
-    let showFolder: Bool
 
     private var flavour: Catppuccin.Flavour { colorScheme == .dark ? .mocha : .latte }
 
     private var subtitle: String {
-        let folder = session.folder.hasPrefix(home) ? "~" + session.folder.dropFirst(home.count) : session.folder
-        return [session.agent.title, showFolder ? folder : nil, session.branch.map { "branch \($0)" }]
-            .compactMap { $0 }
-            .joined(separator: " · ")
+        [session.agent.title, session.branch.map { "branch \($0)" }].compactMap { $0 }.joined(separator: " · ")
     }
 
     private var state: (String, Catppuccin.Swatch) {

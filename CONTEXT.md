@@ -53,7 +53,7 @@ The UI mode that shows one Session.
 **Projects**:
 The UI mode for someone who does not use a terminal: browse and create folders on the
 Host and start an Agent session in one.
-_Avoid_: file browser, workspace
+_Avoid_: file browser
 
 **Agent**:
 The coding agent behind an Agent session: Claude, Codex or pi. Other coding agents running
@@ -67,6 +67,11 @@ including those started outside Sesh, and can start one of any Agent. When the A
 clears or resumes, it moves to another Transcript but stays the same Agent session.
 Always "Agent session" in full; a bare Session is the SSH or mosh connection.
 _Avoid_: Claude session, thread, agent pane
+
+**Workspace**:
+herdr's group of Agent sessions, usually one per folder or branch copy. At Home, Projects
+lists Agent sessions under their Workspace, in herdr's order.
+_Avoid_: project, group
 
 **Transcript**:
 The record an Agent writes of one conversation, held on the Host. An Agent session has

@@ -13,7 +13,10 @@ struct FixtureView: View {
         let conversation = Conversation(pane: "fixture", agent: nil, projects: nil)
         let url = Bundle.main.url(forResource: name, withExtension: "jsonl", subdirectory: "Fixtures")
         let lines = url.flatMap { try? String(contentsOf: $0, encoding: .utf8) } ?? ""
-        lines.split(separator: "\n").forEach { conversation.apply(String($0)) }
+        // Later, as from a Host, so the screen meets its entries after it appears.
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
+            lines.split(separator: "\n").forEach { conversation.apply(String($0)) }
+        }
         _conversation = StateObject(wrappedValue: conversation)
     }
 

@@ -52,6 +52,12 @@ final class Projects: ObservableObject, Identifiable {
         let state: String
         let folder: String
         let branch: String?
+        let workspace: Workspace
+    }
+
+    struct Workspace: Hashable {
+        let label: String
+        let number: Int
     }
 
     struct Failure: Error {
@@ -234,12 +240,11 @@ final class Projects: ObservableObject, Identifiable {
               let agents = try? JSONDecoder().decode(Herdr<AgentList>.self, from: lines[0]).result.agents,
               let workspaces = try? JSONDecoder().decode(Herdr<WorkspaceList>.self, from: lines[1]).result.workspaces
         else { return }
-        let worktrees = Dictionary(
-            workspaces.compactMap { w in w.worktree.flatMap { $0.is_linked_worktree ? (w.workspace_id, $0) : nil } },
-            uniquingKeysWith: { first, _ in first })
+        let byId = Dictionary(workspaces.map { ($0.workspace_id, $0) }, uniquingKeysWith: { first, _ in first })
         sessions = agents.compactMap { agent in
             guard let kind = Agent(rawValue: agent.agent) else { return nil }
-            let worktree = worktrees[agent.workspace_id]
+            let space = byId[agent.workspace_id]
+            let worktree = space?.worktree.flatMap { $0.is_linked_worktree ? $0 : nil }
             return AgentSession(
                 id: agent.pane_id,
                 name: agent.name ?? (agent.cwd as NSString).lastPathComponent,
@@ -247,9 +252,10 @@ final class Projects: ObservableObject, Identifiable {
                 pane: agent.pane_id,
                 state: agent.agent_status,
                 folder: worktree?.repo_root ?? agent.cwd,
-                branch: worktree.map { ($0.checkout_path as NSString).lastPathComponent })
+                branch: worktree.map { ($0.checkout_path as NSString).lastPathComponent },
+                workspace: Workspace(label: space?.label ?? agent.workspace_id, number: space?.number ?? .max))
         }
-        .sorted { $0.name < $1.name }
+        .sorted { ($0.workspace.number, $0.name) < ($1.workspace.number, $1.name) }
     }
 
     func list(_ folder: String) async -> Result<Listing, Failure> {
@@ -552,6 +558,8 @@ private struct WorkspaceList: Decodable {
     }
     struct Workspace: Decodable {
         let workspace_id: String
+        let label: String
+        let number: Int
         let worktree: Worktree?
     }
     let workspaces: [Workspace]
