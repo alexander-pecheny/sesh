@@ -28,6 +28,9 @@ targets:
         type: folder
         buildPhase: resources
       - path: Resources/Icons.xcassets
+      - path: Resources/Fixtures
+        type: folder
+        buildPhase: resources
       - path: Resources/licenses.json
     dependencies:
       - framework: Frameworks/GhosttyKit.xcframework
@@ -42,3 +45,6 @@ targets:
         CODE_SIGN_ENTITLEMENTS: Sesh/Sesh.entitlements
         SWIFT_OBJC_BRIDGING_HEADER: Sesh/Sesh-Bridging-Header.h
         GENERATE_INFOPLIST_FILE: NO
+      configs:
+        Release:
+          EXCLUDED_SOURCE_FILE_NAMES: Fixtures

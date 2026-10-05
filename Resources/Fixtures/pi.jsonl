@@ -1,0 +1,18 @@
+{"t": "hello", "protocol": 1, "agent": "pi", "transcript": "/home/ap/.pi/agent/sessions/--home-ap-notes--/2026-10-05T14-00-00.jsonl"}
+{"t": "entry", "id": "pu1", "kind": "user", "summary": "Tidy the notes index", "at": "2026-10-05T14:00:44Z", "text": "Sort the notes index by date and drop the dead links."}
+{"t": "entry", "id": "pth1", "kind": "thinking", "summary": "Thinking", "at": "2026-10-05T14:00:45Z", "text": "The index is generated; better to fix the generator than the file."}
+{"t": "entry", "id": "pr1", "kind": "tool", "summary": "read index.md", "at": "2026-10-05T14:00:46Z", "tool": "read", "name": "read", "file": "/home/ap/notes/index.md"}
+{"t": "entry", "id": "pr2", "kind": "tool", "summary": "read build.py", "at": "2026-10-05T14:00:47Z", "tool": "read", "name": "read", "file": "/home/ap/notes/build.py"}
+{"t": "entry", "id": "pf1", "kind": "tool", "summary": "checked 12 links", "at": "2026-10-05T14:00:48Z", "tool": "fetch", "name": "bash", "command": "curl -sI …"}
+{"t": "entry", "id": "pb1", "kind": "tool", "summary": "uv run build.py --check", "at": "2026-10-05T14:00:49Z", "tool": "bash", "name": "bash", "command": "uv run build.py --check"}
+{"t": "entry", "id": "pb1r", "kind": "result", "summary": "3 dead links", "at": "2026-10-05T14:00:50Z", "call": "pb1", "text": "dead: https://example.com/old-post\ndead: https://blog.example.org/2019/notes\ndead: http://localhost:4000/draft\n", "error": false}
+{"t": "entry", "id": "pe1", "kind": "tool", "summary": "edit build.py", "at": "2026-10-05T14:00:51Z", "tool": "edit", "name": "edit", "file": "/home/ap/notes/build.py"}
+{"t": "entry", "id": "pe1r", "kind": "result", "summary": "+3 −2", "at": "2026-10-05T14:00:52Z", "call": "pe1", "diff": "--- a/build.py\n+++ b/build.py\n@@ -20,4 +20,5 @@\n-notes = sorted(notes, key=lambda n: n.title)\n-for note in notes:\n+notes = sorted(notes, key=lambda n: n.date, reverse=True)\n+for note in (n for n in notes if n.alive):\n+    # dead links were checked by --check\n     write(note)", "added": 3, "removed": 2}
+{"t": "entry", "id": "pw1", "kind": "tool", "summary": "write index.md", "at": "2026-10-05T14:00:53Z", "tool": "write", "name": "write", "file": "/home/ap/notes/index.md"}
+{"t": "entry", "id": "pw1r", "kind": "result", "summary": "+40 −43", "at": "2026-10-05T14:00:54Z", "call": "pw1", "added": 40, "removed": 43, "diff": "--- a/index.md\n+++ b/index.md\n@@ -1,4 +1,4 @@\n # Notes\n-- [Old post](https://example.com/old-post)\n-- [A](a.md)\n+- [2026-10-04 Sesh plans](sesh.md)\n+- [2026-09-30 Herdr fork](herdr.md)\n", "truncated": true}
+{"t": "entry", "id": "po1", "kind": "tool", "summary": "custom tool: notify", "at": "2026-10-05T14:00:55Z", "tool": "other", "name": "notify"}
+{"t": "entry", "id": "ptx1", "kind": "text", "summary": "Done", "at": "2026-10-05T14:00:56Z", "text": "Sorted newest first and dropped **3** dead links. The generator now skips them, so they will not come back."}
+{"t": "switch", "reason": "fork", "transcript": "/home/ap/.pi/agent/sessions/--home-ap-notes--/2026-10-05T14-10-00.jsonl"}
+{"t": "entry", "id": "pu2", "kind": "user", "summary": "Try alphabetical instead", "at": "2026-10-05T14:00:57Z", "text": "Actually, try alphabetical on this branch."}
+{"t": "state", "state": "idle"}
+{"t": "cursor", "cursor": "p-7"}

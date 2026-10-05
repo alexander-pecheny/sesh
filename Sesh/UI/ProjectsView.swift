@@ -10,12 +10,18 @@ struct ProjectsView: View {
     var body: some View {
         Group {
             switch projects.stage {
-            case .ready where projects.missing.contains("herdr") || projects.missing.contains("claude"):
-                MissingTools(missing: projects.missing.filter { $0 != "git" })
+            case .ready where projects.needsHerdr:
+                NeedsHerdr()
             case .ready:
-                NavigationStack {
+                NavigationStack(path: $projects.route) {
                     FolderView(projects: projects, path: projects.home)
-                        .navigationDestination(for: String.self) { FolderView(projects: projects, path: $0) }
+                        .navigationDestination(for: Projects.Place.self) { place in
+                            switch place {
+                            case .folder(let path): FolderView(projects: projects, path: path)
+                            case .conversation(let pane, let fresh):
+                                ConversationScreen(projects: projects, pane: pane, fresh: fresh)
+                            }
+                        }
                 }
                 .tint(flavour(.mauve))
             case .failed:
@@ -54,6 +60,28 @@ struct ProjectsView: View {
     }
 }
 
+private struct ConversationScreen: View {
+    @ObservedObject var projects: Projects
+    let pane: String
+    let fresh: Bool
+    @StateObject private var conversation: Conversation
+
+    init(projects: Projects, pane: String, fresh: Bool) {
+        self.projects = projects
+        self.pane = pane
+        self.fresh = fresh
+        let agent = projects.sessions.first { $0.pane == pane }?.agent
+        _conversation = StateObject(wrappedValue: Conversation(pane: pane, agent: agent, projects: projects))
+    }
+
+    var body: some View {
+        ConversationView(
+            conversation: conversation,
+            title: projects.sessions.first { $0.pane == pane }?.name ?? "Agent session",
+            fresh: fresh)
+    }
+}
+
 private struct Notice<Action: View>: View {
     @Environment(\.colorScheme) private var colorScheme
     let text: String
@@ -73,37 +101,48 @@ private struct Notice<Action: View>: View {
     }
 }
 
-private struct MissingTools: View {
+/// Commands someone runs on the Host, with a Copy button, since Sesh never installs anything.
+private struct Install: View {
     @Environment(\.colorScheme) private var colorScheme
-    let missing: [String]
+    let commands: String
 
     private var flavour: Catppuccin.Flavour { colorScheme == .dark ? .mocha : .latte }
 
-    private var commands: String {
-        missing.map {
-            $0 == "herdr" ? "curl -fsSL https://herdr.dev/install.sh | sh" : "curl -fsSL https://claude.ai/install.sh | bash"
-        }
-        .joined(separator: "\n")
+    var body: some View {
+        Text(commands)
+            .font(.system(size: 12, design: .monospaced))
+            .textSelection(.enabled)
+            .padding(12)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .background(flavour(.mantle), in: .rect(cornerRadius: 8))
+            .foregroundStyle(flavour(.text))
+        Button("Copy") { UIPasteboard.general.string = commands }
+            .buttonStyle(.borderedProminent)
+            .tint(flavour(.mauve))
     }
+}
+
+struct NeedsHerdr: View {
+    @Environment(\.colorScheme) private var colorScheme
+
+    private var flavour: Catppuccin.Flavour { colorScheme == .dark ? .mocha : .latte }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 16) {
-            Text("This Host is missing \(missing.joined(separator: " and "))")
+            Text("This Host needs Sesh's herdr")
                 .font(.ui(17))
                 .foregroundStyle(flavour(.text))
-            Text("Projects needs them to run Claude. Whoever looks after the Host can install them with:")
+            Text("Projects shows Claude, Codex and pi as chat through a build of herdr made for Sesh. Whoever looks after the Host can install it, with Rust and Zig on the PATH, by running:")
                 .font(.ui(14))
                 .foregroundStyle(flavour(.subtext0))
-            Text(commands)
-                .font(.system(size: 12, design: .monospaced))
-                .textSelection(.enabled)
-                .padding(12)
-                .frame(maxWidth: .infinity, alignment: .leading)
-                .background(flavour(.mantle), in: .rect(cornerRadius: 8))
-                .foregroundStyle(flavour(.text))
-            Button("Copy") { UIPasteboard.general.string = commands }
-                .buttonStyle(.borderedProminent)
-                .tint(flavour(.mauve))
+            Install(commands: """
+                git clone https://code.pecheny.me/pecheny/herdr.git
+                cd herdr && just build
+                install -m755 target/release/herdr ~/.local/bin/herdr
+                herdr server live-handoff
+                herdr integration install claude
+                herdr integration install codex
+                """)
         }
         .padding(24)
     }
@@ -111,7 +150,6 @@ private struct MissingTools: View {
 
 private struct FolderView: View {
     @Environment(\.colorScheme) private var colorScheme
-    @Environment(\.openURL) private var openURL
     @ObservedObject var projects: Projects
     let path: String
     @State private var listing: Projects.Listing?
@@ -119,22 +157,21 @@ private struct FolderView: View {
     @State private var naming = false
     @State private var newName = ""
     @State private var starting = false
-    @State private var lost: String?
 
     private var flavour: Catppuccin.Flavour { colorScheme == .dark ? .mocha : .latte }
     private var isHome: Bool { path == projects.home }
     private var title: String { isHome ? "Home" : (path as NSString).lastPathComponent }
-    private var here: [Projects.ClaudeSession] {
+    private var here: [Projects.AgentSession] {
         isHome ? projects.sessions : projects.sessions.filter { $0.folder == path }
     }
 
     var body: some View {
         List {
             if !here.isEmpty {
-                Section("Claude sessions") {
+                Section("Agent sessions") {
                     ForEach(here) { session in
-                        SessionRow(session: session, home: projects.home, showFolder: isHome) {
-                            Task { await open(session) }
+                        NavigationLink(value: Projects.Place.conversation(pane: session.pane, fresh: false)) {
+                            SessionRow(session: session, home: projects.home, showFolder: isHome)
                         }
                         .swipeActions {
                             Button("Stop", role: .destructive) { Task { await projects.stop(session) } }
@@ -146,7 +183,7 @@ private struct FolderView: View {
             if !isHome {
                 Section {
                     Button { starting = true } label: {
-                        Label { Text("Start Claude here") } icon: { Image.lucide("sparkles") }
+                        Label { Text("Start an Agent here") } icon: { Image.lucide("sparkles") }
                     }
                     .font(.ui(16))
                 }
@@ -155,7 +192,7 @@ private struct FolderView: View {
             Section("Folders") {
                 if let listing {
                     ForEach(listing.folders, id: \.self) { name in
-                        NavigationLink(value: path + "/" + name) {
+                        NavigationLink(value: Projects.Place.folder(path + "/" + name)) {
                             Label { Text(name).foregroundStyle(flavour(.text)) } icon: { Image.lucide("folder").foregroundStyle(flavour(.blue)) }
                                 .font(.ui(16))
                         }
@@ -186,11 +223,6 @@ private struct FolderView: View {
             Button("Cancel", role: .cancel) { newName = "" }
             Button("Create") { Task { await create() } }
         }
-        .alert("Open it in the Claude app", isPresented: Binding(get: { lost != nil }, set: { if !$0 { lost = nil } })) {
-            Button("OK") { lost = nil }
-        } message: {
-            Text("Sesh found no link for \(lost ?? ""). Remote Control needs Claude on the Host signed in with a Claude plan, not an API key. If it is, look for that name in the Claude app.")
-        }
         .sheet(isPresented: $starting) {
             StartSheet(projects: projects, folder: path, git: listing?.git == true && projects.canBranch)
         }
@@ -214,26 +246,21 @@ private struct FolderView: View {
         if let error = await projects.makeFolder(name, in: path) { problem = error }
         await load()
     }
-
-    private func open(_ session: Projects.ClaudeSession) async {
-        guard let url = await projects.link(for: session.pane) else { return lost = session.name }
-        openURL(url)
-    }
 }
 
 private struct SessionRow: View {
     @Environment(\.colorScheme) private var colorScheme
-    let session: Projects.ClaudeSession
+    let session: Projects.AgentSession
     let home: String
     let showFolder: Bool
-    let open: () -> Void
 
     private var flavour: Catppuccin.Flavour { colorScheme == .dark ? .mocha : .latte }
 
-    private var subtitle: String? {
+    private var subtitle: String {
         let folder = session.folder.hasPrefix(home) ? "~" + session.folder.dropFirst(home.count) : session.folder
-        let parts = [showFolder ? folder : nil, session.branch.map { "branch \($0)" }].compactMap { $0 }
-        return parts.isEmpty ? nil : parts.joined(separator: " · ")
+        return [session.agent.title, showFolder ? folder : nil, session.branch.map { "branch \($0)" }]
+            .compactMap { $0 }
+            .joined(separator: " · ")
     }
 
     private var state: (String, Catppuccin.Swatch) {
@@ -247,24 +274,20 @@ private struct SessionRow: View {
     }
 
     var body: some View {
-        Button(action: open) {
-            HStack(spacing: 12) {
-                VStack(alignment: .leading, spacing: 2) {
-                    Text(session.name).font(.ui(16)).foregroundStyle(flavour(.text))
-                    if let subtitle {
-                        Text(subtitle).font(.ui(12)).foregroundStyle(flavour(.subtext0)).lineLimit(1)
-                    }
-                }
-                Spacer(minLength: 8)
-                Text(state.0)
-                    .font(.ui(12))
-                    .padding(.horizontal, 8)
-                    .padding(.vertical, 3)
-                    .background(flavour(state.1).opacity(0.18), in: .capsule)
-                    .foregroundStyle(flavour(state.1))
+        HStack(spacing: 12) {
+            VStack(alignment: .leading, spacing: 2) {
+                Text(session.name).font(.ui(16)).foregroundStyle(flavour(.text))
+                Text(subtitle).font(.ui(12)).foregroundStyle(flavour(.subtext0)).lineLimit(1)
             }
+            Spacer(minLength: 8)
+            Text(state.0)
+                .font(.ui(12))
+                .padding(.horizontal, 8)
+                .padding(.vertical, 3)
+                .background(flavour(state.1).opacity(0.18), in: .capsule)
+                .foregroundStyle(flavour(state.1))
         }
-        .accessibilityHint("Opens it in the Claude app")
+        .accessibilityHint("Opens its Conversation")
     }
 }
 
@@ -274,38 +297,63 @@ private struct StartSheet: View {
     @ObservedObject var projects: Projects
     let folder: String
     let git: Bool
+    @AppStorage("agent") private var agent = Agent.claude
     @State private var name = ""
     @State private var branch = false
     @State private var working = false
     @State private var problem: String?
 
     private var flavour: Catppuccin.Flavour { colorScheme == .dark ? .mocha : .latte }
+    private var missing: Bool { projects.missing.contains(agent.rawValue) }
 
     var body: some View {
         NavigationStack {
             Form {
                 Section {
-                    LabeledField("Name", "", text: $name)
-                    if git { Toggle("On a new branch", isOn: $branch) }
-                } footer: {
-                    Text(branch
-                         ? "Claude works on its own copy of \((folder as NSString).lastPathComponent), on a branch named \(Projects.slug(name))."
-                         : "Claude keeps running on the Host after you close Sesh. Talk to it in the Claude app.")
+                    Picker("Agent", selection: $agent) {
+                        ForEach(Agent.allCases) { Text($0.title).tag($0) }
+                    }
+                    .pickerStyle(.segmented)
+                    .listRowInsets(EdgeInsets())
+                    .listRowBackground(Color.clear)
+                }
+                if missing {
+                    Section {
+                        VStack(alignment: .leading, spacing: 12) {
+                            Text("This Host has no \(agent.rawValue). Whoever looks after the Host can install it with:")
+                                .foregroundStyle(flavour(.subtext0))
+                            Install(commands: agent.install)
+                        }
+                        .padding(.vertical, 6)
+                    }
+                } else {
+                    Section {
+                        LabeledField("Name", "", text: $name)
+                        if git { Toggle("On a new branch", isOn: $branch) }
+                    } footer: {
+                        Text(branch
+                             ? "\(agent.title) works on its own copy of \((folder as NSString).lastPathComponent), on a branch named \(Projects.slug(name))."
+                             : "\(agent.title) keeps running on the Host after you close Sesh.")
+                    }
                 }
                 if let problem {
-                    Section("Claude did not start") {
+                    Section("\(agent.title) did not start") {
                         Text(problem).font(.system(size: 12, design: .monospaced)).foregroundStyle(flavour(.red))
                     }
                 }
             }
             .font(.ui(14))
             .disabled(working)
-            .navigationTitle("Start Claude")
+            .navigationTitle("Start an Agent")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) { Button("Cancel") { dismiss() }.disabled(working) }
                 ToolbarItem(placement: .confirmationAction) {
-                    if working { ProgressView() } else { Button("Start") { Task { await start() } } }
+                    if working {
+                        ProgressView()
+                    } else {
+                        Button("Start") { Task { await start() } }.disabled(missing)
+                    }
                 }
             }
         }
@@ -318,8 +366,13 @@ private struct StartSheet: View {
         guard !slug.isEmpty else { return problem = "Give it a name first." }
         name = slug
         working = true
-        problem = await projects.start(slug, in: folder, branch: branch)
+        let started = await projects.start(slug, agent: agent, in: folder, branch: branch)
         working = false
-        if problem == nil { dismiss() }
+        switch started {
+        case .failure(let failure): problem = failure.message
+        case .success(let pane):
+            dismiss()
+            projects.route.append(.conversation(pane: pane, fresh: true))
+        }
     }
 }

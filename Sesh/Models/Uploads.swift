@@ -54,6 +54,18 @@ enum Uploads {
         return prepared
     }
 
+    /// Hands the prepared files to the core and returns the Upload's id, nil if it refused.
+    static func start(_ files: [PreparedUpload], on handle: OpaquePointer) -> UInt32? {
+        let strings = CStrings()
+        let entries = files.map {
+            sesh_upload_t(local_path: strings.make($0.local.path), remote_name: strings.make($0.name))
+        }
+        let id = withExtendedLifetime(strings) {
+            entries.withUnsafeBufferPointer { sesh_session_upload(handle, $0.baseAddress, UInt($0.count)) }
+        }
+        return id == 0 ? nil : id
+    }
+
     static func discard(_ files: [PreparedUpload]) {
         files.forEach { try? FileManager.default.removeItem(at: $0.local) }
     }
