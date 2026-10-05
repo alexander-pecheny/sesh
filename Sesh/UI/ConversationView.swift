@@ -339,7 +339,7 @@ private struct Thinking: View {
     }
 }
 
-/// Claude Code's spinner: a turning glyph and a word with a light sweeping across it.
+/// Twinkling stars and a word with a light sweeping across it, while the Agent works.
 private struct WorkingRow: View {
     @Environment(\.colorScheme) private var colorScheme
     @State private var start = Date()
@@ -349,9 +349,6 @@ private struct WorkingRow: View {
         "Shimmying", "Pondering", "Noodling", "Percolating", "Tinkering", "Conjuring", "Mulling",
         "Brewing", "Untangling", "Whirring", "Simmering", "Puzzling", "Spelunking", "Cogitating",
     ]
-    /// U+FE0E keeps ✳ from turning into an emoji.
-    private static let glyphs = ["·", "✢", "✳", "✶", "✻", "✽", "✻", "✶", "✳", "✢"].map { $0 + "\u{FE0E}" }
-    private static let glyphsPerSecond = 8.0
     private static let sweep = 1.6
     private static let band = 0.3
 
@@ -360,10 +357,9 @@ private struct WorkingRow: View {
     var body: some View {
         TimelineView(.animation) { context in
             let elapsed = context.date.timeIntervalSince(start)
-            let glyph = Self.glyphs[Int(elapsed * Self.glyphsPerSecond) % Self.glyphs.count]
             let light = elapsed.truncatingRemainder(dividingBy: Self.sweep) / Self.sweep * (1 + 2 * Self.band) - Self.band
             HStack(spacing: Metric.gap) {
-                Text(glyph).foregroundStyle(flavour(.peach)).frame(width: Metric.wide)
+                Sparkles(time: elapsed, colour: flavour(.mauve)).frame(width: Metric.control / 2, height: Metric.control / 2)
                 Text("\(word)…")
                     .foregroundStyle(flavour(.overlay1))
                     .overlay {
@@ -379,6 +375,48 @@ private struct WorkingRow: View {
         }
         .accessibilityElement(children: .ignore)
         .accessibilityLabel("\(word)…")
+    }
+}
+
+/// Three four-point stars, each swelling, turning and fading on its own beat.
+private struct Sparkles: View {
+    let time: TimeInterval
+    let colour: Color
+
+    /// Centre and size as fractions of the box, and where in the beat each star starts.
+    private static let stars: [(x: Double, y: Double, size: Double, offset: Double)] = [
+        (0.42, 0.55, 0.62, 0), (0.8, 0.2, 0.32, 0.33), (0.18, 0.15, 0.26, 0.66),
+    ]
+    private static let beat = 1.4
+    private static let waist = 0.18
+
+    var body: some View {
+        Canvas { context, size in
+            for star in Self.stars {
+                let phase = (time / Self.beat + star.offset).truncatingRemainder(dividingBy: 1)
+                let swell = sin(phase * .pi)
+                let radius = min(size.width, size.height) * star.size / 2 * swell
+                guard radius > 0 else { continue }
+                var star4 = context
+                star4.translateBy(x: size.width * star.x, y: size.height * star.y)
+                star4.rotate(by: .radians(phase * .pi / 2))
+                star4.opacity = swell
+                star4.fill(Self.path(radius), with: .color(colour))
+            }
+        }
+    }
+
+    private static func path(_ radius: Double) -> Path {
+        var path = Path()
+        let inner = radius * waist
+        for point in 0..<8 {
+            let angle = Double(point) * .pi / 4 - .pi / 2
+            let length = point.isMultiple(of: 2) ? radius : inner
+            let corner = CGPoint(x: cos(angle) * length, y: sin(angle) * length)
+            if point == 0 { path.move(to: corner) } else { path.addLine(to: corner) }
+        }
+        path.closeSubpath()
+        return path
     }
 }
 
