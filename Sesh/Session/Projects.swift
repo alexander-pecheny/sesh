@@ -51,11 +51,13 @@ final class Projects: ObservableObject, Identifiable {
         let pane: String
         let state: String
         let folder: String
+        let cwd: String
         let branch: String?
         let workspace: Workspace
     }
 
-    struct Workspace: Hashable {
+    struct Workspace: Hashable, Identifiable {
+        let id: String
         let label: String
         let number: Int
     }
@@ -252,8 +254,10 @@ final class Projects: ObservableObject, Identifiable {
                 pane: agent.pane_id,
                 state: agent.agent_status,
                 folder: worktree?.repo_root ?? agent.cwd,
+                cwd: agent.cwd,
                 branch: worktree.map { ($0.checkout_path as NSString).lastPathComponent },
-                workspace: Workspace(label: space?.label ?? agent.workspace_id, number: space?.number ?? .max))
+                workspace: Workspace(
+                    id: agent.workspace_id, label: space?.label ?? agent.workspace_id, number: space?.number ?? .max))
         }
         .sorted { ($0.workspace.number, $0.name) < ($1.workspace.number, $1.name) }
     }
@@ -285,11 +289,13 @@ final class Projects: ObservableObject, Identifiable {
         (prompt: "Continue without trusting", keys: "down down enter"),
     ]
 
-    /// Starts an Agent session in `folder`, or on a new branch of it, and returns its pane.
-    /// The pane is closed on failure so no half-started Agent lingers.
-    func start(_ name: String, agent: Agent, in folder: String, branch: Bool) async -> Result<String, Failure> {
+    /// Starts an Agent session in `folder`, on a new branch of it, or in `workspace`, and returns
+    /// its pane. The pane is closed on failure so no half-started Agent lingers.
+    func start(
+        _ name: String, agent: Agent, in folder: String, branch: Bool, workspace: String? = nil
+    ) async -> Result<String, Failure> {
         let pane: String
-        switch await paneFor(name, in: folder, branch: branch) {
+        switch await paneFor(name, in: folder, branch: branch, workspace: workspace) {
         case .failure(let failure): return .failure(failure)
         case .success(let id): pane = id
         }
@@ -323,15 +329,20 @@ final class Projects: ObservableObject, Identifiable {
         return .success(pane)
     }
 
-    private func paneFor(_ name: String, in folder: String, branch: Bool) async -> Result<String, Failure> {
+    private func paneFor(
+        _ name: String, in folder: String, branch: Bool, workspace chosen: String?
+    ) async -> Result<String, Failure> {
         if branch {
             let ran = await run(
                 "herdr worktree create --cwd \(quote(folder)) --branch \(quote(name)) --no-focus")
             return rootPane(ran)
         }
-        let panes = await run("herdr pane list")
-        let workspace = (try? JSONDecoder().decode(Herdr<PaneList>.self, from: Data(panes.out.utf8)))?
-            .result.panes.first { $0.cwd == folder }?.workspace_id
+        var workspace = chosen
+        if workspace == nil {
+            let panes = await run("herdr pane list")
+            workspace = (try? JSONDecoder().decode(Herdr<PaneList>.self, from: Data(panes.out.utf8)))?
+                .result.panes.first { $0.cwd == folder }?.workspace_id
+        }
         let ran: Ran
         if let workspace {
             ran = await run(

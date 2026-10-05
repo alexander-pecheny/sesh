@@ -161,6 +161,7 @@ private struct FolderView: View {
     @State private var naming = false
     @State private var newName = ""
     @State private var starting = false
+    @State private var startingIn: Projects.Workspace?
 
     private var flavour: Catppuccin.Flavour { colorScheme == .dark ? .mocha : .latte }
     private var isHome: Bool { path == projects.home }
@@ -178,13 +179,22 @@ private struct FolderView: View {
     var body: some View {
         List {
             ForEach(groups, id: \.0) { workspace, sessions in
-                Section(workspace?.label ?? "Agent sessions") {
+                Section {
                     ForEach(sessions) { session in
                         NavigationLink(value: Projects.Place.conversation(pane: session.pane, fresh: false)) {
                             SessionRow(session: session)
                         }
                         .swipeActions {
                             Button("Stop", role: .destructive) { Task { await projects.stop(session) } }
+                        }
+                    }
+                } header: {
+                    HStack {
+                        Text(workspace?.label ?? "Agent sessions")
+                        Spacer()
+                        if let workspace {
+                            Button { startingIn = workspace } label: { Image.lucide("plus", size: Metric.title) }
+                                .accessibilityLabel("Start an Agent in \(workspace.label)")
                         }
                     }
                 }
@@ -235,6 +245,10 @@ private struct FolderView: View {
         }
         .sheet(isPresented: $starting) {
             StartSheet(projects: projects, folder: path, git: listing?.git == true && projects.canBranch)
+        }
+        .sheet(item: $startingIn) { workspace in
+            let folder = projects.sessions.first { $0.workspace == workspace }?.cwd ?? projects.home
+            StartSheet(projects: projects, folder: folder, git: false, workspace: workspace.id)
         }
     }
 
@@ -302,6 +316,7 @@ private struct StartSheet: View {
     @ObservedObject var projects: Projects
     let folder: String
     let git: Bool
+    var workspace: String?
     @AppStorage("agent") private var agent = Agent.claude
     @State private var name = ""
     @State private var branch = false
@@ -371,7 +386,7 @@ private struct StartSheet: View {
         guard !slug.isEmpty else { return problem = "Give it a name first." }
         name = slug
         working = true
-        let started = await projects.start(slug, agent: agent, in: folder, branch: branch)
+        let started = await projects.start(slug, agent: agent, in: folder, branch: branch, workspace: workspace)
         working = false
         switch started {
         case .failure(let failure): problem = failure.message
