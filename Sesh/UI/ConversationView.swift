@@ -12,16 +12,29 @@ struct ConversationView: View {
     @State private var lost = false
     @StateObject private var field = PlainField()
     @State private var atBottom = true
+    @State private var nearTop = false
+    @State private var topRow: String?
     @State private var scrolling = ScrollPhase.idle
 
     private var flavour: Catppuccin.Flavour { colorScheme == .dark ? .mocha : .latte }
     private var working: Bool { conversation.state == "working" }
     private static let end = "end"
+    private static let nearTop = 200.0
+
+    /// Pages back while the reader stays near the top and herdr has more.
+    private func loadEarlier() async {
+        while nearTop, conversation.earlier, !conversation.items.isEmpty {
+            let count = conversation.items.count
+            await conversation.loadEarlier()
+            if conversation.items.count == count { return }
+        }
+    }
 
     var body: some View {
         ScrollViewReader { reader in
             ScrollView {
                 LazyVStack(alignment: .leading, spacing: 14) {
+                    if conversation.earlier { ProgressView().frame(maxWidth: .infinity) }
                     ForEach(Row.rows(conversation.items)) { row in
                         RowView(row: row, conversation: conversation)
                     }
@@ -29,9 +42,18 @@ struct ConversationView: View {
                     if working { WorkingRow() }
                     Color.clear.frame(height: 1).id(Self.end)
                 }
+                .scrollTargetLayout()
                 .padding(16)
             }
+            // Tracking the top row keeps it in place while a page lands above it.
+            .scrollPosition(id: $topRow, anchor: .top)
             .defaultScrollAnchor(.bottom)
+            .onScrollGeometryChange(for: Bool.self) { geometry in
+                geometry.contentOffset.y + geometry.contentInsets.top < Self.nearTop
+            } action: { _, top in
+                nearTop = top
+                if top { Task { await loadEarlier() } }
+            }
             .onScrollGeometryChange(for: Bool.self) { geometry in
                 geometry.visibleRect.maxY >= geometry.contentSize.height - Metric.control
             } action: { _, bottom in

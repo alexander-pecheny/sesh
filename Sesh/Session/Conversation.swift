@@ -4,7 +4,10 @@ import SwiftUI
 /// already turned every Agent's Transcript into the same entries (ADR 0005).
 @MainActor
 final class Conversation: ObservableObject {
-    static let protocols: Set<Int> = [1]
+    static let protocols: Set<Int> = [1, 2]
+    /// The first protocol whose herdr can page back through a Transcript with `agent history`.
+    private static let paging = 2
+    private static let page = 50
 
     struct Entry: Decodable, Identifiable, Equatable {
         let id: String
@@ -74,6 +77,7 @@ final class Conversation: ObservableObject {
         let reason: String?
         let cursor: String?
         let id: String?
+        let more: Bool?
     }
 
     @Published private(set) var items: [Item] = []
@@ -82,11 +86,14 @@ final class Conversation: ObservableObject {
     @Published private(set) var permissions: [Permission] = []
     @Published private(set) var state = ""
     @Published private(set) var agent: Agent?
+    /// Whether entries older than the first one shown can still be fetched.
+    @Published private(set) var earlier = false
     @Published var problem: String?
 
     let pane: String
     private(set) weak var projects: Projects?
     private var cursor: String?
+    private var loading = false
     private var expanded: Set<String> = []
     private var images: [String: UIImage] = [:]
 
@@ -120,12 +127,14 @@ final class Conversation: ObservableObject {
             if let number = line.protocol, !Self.protocols.contains(number) {
                 problem = "herdr speaks protocol \(number), which this Sesh does not know. Update Sesh."
             }
+            earlier = (line.protocol ?? 0) >= Self.paging
         case "entry":
             if let entry = try? JSONDecoder().decode(Entry.self, from: data) { add(entry) }
         case "state": state = line.state ?? state
         case "switch":
             items.append(.switched(id: items.count, reason: line.reason ?? "other"))
             todo = nil
+            earlier = false
         case "permission":
             guard let permission = try? JSONDecoder().decode(Permission.self, from: data) else { return }
             permissions.removeAll { $0.id == permission.id }
@@ -147,6 +156,30 @@ final class Conversation: ObservableObject {
                 items.append(.entry(entry))
             }
         }
+    }
+
+    /// Fetches the page of entries before the first one shown and puts it above.
+    func loadEarlier() async {
+        guard earlier, !loading, let projects,
+              let first = items.lazy.compactMap({ if case .entry(let entry) = $0 { entry } else { nil } }).first
+        else { return }
+        loading = true
+        defer { loading = false }
+        let ran = await projects.run("herdr agent history \(quote(pane)) --before \(quote(first.id)) --last \(Self.page)")
+        guard ran.ok else { return earlier = false }
+        var older: [Item] = []
+        for text in ran.out.split(separator: "\n") {
+            let data = Data(text.utf8)
+            guard let line = try? JSONDecoder().decode(Line.self, from: data) else { continue }
+            if line.t == "history" { earlier = line.more ?? false }
+            guard line.t == "entry", let entry = try? JSONDecoder().decode(Entry.self, from: data) else { continue }
+            switch entry.kind {
+            case "result": if let call = entry.call { results[call] = results[call] ?? entry }
+            case "todo": todo = todo ?? entry
+            default: if !items.contains(where: { $0.id == entry.id }) { older.append(.entry(entry)) }
+            }
+        }
+        items.insert(contentsOf: older, at: 0)
     }
 
     // MARK: Talking to the Agent

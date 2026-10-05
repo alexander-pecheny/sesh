@@ -337,11 +337,11 @@ Agent, not only pi and omp. The Codex hook sends `transcript_path` as
 socket and returns at once with no decision, so the Agent draws its usual prompt.
 
 **`herdr agent follow <pane> [--since <cursor>] [--last N]`.** Long-running. Writes one
-JSON object per line, flushed per line, until killed. N defaults to 200 entries.
-`herdr agent follow --protocol` prints the protocol number, `1`, and exits.
+JSON object per line, flushed per line, until killed. N defaults to 50 entries.
+`herdr agent follow --protocol` prints the protocol number, `2`, and exits.
 
 ```
-{"t":"hello","protocol":1,"agent":"claude|codex|pi","transcript":"<path>"}
+{"t":"hello","protocol":2,"agent":"claude|codex|pi","transcript":"<path>"}
 {"t":"entry", ...entry}
 {"t":"state","state":"idle|working|blocked|done"}
 {"t":"switch","reason":"clear|resume|new|compact|fork|other","transcript":"<path>"}
@@ -350,8 +350,12 @@ JSON object per line, flushed per line, until killed. N defaults to 200 entries.
 {"t":"cursor","cursor":"<opaque>"}
 ```
 
-Every entry has `id` (stable across reconnects), `kind`, `summary` (one plain line, used
-for kinds Sesh does not know) and `at` (RFC 3339). Kinds:
+Every entry has `id` (stable across reconnects, opaque to Sesh), `kind`, `summary` (one
+plain line, used for kinds Sesh does not know) and `at` (RFC 3339). A `tool` entry's id
+comes from the Agent's own call id (`<tag>.call.<call id>`), and its `result` computes
+`call` the same way from the result line alone, so a result names its call even when
+the call was never sent; it can arrive before the call does. Other ids come from the
+line's byte offset (`<tag>.<offset>.<n>`), a question's from its questions. Kinds:
 
 - `user`: `text`, `images` (remote paths).
 - `text`: `text`, markdown.
@@ -368,11 +372,28 @@ for kinds Sesh does not know) and `at` (RFC 3339). Kinds:
 `result.text` and `diff` are cut to the first and last 40 lines and 16 KB; `truncated`
 says so. `herdr agent entry <pane> <id>` prints that entry whole, as one JSON line.
 
+`follow` reads only the end of the Transcript: a window of the last K bytes, aligned to
+a line, that doubles until it holds N entries or reaches the file's start. A result
+whose call lies before the window still names it.
+
+**`herdr agent history <pane> --before <id> [--last N]`.** N defaults to 50. Prints up to
+N entries that precede entry `<id>` in the pane's current Transcript, oldest first,
+each as the `{"t":"entry",...}` line `follow` prints, then one last line
+`{"t":"history","more":true|false}`; `more` says earlier entries exist. Sesh passes the
+id of the oldest entry it has, of any kind. An unknown id exits 1 with a message.
+
+```
+{"t":"entry","id":"3f9c2a1b.20871652.0","kind":"user",...}
+{"t":"entry","id":"3f9c2a1b.call.toolu_01Hx…","kind":"tool",...}
+{"t":"entry","id":"3f9c2a1b.20874410.0","kind":"result","call":"3f9c2a1b.call.toolu_01Hx…",...}
+{"t":"history","more":true}
+```
+
 A `cursor` follows each burst of lines; after `--since` nothing is repeated or missed.
 A switch to another Transcript emits `switch`, then that Transcript's last N entries.
 `permission_done` follows when the prompt is answered anywhere or the Agent moves on.
 Lines Sesh does not need (system, meta, usage, snapshots) never leave herdr. pi's
-Transcript is a tree; follow its current branch.
+Transcript is a tree; follow its current branch, as far back as the window reaches.
 
 **Answering.** `herdr agent answer <pane> --json '<answers>'` plays Claude's question menu
 (a digit per option, "Type something" plus text plus Enter, then Enter on Submit).
