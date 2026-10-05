@@ -36,6 +36,18 @@ mkdir -p "$local"
 [ -f "$local/testkey" ] || ssh-keygen -q -t ed25519 -N '' -C sesh-test -f "$local/testkey"
 chmod 600 "$local/ssh_host_ed25519_key" "$local/testkey"
 
+# SESH_HERDR=/path/to/herdr puts that herdr first on the PATH of login shells, running its
+# own server, so tests never touch the herdr already serving this Mac.
+herdr_env=""
+if [ -n "${SESH_HERDR:-}" ]; then
+    zdot="$local/zdot"
+    mkdir -p "$zdot/bin"
+    ln -sf "$SESH_HERDR" "$zdot/bin/herdr"
+    for f in .zshenv .zprofile .zlogin; do echo "[ -f ~/$f ] && . ~/$f" > "$zdot/$f"; done
+    printf '[ -f ~/.zshrc ] && . ~/.zshrc\nexport PATH="%s:$PATH"\n' "$zdot/bin" > "$zdot/.zshrc"
+    herdr_env="SetEnv ZDOTDIR=$zdot HERDR_SESSION=sesh-test"
+fi
+
 cat > "$config" <<CONF
 Port 2222
 ListenAddress 127.0.0.1
@@ -51,6 +63,7 @@ StrictModes no
 PrintMotd no
 LogLevel VERBOSE
 Subsystem sftp /usr/libexec/sftp-server
+$herdr_env
 CONF
 
 /usr/sbin/sshd -D -e -f "$config" > "$local/sshd.log" 2>&1 &
