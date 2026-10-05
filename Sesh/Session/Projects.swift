@@ -60,6 +60,28 @@ final class Projects: ObservableObject, Identifiable {
         let id: String
         let label: String
         let number: Int
+        var repo: String?
+        var linked = false
+    }
+
+    /// A row of herdr's sidebar: a lone Workspace, or a repo's main checkout heading its branch copies.
+    struct WorkspaceGroup: Identifiable {
+        let head: Workspace
+        let children: [Workspace]
+        var id: String { head.id }
+    }
+
+    /// herdr's own rule: a repo groups once it has two Workspaces and one is the main checkout.
+    static func groups(_ spaces: [Workspace]) -> [WorkspaceGroup] {
+        let members = Dictionary(grouping: spaces.filter { $0.repo != nil }, by: { $0.repo! })
+        var emitted = Set<String>()
+        return spaces.compactMap { space in
+            guard let repo = space.repo, let group = members[repo], group.count > 1,
+                  let head = group.first(where: { !$0.linked })
+            else { return WorkspaceGroup(head: space, children: []) }
+            guard emitted.insert(repo).inserted else { return nil }
+            return WorkspaceGroup(head: head, children: group.filter { $0 != head })
+        }
     }
 
     struct Failure: Error {
@@ -89,6 +111,7 @@ final class Projects: ObservableObject, Identifiable {
     @Published private(set) var missing: [String] = []
     @Published private(set) var herdrProtocol: Int?
     @Published private(set) var sessions: [AgentSession] = []
+    @Published private(set) var workspaces: [Workspace] = []
     @Published var route: [Place] = []
     @Published private(set) var uploading: SeshSession.Progress?
     @Published var uploadError: String?
@@ -242,6 +265,7 @@ final class Projects: ObservableObject, Identifiable {
               let agents = try? JSONDecoder().decode(Herdr<AgentList>.self, from: lines[0]).result.agents,
               let workspaces = try? JSONDecoder().decode(Herdr<WorkspaceList>.self, from: lines[1]).result.workspaces
         else { return }
+        self.workspaces = workspaces.map(Workspace.init).sorted { $0.number < $1.number }
         let byId = Dictionary(workspaces.map { ($0.workspace_id, $0) }, uniquingKeysWith: { first, _ in first })
         sessions = agents.compactMap { agent in
             guard let kind = Agent(rawValue: agent.agent) else { return nil }
@@ -256,8 +280,8 @@ final class Projects: ObservableObject, Identifiable {
                 folder: worktree?.repo_root ?? agent.cwd,
                 cwd: agent.cwd,
                 branch: worktree.map { ($0.checkout_path as NSString).lastPathComponent },
-                workspace: Workspace(
-                    id: agent.workspace_id, label: space?.label ?? agent.workspace_id, number: space?.number ?? .max))
+                workspace: space.map(Workspace.init)
+                    ?? Workspace(id: agent.workspace_id, label: agent.workspace_id, number: .max))
         }
         .sorted { ($0.workspace.number, $0.name) < ($1.workspace.number, $1.name) }
     }
@@ -338,10 +362,15 @@ final class Projects: ObservableObject, Identifiable {
             return rootPane(ran)
         }
         var workspace = chosen
-        if workspace == nil {
-            let panes = await run("herdr pane list")
-            workspace = (try? JSONDecoder().decode(Herdr<PaneList>.self, from: Data(panes.out.utf8)))?
-                .result.panes.first { $0.cwd == folder }?.workspace_id
+        var folder = folder
+        if workspace == nil || folder.isEmpty {
+            let panes = (try? JSONDecoder().decode(Herdr<PaneList>.self, from: Data(await run("herdr pane list").out.utf8)))?
+                .result.panes ?? []
+            if let workspace {
+                folder = panes.first { $0.workspace_id == workspace }?.cwd ?? home
+            } else {
+                workspace = panes.first { $0.cwd == folder }?.workspace_id
+            }
         }
         let ran: Ran
         if let workspace {
@@ -565,6 +594,7 @@ private struct WorkspaceList: Decodable {
     struct Worktree: Decodable {
         let checkout_path: String
         let is_linked_worktree: Bool
+        let repo_key: String
         let repo_root: String
     }
     struct Workspace: Decodable {
@@ -652,5 +682,13 @@ private final class LinkBridge {
 
     private static func of(_ userdata: UnsafeMutableRawPointer) -> LinkBridge {
         Unmanaged<LinkBridge>.fromOpaque(userdata).takeUnretainedValue()
+    }
+}
+
+private extension Projects.Workspace {
+    init(_ space: WorkspaceList.Workspace) {
+        self.init(
+            id: space.workspace_id, label: space.label, number: space.number,
+            repo: space.worktree?.repo_key, linked: space.worktree?.is_linked_worktree ?? false)
     }
 }

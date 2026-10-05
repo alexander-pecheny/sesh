@@ -166,39 +166,55 @@ private struct FolderView: View {
     private var flavour: Catppuccin.Flavour { colorScheme == .dark ? .mocha : .latte }
     private var isHome: Bool { path == projects.home }
     private var title: String { isHome ? "Home" : (path as NSString).lastPathComponent }
-    /// At Home, every Agent session under its herdr workspace; in a folder, that folder's.
-    private var groups: [(Projects.Workspace?, [Projects.AgentSession])] {
-        guard isHome else {
-            let here = projects.sessions.filter { $0.folder == path }
-            return here.isEmpty ? [] : [(nil, here)]
+    private var here: [Projects.AgentSession] { projects.sessions.filter { $0.folder == path } }
+
+    private func sessions(in workspace: Projects.Workspace) -> some View {
+        ForEach(projects.sessions.filter { $0.workspace.id == workspace.id }) { row($0, branch: false) }
+    }
+
+    private func row(_ session: Projects.AgentSession, branch: Bool = true) -> some View {
+        NavigationLink(value: Projects.Place.conversation(pane: session.pane, fresh: false)) {
+            SessionRow(session: session, branch: branch)
         }
-        let order = projects.sessions.map(\.workspace).reduce(into: [Projects.Workspace]()) { if !$0.contains($1) { $0.append($1) } }
-        return order.map { workspace in (workspace, projects.sessions.filter { $0.workspace == workspace }) }
+        .swipeActions {
+            Button("Stop", role: .destructive) { Task { await projects.stop(session) } }
+        }
+    }
+
+    private func startButton(_ workspace: Projects.Workspace) -> some View {
+        Button { startingIn = workspace } label: { Image.lucide("plus", size: Metric.title) }
+            .buttonStyle(.borderless)
+            .accessibilityLabel("Start an Agent in \(workspace.label)")
     }
 
     var body: some View {
         List {
-            ForEach(groups, id: \.0) { workspace, sessions in
-                Section {
-                    ForEach(sessions) { session in
-                        NavigationLink(value: Projects.Place.conversation(pane: session.pane, fresh: false)) {
-                            SessionRow(session: session)
+            if isHome {
+                // herdr's sidebar: each repo's main checkout heads its branch copies.
+                ForEach(Projects.groups(projects.workspaces)) { group in
+                    Section {
+                        sessions(in: group.head)
+                        ForEach(group.children) { child in
+                            HStack(spacing: Metric.gap) {
+                                Image.lucide("git-branch", size: Metric.label).foregroundStyle(flavour(.overlay1))
+                                Text(child.label).font(.ui(Metric.body)).foregroundStyle(flavour(.subtext1))
+                                Spacer()
+                                startButton(child)
+                            }
+                            sessions(in: child).padding(.leading, Metric.wide)
                         }
-                        .swipeActions {
-                            Button("Stop", role: .destructive) { Task { await projects.stop(session) } }
+                    } header: {
+                        HStack {
+                            Text(group.head.label)
+                            Spacer()
+                            startButton(group.head)
                         }
                     }
-                } header: {
-                    HStack {
-                        Text(workspace?.label ?? "Agent sessions")
-                        Spacer()
-                        if let workspace {
-                            Button { startingIn = workspace } label: { Image.lucide("plus", size: Metric.title) }
-                                .accessibilityLabel("Start an Agent in \(workspace.label)")
-                        }
-                    }
+                    .listRowBackground(flavour(.mantle))
                 }
-                .listRowBackground(flavour(.mantle))
+            } else if !here.isEmpty {
+                Section("Agent sessions") { ForEach(here) { row($0) } }
+                    .listRowBackground(flavour(.mantle))
             }
             if !isHome {
                 Section {
@@ -247,7 +263,7 @@ private struct FolderView: View {
             StartSheet(projects: projects, folder: path, git: listing?.git == true && projects.canBranch)
         }
         .sheet(item: $startingIn) { workspace in
-            let folder = projects.sessions.first { $0.workspace == workspace }?.cwd ?? projects.home
+            let folder = projects.sessions.first { $0.workspace.id == workspace.id }?.cwd ?? ""
             StartSheet(projects: projects, folder: folder, git: false, workspace: workspace.id)
         }
     }
@@ -275,11 +291,12 @@ private struct FolderView: View {
 private struct SessionRow: View {
     @Environment(\.colorScheme) private var colorScheme
     let session: Projects.AgentSession
+    let branch: Bool
 
     private var flavour: Catppuccin.Flavour { colorScheme == .dark ? .mocha : .latte }
 
     private var subtitle: String {
-        [session.agent.title, session.branch.map { "branch \($0)" }].compactMap { $0 }.joined(separator: " · ")
+        [session.agent.title, branch ? session.branch.map { "branch \($0)" } : nil].compactMap { $0 }.joined(separator: " · ")
     }
 
     private var state: (String, Catppuccin.Swatch) {
