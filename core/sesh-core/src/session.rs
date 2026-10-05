@@ -40,6 +40,7 @@ pub trait Events: Send + Sync + 'static {
     /// No paths and no error means the app cancelled, which it already knows.
     fn upload_done(&self, id: u32, paths: &[String], error: Option<&str>);
     fn ran(&self, _id: u32, _ran: &crate::link::Ran) {}
+    fn chunk(&self, _id: u32, _bytes: &[u8]) {}
 }
 
 /// Forwards the questions a connection may ask but swallows its state and its output, so
@@ -70,6 +71,8 @@ pub enum Command {
     Upload(u32, Vec<Upload>),
     CancelUpload(u32),
     Run(u32, String),
+    Stream(u32, String),
+    Cancel(u32),
 }
 
 #[derive(Default)]
@@ -154,6 +157,16 @@ impl Session {
         let id = self.next_request.fetch_add(1, Ordering::Relaxed) + 1;
         let _ = self.commands.send(Command::Run(id, command));
         id
+    }
+
+    pub fn stream(&self, command: String) -> u32 {
+        let id = self.next_request.fetch_add(1, Ordering::Relaxed) + 1;
+        let _ = self.commands.send(Command::Stream(id, command));
+        id
+    }
+
+    pub fn cancel(&self, id: u32) {
+        let _ = self.commands.send(Command::Cancel(id));
     }
 
     pub fn cancel_upload(&self, id: u32) {
