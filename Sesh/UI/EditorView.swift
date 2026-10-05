@@ -54,26 +54,21 @@ private struct DraftView: View {
     @Environment(\.dismiss) private var dismiss
     @State var draft: Draft
     @ObservedObject var session: SeshSession
-    /// `nil` means save and go back; otherwise send, with or without a trailing Enter.
+    /// `nil` means save; otherwise send, with or without a trailing Enter.
     let finish: (Draft, Bool?) -> Void
 
-    @State private var selection: TextSelection?
+    @StateObject private var field = DraftField()
     @State private var picking = false
 
     var body: some View {
-        TextEditor(text: $draft.text, selection: $selection)
-            .font(.body)
-            .autocorrectionDisabled()
-            .textInputAutocapitalization(.never)
+        DraftText(field: field, text: $draft.text)
             .padding(8)
+            .onChange(of: draft.text) { finish(draft, nil) }
             .navigationTitle("Draft")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
-                    Button("Cancel") {
-                        finish(draft, nil)
-                        dismiss()
-                    }
+                    Button("Done") { dismiss() }
                 }
                 ToolbarItemGroup(placement: .topBarTrailing) {
                     Button { picking = true } label: {
@@ -92,23 +87,55 @@ private struct DraftView: View {
             .sheet(isPresented: $picking) {
                 PhotoPicker { results in
                     picking = false
-                    session.upload(results) { insert($0) }
+                    session.upload(results) { field.insertPaths($0) }
                 }
                 .ignoresSafeArea()
             }
             .uploadFailure($session.uploadError)
     }
+}
 
-    /// Ordinary paste behaviour: at the caret, over any selection, and never glued to the
-    /// word in front of it.
-    private func insert(_ paths: String) {
-        let end = draft.text.endIndex
-        var range = end..<end
-        if case .selection(let selected)? = selection?.indices { range = selected }
-        let gap = draft.text[..<range.lowerBound].last.map { $0.isWhitespace } ?? true
-        let text = (gap ? "" : " ") + paths
-        draft.text.replaceSubrange(range, with: text)
-        let caret = draft.text.index(range.lowerBound, offsetBy: text.count)
-        selection = TextSelection(insertionPoint: caret)
+/// Unlike TextEditor, keeps the caret in sight when a taller keyboard shrinks it or an Upload path lands.
+private final class DraftField: UITextView, ObservableObject {
+    private var height = 0.0
+
+    override func layoutSubviews() {
+        super.layoutSubviews()
+        if bounds.height < height, isFirstResponder { scrollRangeToVisible(selectedRange) }
+        height = bounds.height
+    }
+
+    /// At the caret, over any selection, and never glued to the word in front of it.
+    func insertPaths(_ paths: String) {
+        let before = (text as NSString).substring(to: selectedRange.location)
+        let gap = before.last.map { $0.isWhitespace } ?? true
+        insertText((gap ? "" : " ") + paths)
+    }
+}
+
+private struct DraftText: UIViewRepresentable {
+    let field: DraftField
+    @Binding var text: String
+
+    func makeUIView(context: Context) -> DraftField {
+        field.font = .preferredFont(forTextStyle: .body)
+        field.adjustsFontForContentSizeCategory = true
+        field.autocorrectionType = .no
+        field.autocapitalizationType = .none
+        field.backgroundColor = .clear
+        field.delegate = context.coordinator
+        return field
+    }
+
+    func updateUIView(_ field: DraftField, context: Context) {
+        if field.text != text { field.text = text }
+    }
+
+    func makeCoordinator() -> Coordinator { Coordinator(text: $text) }
+
+    final class Coordinator: NSObject, UITextViewDelegate {
+        let text: Binding<String>
+        init(text: Binding<String>) { self.text = text }
+        func textViewDidChange(_ field: UITextView) { text.wrappedValue = field.text }
     }
 }

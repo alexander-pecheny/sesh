@@ -455,14 +455,14 @@ def check_upload_draft():
     button = [e for e in match(label="upload", kind="Button") if e["y"] < 130]
     check("the Draft has its own upload button", bool(button))
     if not button:
-        return tap_label("Cancel")
+        return tap_label("Done")
     tap(button[0]["x"], button[0]["y"], settle=2.0)
     time.sleep(2)
     pick_one_photo()
     files = landed(before)
     check("a Draft Upload reaches the Host", len(files) == 1, str(files))
     if not files:
-        return tap_label("Cancel")
+        return tap_label("Done")
     type_text(f"> {marker('draft-upload.txt')}")
     tap_label("Send \u23ce", settle=1.5)
     text = wait_marker("draft-upload.txt", timeout=10)
