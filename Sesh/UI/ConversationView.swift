@@ -24,6 +24,7 @@ struct ConversationView: View {
                     RowView(row: row, conversation: conversation)
                 }
                 ForEach(conversation.permissions) { PermissionCard(permission: $0, conversation: conversation) }
+                if working { WorkingRow() }
             }
             .padding(16)
         }
@@ -31,7 +32,7 @@ struct ConversationView: View {
         .onScrollGeometryChange(for: Bool.self) { geometry in
             geometry.contentOffset.y + geometry.containerSize.height >= geometry.contentSize.height - Metric.control
         } action: { _, bottom in atBottom = bottom }
-        .onChange(of: conversation.items.count + conversation.permissions.count) {
+        .onChange(of: conversation.items.count + conversation.permissions.count + (working ? 1 : 0)) {
             if atBottom { position.scrollTo(edge: .bottom) }
         }
         .scrollDismissesKeyboard(.interactively)
@@ -335,6 +336,49 @@ private struct Thinking: View {
                 Text(text).font(.ui(13).italic()).foregroundStyle(flavour(.subtext0)).textSelection(.enabled)
             }
         }
+    }
+}
+
+/// Claude Code's spinner: a turning glyph and a word with a light sweeping across it.
+private struct WorkingRow: View {
+    @Environment(\.colorScheme) private var colorScheme
+    @State private var start = Date()
+    @State private var word = Self.words.randomElement() ?? "Working"
+
+    private static let words = [
+        "Shimmying", "Pondering", "Noodling", "Percolating", "Tinkering", "Conjuring", "Mulling",
+        "Brewing", "Untangling", "Whirring", "Simmering", "Puzzling", "Spelunking", "Cogitating",
+    ]
+    /// U+FE0E keeps ✳ from turning into an emoji.
+    private static let glyphs = ["·", "✢", "✳", "✶", "✻", "✽", "✻", "✶", "✳", "✢"].map { $0 + "\u{FE0E}" }
+    private static let glyphsPerSecond = 8.0
+    private static let sweep = 1.6
+    private static let band = 0.3
+
+    private var flavour: Catppuccin.Flavour { colorScheme == .dark ? .mocha : .latte }
+
+    var body: some View {
+        TimelineView(.animation) { context in
+            let elapsed = context.date.timeIntervalSince(start)
+            let glyph = Self.glyphs[Int(elapsed * Self.glyphsPerSecond) % Self.glyphs.count]
+            let light = elapsed.truncatingRemainder(dividingBy: Self.sweep) / Self.sweep * (1 + 2 * Self.band) - Self.band
+            HStack(spacing: Metric.gap) {
+                Text(glyph).foregroundStyle(flavour(.peach)).frame(width: Metric.wide)
+                Text("\(word)…")
+                    .foregroundStyle(flavour(.overlay1))
+                    .overlay {
+                        LinearGradient(
+                            colors: [.clear, flavour(.text), .clear],
+                            startPoint: UnitPoint(x: light - Self.band, y: 0),
+                            endPoint: UnitPoint(x: light + Self.band, y: 0)
+                        )
+                        .mask { Text("\(word)…") }
+                    }
+            }
+            .font(.ui(Metric.label))
+        }
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel("\(word)…")
     }
 }
 
