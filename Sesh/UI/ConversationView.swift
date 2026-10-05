@@ -10,7 +10,7 @@ struct ConversationView: View {
     @State private var sending = false
     @State private var picking = false
     @State private var lost = false
-    @FocusState private var focused: Bool
+    @StateObject private var field = PlainField()
 
     private var flavour: Catppuccin.Flavour { colorScheme == .dark ? .mocha : .latte }
     private var working: Bool { conversation.state == "working" }
@@ -50,7 +50,7 @@ struct ConversationView: View {
             }
         }
         .task { await conversation.follow() }
-        .onAppear { if fresh { focused = true } }
+        .onAppear { if fresh { DispatchQueue.main.async { field.becomeFirstResponder() } } }
         .alert("Open it in the Claude app", isPresented: $lost) {
             Button("OK") {}
         } message: {
@@ -83,10 +83,12 @@ struct ConversationView: View {
                 Image.lucide("image-up", size: 20).foregroundStyle(flavour(.overlay0))
                     .frame(width: Metric.control, height: Metric.control)
             }
-            TextField("Message", text: $draft, axis: .vertical)
-                .font(.ui(Metric.title))
-                .lineLimit(1...6)
-                .focused($focused)
+            PlainText(field: field, text: $draft, font: .systemFont(ofSize: Metric.title), lines: 6)
+                .overlay(alignment: .leading) {
+                    if draft.isEmpty {
+                        Text("Message").font(.ui(Metric.title)).foregroundStyle(flavour(.overlay0)).allowsHitTesting(false)
+                    }
+                }
                 .padding(.horizontal, Metric.pad)
                 .padding(.vertical, Metric.gap)
                 .frame(minHeight: Metric.control)
@@ -107,10 +109,7 @@ struct ConversationView: View {
         .sheet(isPresented: $picking) {
             PhotoPicker { results in
                 picking = false
-                conversation.projects?.upload(results) { paths in
-                    let gap = draft.last.map { $0.isWhitespace } ?? true
-                    draft += (gap ? "" : " ") + paths
-                }
+                conversation.projects?.upload(results) { field.insertPaths($0) }
             }
             .ignoresSafeArea()
         }

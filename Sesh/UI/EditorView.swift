@@ -57,11 +57,11 @@ private struct DraftView: View {
     /// `nil` means save; otherwise send, with or without a trailing Enter.
     let finish: (Draft, Bool?) -> Void
 
-    @StateObject private var field = DraftField()
+    @StateObject private var field = PlainField()
     @State private var picking = false
 
     var body: some View {
-        DraftText(field: field, text: $draft.text)
+        PlainText(field: field, text: $draft.text)
             .padding(8)
             .onChange(of: draft.text) { finish(draft, nil) }
             .navigationTitle("Draft")
@@ -92,50 +92,5 @@ private struct DraftView: View {
                 .ignoresSafeArea()
             }
             .uploadFailure($session.uploadError)
-    }
-}
-
-/// Unlike TextEditor, keeps the caret in sight when a taller keyboard shrinks it or an Upload path lands.
-private final class DraftField: UITextView, ObservableObject {
-    private var height = 0.0
-
-    override func layoutSubviews() {
-        super.layoutSubviews()
-        if bounds.height < height, isFirstResponder { scrollRangeToVisible(selectedRange) }
-        height = bounds.height
-    }
-
-    /// At the caret, over any selection, and never glued to the word in front of it.
-    func insertPaths(_ paths: String) {
-        let before = (text as NSString).substring(to: selectedRange.location)
-        let gap = before.last.map { $0.isWhitespace } ?? true
-        insertText((gap ? "" : " ") + paths)
-    }
-}
-
-private struct DraftText: UIViewRepresentable {
-    let field: DraftField
-    @Binding var text: String
-
-    func makeUIView(context: Context) -> DraftField {
-        field.font = .preferredFont(forTextStyle: .body)
-        field.adjustsFontForContentSizeCategory = true
-        field.autocorrectionType = .no
-        field.autocapitalizationType = .none
-        field.backgroundColor = .clear
-        field.delegate = context.coordinator
-        return field
-    }
-
-    func updateUIView(_ field: DraftField, context: Context) {
-        if field.text != text { field.text = text }
-    }
-
-    func makeCoordinator() -> Coordinator { Coordinator(text: $text) }
-
-    final class Coordinator: NSObject, UITextViewDelegate {
-        let text: Binding<String>
-        init(text: Binding<String>) { self.text = text }
-        func textViewDidChange(_ field: UITextView) { text.wrappedValue = field.text }
     }
 }
