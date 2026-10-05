@@ -142,7 +142,11 @@ struct NeedsHerdr: View {
                 herdr server live-handoff
                 herdr integration install claude
                 herdr integration install codex
+                herdr integration install pi
                 """)
+            Text("Codex then shows its permission prompts here only once its new hook is trusted: open Codex, type /hooks and press t.")
+                .font(.ui(14))
+                .foregroundStyle(flavour(.subtext0))
         }
         .padding(24)
     }

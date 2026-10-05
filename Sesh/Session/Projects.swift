@@ -271,6 +271,14 @@ final class Projects: ObservableObject, Identifiable {
         return ran.ok ? nil : ran.problem
     }
 
+    /// Menus an Agent may open before its first prompt, and the keys that get past them.
+    private static let menus = [
+        (prompt: "Yes, I trust this folder", keys: "down enter"),
+        (prompt: "Do you trust the contents of this directory", keys: "enter"),
+        (prompt: "Skip until next version", keys: "down enter"),
+        (prompt: "Continue without trusting", keys: "down down enter"),
+    ]
+
     /// Starts an Agent session in `folder`, or on a new branch of it, and returns its pane.
     /// The pane is closed on failure so no half-started Agent lingers.
     func start(_ name: String, agent: Agent, in folder: String, branch: Bool) async -> Result<String, Failure> {
@@ -282,14 +290,21 @@ final class Projects: ObservableObject, Identifiable {
         var ran = await run(
             "herdr agent start \(quote(name)) --kind \(agent.rawValue) --pane \(quote(pane)) --timeout 60000"
                 + " -- \(agent.flags(name))")
-        if !ran.ok, (ran.err + ran.out).contains("agent_not_ready") {
-            // Claude asks once per new folder tree whether to trust it; she picked this
-            // folder and pressed Start, which is her answer.
-            let screen = await run("herdr pane read \(quote(pane)) --source visible")
-            if screen.out.contains("Yes, I trust this folder") {
-                _ = await run("herdr agent send-keys \(quote(pane)) down enter")
+        let notReady = !ran.ok && (ran.err + ran.out).contains("agent_not_ready")
+        if ran.ok || notReady {
+            // She picked this folder and pressed Start, which answers the trust question;
+            // updates are skipped and new hooks left for her to trust.
+            var answered = false
+            for _ in Self.menus.indices {
+                let screen = await run("herdr pane read \(quote(pane)) --source visible")
+                guard let keys = Self.menus.first(where: { screen.out.contains($0.prompt) })?.keys else { break }
+                _ = await run("herdr agent send-keys \(quote(pane)) \(keys)")
+                answered = true
+                try? await Task.sleep(for: .seconds(2))
             }
-            ran = await run("herdr agent wait \(quote(pane)) --until idle --until done --timeout 30000")
+            if answered || notReady {
+                ran = await run("herdr agent wait \(quote(pane)) --until idle --until done --timeout 30000")
+            }
         }
         guard ran.ok else {
             let screen = await run("herdr pane read \(quote(pane)) --source recent-unwrapped --lines 40")

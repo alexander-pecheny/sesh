@@ -662,7 +662,7 @@ private struct PermissionCard: View {
         VStack(alignment: .leading, spacing: Metric.pad) {
             HStack(spacing: Metric.gap) {
                 Image.lucide("shield-alert", size: Metric.title).foregroundStyle(flavour(.peach))
-                Text(permission.summary).font(.ui(Metric.body).weight(.medium)).foregroundStyle(flavour(.text))
+                Text(title).font(.ui(Metric.body).weight(.medium)).foregroundStyle(flavour(.text))
             }
             if let detail = permission.command ?? permission.file {
                 Text(detail)
@@ -688,6 +688,14 @@ private struct PermissionCard: View {
         .padding(Metric.pad)
         .background(flavour(.mantle), in: .rect(cornerRadius: Metric.corner))
         .overlay(RoundedRectangle(cornerRadius: Metric.corner).stroke(flavour(.peach).opacity(0.6)))
+    }
+
+    /// The command or file is drawn below, so the header does not repeat it.
+    private var title: String {
+        let agent = conversation.agent?.title ?? "The Agent"
+        if permission.command != nil { return "\(agent) wants to run a command" }
+        if permission.file != nil { return "\(agent) wants to change a file" }
+        return permission.summary
     }
 
     private func answer(_ allow: Bool) async {
