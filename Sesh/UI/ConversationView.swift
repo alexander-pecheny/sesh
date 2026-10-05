@@ -11,34 +11,37 @@ struct ConversationView: View {
     @State private var picking = false
     @State private var lost = false
     @StateObject private var field = PlainField()
-    @State private var position = ScrollPosition(edge: .bottom)
     @State private var atBottom = true
     @State private var scrolling = ScrollPhase.idle
 
     private var flavour: Catppuccin.Flavour { colorScheme == .dark ? .mocha : .latte }
     private var working: Bool { conversation.state == "working" }
+    private static let end = "end"
 
     var body: some View {
-        ScrollView {
-            LazyVStack(alignment: .leading, spacing: 14) {
-                ForEach(Row.rows(conversation.items)) { row in
-                    RowView(row: row, conversation: conversation)
+        ScrollViewReader { reader in
+            ScrollView {
+                LazyVStack(alignment: .leading, spacing: 14) {
+                    ForEach(Row.rows(conversation.items)) { row in
+                        RowView(row: row, conversation: conversation)
+                    }
+                    ForEach(conversation.permissions) { PermissionCard(permission: $0, conversation: conversation) }
+                    if working { WorkingRow() }
+                    Color.clear.frame(height: 1).id(Self.end)
                 }
-                ForEach(conversation.permissions) { PermissionCard(permission: $0, conversation: conversation) }
-                if working { WorkingRow() }
+                .padding(16)
             }
-            .padding(16)
-        }
-        .scrollPosition($position)
-        .onScrollGeometryChange(for: Bool.self) { geometry in
-            geometry.contentOffset.y + geometry.containerSize.height >= geometry.contentSize.height - Metric.control
-        } action: { _, bottom in
-            // Growing content also moves the bottom away; only the reader's own scrolling counts.
-            if scrolling != .idle { atBottom = bottom }
-        }
-        .onScrollPhaseChange { _, phase in scrolling = phase }
-        .onChange(of: conversation.items.count + conversation.permissions.count + (working ? 1 : 0)) {
-            if atBottom { position.scrollTo(edge: .bottom) }
+            .defaultScrollAnchor(.bottom)
+            .onScrollGeometryChange(for: Bool.self) { geometry in
+                geometry.visibleRect.maxY >= geometry.contentSize.height - Metric.control
+            } action: { _, bottom in
+                // Growing content also moves the bottom away; only the reader's own scrolling counts.
+                if scrolling != .idle { atBottom = bottom }
+            }
+            .onScrollPhaseChange { _, phase in scrolling = phase }
+            .onChange(of: conversation.items.count + conversation.permissions.count + (working ? 1 : 0)) {
+                if atBottom { reader.scrollTo(Self.end, anchor: .bottom) }
+            }
         }
         .scrollDismissesKeyboard(.interactively)
         .safeAreaInset(edge: .bottom, spacing: 0) {
