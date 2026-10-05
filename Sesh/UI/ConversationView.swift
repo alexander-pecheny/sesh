@@ -13,6 +13,7 @@ struct ConversationView: View {
     @StateObject private var field = PlainField()
     @State private var position = ScrollPosition(edge: .bottom)
     @State private var atBottom = true
+    @State private var scrolling = ScrollPhase.idle
 
     private var flavour: Catppuccin.Flavour { colorScheme == .dark ? .mocha : .latte }
     private var working: Bool { conversation.state == "working" }
@@ -31,7 +32,11 @@ struct ConversationView: View {
         .scrollPosition($position)
         .onScrollGeometryChange(for: Bool.self) { geometry in
             geometry.contentOffset.y + geometry.containerSize.height >= geometry.contentSize.height - Metric.control
-        } action: { _, bottom in atBottom = bottom }
+        } action: { _, bottom in
+            // Growing content also moves the bottom away; only the reader's own scrolling counts.
+            if scrolling != .idle { atBottom = bottom }
+        }
+        .onScrollPhaseChange { _, phase in scrolling = phase }
         .onChange(of: conversation.items.count + conversation.permissions.count + (working ? 1 : 0)) {
             if atBottom { position.scrollTo(edge: .bottom) }
         }
