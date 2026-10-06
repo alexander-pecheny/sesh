@@ -507,6 +507,45 @@ owner alone for now: unsandboxed, built and installed from Xcode. The phone come
    the database and the Transcript copies; offline, the device searches its copy without
    Conversations and says so. A hit opens its exact place.
 
+**Reaching machines.** The Mac app runs everything through `/usr/bin/ssh` with the owner's
+`~/.ssh/config`, one ControlMaster per Host, so a Host on the Mac is an ssh alias such as
+`vps-he`, and the Mac itself is run through `/bin/zsh -lc`. The iOS app's Hosts and Keys
+stay on the phone for now. Both kinds of machine get the same helper in `~/.sesh/bin`.
+
+**Vault protocol.** The helper serves a Vault from a folder, `~/.sesh/vaults/<name>/`,
+holding `vault.db` (SQLite, WAL, FTS5) and `transcripts/<session>/<file>`. Every row is a
+record: `{"id", "kind", "body", "seq", "deleted"}`, where `id` is a UUID the client makes,
+`kind` is `folder`, `task`, `entry`, `document`, `session`, `tab` or `conflict`, `body` is a
+JSON object the helper stores as it came, and `seq` is the Vault's change counter at the
+record's last write. The helper reads only `body.title`, `body.text`, `body.task` and
+`body.edited` (milliseconds since 1970). Commands, each printing JSON lines:
+
+- `vault init DIR` creates the folder and database if missing and prints `{"t":"head","seq"}`.
+- `vault pull DIR --since SEQ` prints every record with a larger `seq` as
+  `{"t":"record",...}`, deleted ones included, then `{"t":"head","seq"}`.
+- `vault follow DIR --since SEQ` does the same, then keeps printing records as they change.
+- `vault push DIR FILE` applies the changes in FILE, one JSON object per line:
+  `{"id","kind","body","base","deleted"}`, where `base` is the `seq` the client last saw for
+  the record, 0 for a new one. For an `entry` or `document` whose stored `seq` differs from
+  `base`, the body with the later `edited` wins and the other is kept as a new `conflict`
+  record whose body is `{"of": id, "kind", "task", "title", "text", "edited"}`. Every other
+  change simply wins. It prints `{"t":"record",...}` for each record it wrote, then the head,
+  and deletes FILE. Clients send changes as a file over SFTP, since a Document may exceed
+  the 128 KB a single command-line argument allows.
+- `vault size DIR SESSION FILE` prints `{"size"}` of a Transcript copy, 0 when absent.
+- `vault append DIR SESSION FILE --offset N BYTES_FILE` appends the bytes when the copy is
+  exactly N long, else fails with its real size; `vault copy DIR SESSION --from PATH` does
+  the same from a Transcript on this machine. Both index the new whole lines for search.
+- `vault search DIR QUERY [--limit N]` prints hits, best first:
+  `{"t":"hit","kind","id","task","session","item","snippet"}`. Records match on title and
+  text; Transcript copies match on the user's messages and the Agent's replies, with `item`
+  the Conversation entry id.
+- `follow`, `history` and `entry` take `--file PATH --agent AGENT` in place of a pane, to
+  show a Transcript copy when its Agent session's machine is off.
+
+Entry ids hash the Transcript's file name, not its whole path, so a copy and its source give
+the same ids and a Bookmark (`sesh://VAULT/SESSION/ITEM`) works on both.
+
 **Later.** State marks on Tasks and a Waiting list, ⌘K to jump by name, a better view of
 Conflict copies, archiving with Worktree removal, several Vaults in the UI, the fork on a
 public mirror with release builds, distribution, and Tasks on the phone.
