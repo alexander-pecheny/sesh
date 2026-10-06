@@ -11,6 +11,7 @@ struct ConversationView: View {
     @State private var picking = false
     @State private var lost = false
     @StateObject private var field = PlainField()
+    @State private var composing = false
     @State private var atBottom = true
     @State private var nearTop = false
     @State private var topRow: String?
@@ -44,6 +45,8 @@ struct ConversationView: View {
                 }
                 .scrollTargetLayout()
                 .padding(16)
+                // An opening card with an unbroken path asks for more than the screen; never give it.
+                .containerRelativeFrame(.horizontal)
             }
             // Tracking the top row keeps it in place while a page lands above it.
             .scrollPosition(id: $topRow, anchor: .top)
@@ -128,9 +131,17 @@ struct ConversationView: View {
                         Text("Message").font(.ui(Metric.title)).foregroundStyle(flavour(.overlay0)).allowsHitTesting(false)
                     }
                 }
-                .padding(.horizontal, Metric.pad)
+                .padding(.leading, Metric.pad)
+                .padding(.trailing, Metric.control)
                 .padding(.vertical, Metric.gap)
                 .frame(minHeight: Metric.control)
+                .overlay(alignment: .bottomTrailing) {
+                    Button { composing = true } label: {
+                        Image.lucide("maximize-2", size: Metric.label).foregroundStyle(flavour(.overlay1))
+                            .frame(width: Metric.control, height: Metric.control)
+                    }
+                    .accessibilityLabel("Expand")
+                }
                 .background(flavour(.base), in: .rect(cornerRadius: Metric.control / 2))
                 .foregroundStyle(flavour(.text))
             Button { Task { await sendOrStop() } } label: {
@@ -152,12 +163,19 @@ struct ConversationView: View {
             }
             .ignoresSafeArea()
         }
+        .fullScreenCover(isPresented: $composing) {
+            Composer(text: $draft, canSend: canSend) { Task { await send() } }
+        }
     }
 
     private var canSend: Bool { !sending && !draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
 
     private func sendOrStop() async {
         guard !working else { return await conversation.stop() }
+        await send()
+    }
+
+    private func send() async {
         sending = true
         let text = draft.trimmingCharacters(in: .whitespacesAndNewlines)
         if let problem = await conversation.send(text) { conversation.problem = problem } else { draft = "" }
@@ -255,11 +273,75 @@ private struct UserBubble: View {
     }
 }
 
+/// The whole screen for a long message, on the same text as the message box.
+private struct Composer: View {
+    @Environment(\.dismiss) private var dismiss
+    @Environment(\.colorScheme) private var colorScheme
+    @Binding var text: String
+    let canSend: Bool
+    let send: () -> Void
+    @StateObject private var field = PlainField()
+
+    private var flavour: Catppuccin.Flavour { colorScheme == .dark ? .mocha : .latte }
+
+    var body: some View {
+        NavigationStack {
+            PlainText(field: field, text: $text)
+                .padding(Metric.gap)
+                .background(flavour(.base))
+                .navigationTitle("Message")
+                .navigationBarTitleDisplayMode(.inline)
+                .toolbar {
+                    ToolbarItem(placement: .cancellationAction) { Button("Done") { dismiss() } }
+                    ToolbarItem(placement: .confirmationAction) {
+                        Button("Send") {
+                            send()
+                            dismiss()
+                        }
+                        .disabled(!canSend)
+                    }
+                }
+                .onAppear { field.becomeFirstResponder() }
+        }
+        .tint(flavour(.mauve))
+    }
+}
+
+/// An image from a message, whole, with pinch to zoom.
+private struct ImageViewer: View {
+    @Environment(\.dismiss) private var dismiss
+    let image: UIImage
+    @State private var scale = 1.0
+    @GestureState private var pinch = 1.0
+
+    var body: some View {
+        Image(uiImage: image)
+            .resizable()
+            .scaledToFit()
+            .scaleEffect(scale * pinch)
+            .gesture(MagnifyGesture().updating($pinch) { value, pinch, _ in pinch = value.magnification }
+                .onEnded { scale = max(1, scale * $0.magnification) })
+            .onTapGesture(count: 2) { withAnimation { scale = scale > 1 ? 1 : 2 } }
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+            .background(.black)
+            .overlay(alignment: .topTrailing) {
+                Button { dismiss() } label: {
+                    Image.lucide("x", size: Metric.title).foregroundStyle(.white)
+                        .frame(width: Metric.control, height: Metric.control)
+                        .background(.white.opacity(0.2), in: .circle)
+                }
+                .padding(Metric.wide)
+                .accessibilityLabel("Close")
+            }
+    }
+}
+
 private struct RemoteImage: View {
     @Environment(\.colorScheme) private var colorScheme
     let path: String
     let conversation: Conversation
     @State private var image: UIImage?
+    @State private var viewing = false
 
     private var flavour: Catppuccin.Flavour { colorScheme == .dark ? .mocha : .latte }
 
@@ -275,7 +357,10 @@ private struct RemoteImage: View {
         .background(flavour(.surface0))
         .clipShape(.rect(cornerRadius: 14))
         .task { image = await conversation.image(path) }
+        .onTapGesture { viewing = image != nil }
+        .fullScreenCover(isPresented: $viewing) { if let image { ImageViewer(image: image) } }
         .accessibilityLabel((path as NSString).lastPathComponent)
+        .accessibilityAddTraits(.isButton)
     }
 }
 
@@ -509,7 +594,7 @@ private struct Card<Header: View, Detail: View>: View {
                 .contentShape(.rect)
             }
             .buttonStyle(.plain)
-            if open { detail() }
+            if open { detail().frame(maxWidth: .infinity, alignment: .leading) }
         }
         .padding(Metric.pad)
         .background(flavour(.mantle), in: .rect(cornerRadius: Metric.corner))
@@ -668,6 +753,7 @@ private struct Lookups: View {
                         .lineLimit(2)
                 }
             }
+            .frame(maxWidth: .infinity, alignment: .leading)
         }
     }
 }
