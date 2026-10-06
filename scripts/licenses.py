@@ -15,6 +15,9 @@ BUNDLED = [
     ("JetBrainsMono Nerd Font", "2.304", "OFL-1.1", ["Resources/Fonts/OFL.txt"]),
     ("Lucide icons", "", "ISC", ["Resources/LICENSE-lucide.txt"]),
     ("Catppuccin palettes", "", "MIT", ["Resources/LICENSE-catppuccin.txt"]),
+    ("MarkdownUI", "2.4.1", "MIT", ["Resources/LICENSE-markdownui.txt"]),
+    ("NetworkImage", "6.0.1", "MIT", ["Resources/LICENSE-networkimage.txt"]),
+    ("swift-cmark (cmark-gfm)", "0.9.0", "BSD-2-Clause", ["Resources/LICENSE-cmark-gfm.txt"]),
 ]
 
 

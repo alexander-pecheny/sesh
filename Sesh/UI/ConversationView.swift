@@ -1,3 +1,4 @@
+import MarkdownUI
 import SwiftUI
 
 struct ConversationView: View {
@@ -367,68 +368,57 @@ private struct RemoteImage: View {
     }
 }
 
-/// Paragraphs, headings and fenced code; inline markdown inside paragraphs is SwiftUI's.
+/// An Agent's markdown, GitHub-flavoured, in the app's colours.
 struct Markdown: View {
     @Environment(\.colorScheme) private var colorScheme
     let text: String
 
     private var flavour: Catppuccin.Flavour { colorScheme == .dark ? .mocha : .latte }
 
-    private enum Block {
-        case paragraph(String), heading(String), code(String)
-    }
-
-    private var blocks: [Block] {
-        var blocks: [Block] = []
-        var lines: [String] = []
-        var fenced = false
-        func flush() {
-            let joined = lines.joined(separator: "\n")
-            if fenced { blocks.append(.code(joined)) } else if !joined.isEmpty { blocks.append(.paragraph(joined)) }
-            lines = []
-        }
-        for line in text.components(separatedBy: "\n") {
-            if line.hasPrefix("```") {
-                flush()
-                fenced.toggle()
-            } else if fenced {
-                lines.append(line)
-            } else if line.hasPrefix("#") {
-                flush()
-                blocks.append(.heading(line.drop { $0 == "#" }.trimmingCharacters(in: .whitespaces)))
-            } else if line.trimmingCharacters(in: .whitespaces).isEmpty {
-                flush()
-            } else {
-                lines.append(line.replacing(#/^(\s*)[-*] /#, with: { "\($0.1)• " }))
-            }
-        }
-        flush()
-        return blocks
-    }
-
     var body: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            ForEach(Array(blocks.enumerated()), id: \.offset) { _, block in
-                switch block {
-                case .heading(let line): Text(inline(line)).font(.ui(17).weight(.semibold))
-                case .paragraph(let lines): Text(inline(lines)).font(.ui(15))
-                case .code(let code):
-                    ScrollView(.horizontal, showsIndicators: false) {
-                        Text(code).font(.system(size: 12, design: .monospaced)).padding(12)
-                    }
-                    .background(flavour(.mantle), in: .rect(cornerRadius: 8))
-                }
-            }
-        }
-        .foregroundStyle(flavour(.text))
-        .tint(flavour(.blue))
-        .textSelection(.enabled)
-        .frame(maxWidth: .infinity, alignment: .leading)
+        MarkdownUI.Markdown(text)
+            .markdownTheme(theme)
+            .textSelection(.enabled)
+            .frame(maxWidth: .infinity, alignment: .leading)
     }
 
-    private func inline(_ text: String) -> AttributedString {
-        let options = AttributedString.MarkdownParsingOptions(interpretedSyntax: .inlineOnlyPreservingWhitespace)
-        return (try? AttributedString(markdown: text, options: options)) ?? AttributedString(text)
+    private var theme: Theme {
+        Theme.basic
+            .text {
+                ForegroundColor(flavour(.text))
+                FontSize(Metric.body)
+            }
+            .code {
+                FontFamilyVariant(.monospaced)
+                FontSize(.em(0.9))
+            }
+            .link { ForegroundColor(flavour(.blue)) }
+            .codeBlock { block in
+                ScrollView(.horizontal, showsIndicators: false) {
+                    block.label
+                        .markdownTextStyle {
+                            FontFamilyVariant(.monospaced)
+                            FontSize(Metric.caption)
+                        }
+                        .padding(Metric.pad)
+                }
+                .background(flavour(.mantle), in: .rect(cornerRadius: Metric.corner))
+                .markdownMargin(top: 0, bottom: Metric.pad)
+            }
+            .table { table in
+                ScrollView(.horizontal, showsIndicators: false) {
+                    table.label
+                        .markdownTableBorderStyle(.init(color: flavour(.surface1)))
+                        .markdownTableBackgroundStyle(.alternatingRows(.clear, flavour(.mantle)))
+                }
+                .markdownMargin(top: 0, bottom: Metric.pad)
+            }
+            .tableCell { cell in
+                cell.label
+                    .markdownTextStyle { if cell.row == 0 { FontWeight(.semibold) } }
+                    .padding(.vertical, Metric.tiny)
+                    .padding(.horizontal, Metric.gap)
+            }
     }
 }
 
