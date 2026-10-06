@@ -162,6 +162,7 @@ private struct FolderView: View {
     @State private var newName = ""
     @State private var starting = false
     @State private var startingIn: Projects.Workspace?
+    @AppStorage("workspacesOpen") private var workspacesOpen = true
 
     private var flavour: Catppuccin.Flavour { colorScheme == .dark ? .mocha : .latte }
     private var isHome: Bool { path == projects.home }
@@ -189,9 +190,26 @@ private struct FolderView: View {
 
     var body: some View {
         List {
-            if isHome {
+            if isHome, !projects.workspaces.isEmpty {
+                Section {} header: {
+                    Button { workspacesOpen.toggle() } label: {
+                        HStack(spacing: Metric.gap) {
+                            Text("Workspaces")
+                            if !workspacesOpen {
+                                Text("\(projects.workspaces.count)").foregroundStyle(flavour(.overlay1))
+                            }
+                            Spacer()
+                            Image.lucide(workspacesOpen ? "chevron-down" : "chevron-right", size: Metric.note)
+                        }
+                        .contentShape(.rect)
+                    }
+                    .buttonStyle(.plain)
+                    .accessibilityValue(workspacesOpen ? "expanded" : "collapsed")
+                }
+            }
+            if isHome, workspacesOpen {
                 // herdr's sidebar: each repo's main checkout heads its branch copies.
-                ForEach(Projects.groups(projects.workspaces)) { group in
+                ForEach(projects.homeGroups) { group in
                     Section {
                         sessions(in: group.head)
                         ForEach(group.children) { child in
@@ -205,7 +223,7 @@ private struct FolderView: View {
                         }
                     } header: {
                         HStack {
-                            Text(group.head.label)
+                            Text(group.head.label).font(.ui(Metric.label))
                             Spacer()
                             startButton(group.head)
                         }

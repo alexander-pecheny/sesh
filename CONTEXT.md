@@ -70,8 +70,9 @@ _Avoid_: Claude session, thread, agent pane
 
 **Workspace**:
 herdr's group of Agent sessions, usually one per folder or branch copy. At Home, Projects
-lists every Workspace in herdr's order and nests a repo's branch copies under its main
-checkout, as herdr's sidebar does.
+lists every Workspace under one collapsible heading and nests a repo's branch copies
+under its main checkout, as herdr's sidebar does. Those with Agent sessions come first,
+the most recently changed leading; the rest follow by name.
 _Avoid_: project, group
 
 **Transcript**:

@@ -54,6 +54,7 @@ final class Projects: ObservableObject, Identifiable {
         let cwd: String
         let branch: String?
         let workspace: Workspace
+        let activity: UInt64
     }
 
     struct Workspace: Hashable, Identifiable {
@@ -82,6 +83,16 @@ final class Projects: ObservableObject, Identifiable {
             guard emitted.insert(repo).inserted else { return nil }
             return WorkspaceGroup(head: head, children: group.filter { $0 != head })
         }
+    }
+
+    /// herdr's state_change_seq is one counter across all agents and moves only on a real change.
+    var homeGroups: [WorkspaceGroup] {
+        let latest = Dictionary(sessions.map { ($0.workspace.id, $0.activity) }, uniquingKeysWith: max)
+        func key(_ group: WorkspaceGroup) -> (Int, UInt64, String, Int) {
+            let seq = ([group.head] + group.children).compactMap { latest[$0.id] }.max()
+            return (seq == nil ? 1 : 0, UInt64.max - (seq ?? 0), group.head.label.lowercased(), group.head.number)
+        }
+        return Self.groups(workspaces).sorted { key($0) < key($1) }
     }
 
     struct Failure: Error {
@@ -281,7 +292,8 @@ final class Projects: ObservableObject, Identifiable {
                 cwd: agent.cwd,
                 branch: worktree.map { ($0.checkout_path as NSString).lastPathComponent },
                 workspace: space.map(Workspace.init)
-                    ?? Workspace(id: agent.workspace_id, label: agent.workspace_id, number: .max))
+                    ?? Workspace(id: agent.workspace_id, label: agent.workspace_id, number: .max),
+                activity: agent.state_change_seq)
         }
         .sorted { ($0.workspace.number, $0.name) < ($1.workspace.number, $1.name) }
     }
@@ -586,6 +598,7 @@ private struct AgentList: Decodable {
         let cwd: String
         let name: String?
         let pane_id: String
+        let state_change_seq: UInt64
         let workspace_id: String
     }
     let agents: [Agent]
