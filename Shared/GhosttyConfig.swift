@@ -1,5 +1,10 @@
 import Foundation
 import GhosttyKit
+import OSLog
+
+enum Ghostty {
+    static let logger = Logger(subsystem: "me.pecheny.sesh", category: "ghostty")
+}
 
 extension Ghostty {
     enum Config {

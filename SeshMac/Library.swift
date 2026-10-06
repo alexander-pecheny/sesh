@@ -139,6 +139,31 @@ final class Library: ObservableObject {
 
     static let unfiledPrefix = "unfiled:"
 
+    // MARK: Terminals
+
+    /// Open Terminals by Tab; a Terminal's shell ends when its Tab closes.
+    private var terminals: [UUID: Ghostty.TerminalSurface] = [:]
+
+    /// A plain shell for the Task: in its Worktree when the machine has it, else at home.
+    func openTerminal(in task: Record, on machine: Machine) {
+        let folder = machine.alias == task.body.machine ? task.body.path : nil
+        let command: String?
+        if let alias = machine.alias {
+            let start = folder.map { "cd \(quote($0)) && exec \"$SHELL\" -l" } ?? "exec \"$SHELL\" -l"
+            // Its own connection: the shared one may already carry as many channels as sshd allows.
+            command = "/usr/bin/ssh -t -o ControlPath=none \(alias) \(quote(start))"
+        } else {
+            command = nil
+        }
+        let id = UUID()
+        let surface = Ghostty.TerminalSurface(command: command, folder: machine.alias == nil ? folder : nil)
+        surface.onClose = { [weak self] in self?.close(.terminal(id), in: task.id) }
+        terminals[id] = surface
+        open(.terminal(id), in: task.id)
+    }
+
+    func terminal(_ id: UUID) -> Ghostty.TerminalSurface? { terminals[id] }
+
     // MARK: Bookmarks and links
 
     /// Items a link asked for in Conversations not open yet.
@@ -201,6 +226,7 @@ final class Library: ObservableObject {
     }
 
     func close(_ tab: TabItem, in task: String) {
+        if case .terminal(let id) = tab { terminals[id] = nil }
         tabs[task]?.removeAll { $0 == tab }
         if current[task] == tab { current[task] = tabs[task]?.last ?? .journal }
     }

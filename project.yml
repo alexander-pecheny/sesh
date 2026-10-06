@@ -73,7 +73,19 @@ targets:
       - path: Shared
       - path: Resources/Icons.xcassets
       - path: Resources/helpers.json
+      - path: Resources/Fonts
+        type: folder
+        buildPhase: resources
+      - path: Resources/ghostty
+        type: folder
+        buildPhase: resources
     dependencies:
+      - framework: Frameworks/GhosttyKit.xcframework
+        embed: false
+      - sdk: Carbon.framework
+      - sdk: Metal.framework
+      - sdk: QuartzCore.framework
+      - sdk: IOSurface.framework
       - package: MarkdownUI
       - package: cmark
         product: cmark-gfm

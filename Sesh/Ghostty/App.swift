@@ -3,10 +3,6 @@ import OSLog
 import SwiftUI
 import GhosttyKit
 
-enum Ghostty {
-    static let logger = Logger(subsystem: "me.pecheny.sesh", category: "ghostty")
-}
-
 extension Ghostty {
     final class App: ObservableObject {
         private(set) var app: ghostty_app_t?

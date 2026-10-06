@@ -32,7 +32,8 @@ struct TaskView: View {
                 case .journal: JournalView(vault: vault, task: id)
                 case .session(let session): SessionTab(vault: vault, id: session).id(session)
                 case .document(let document): DocumentTab(vault: vault, id: document).id(document)
-                case .terminal: Text("Not built yet").foregroundStyle(.secondary)
+                case .terminal(let terminal):
+                    if let surface = library.terminal(terminal) { Ghostty.Terminal(view: surface).id(terminal) }
                 }
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -126,6 +127,7 @@ private struct AddMenu: View {
                     ForEach(Agent.allCases) { agent in
                         Button("New \(agent.title) session") { start(agent, on: machine) }
                     }
+                    Button("New Terminal") { library.openTerminal(in: task, on: machine) }
                 }
             }
             Section {
