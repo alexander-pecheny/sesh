@@ -163,7 +163,7 @@ async fn drive(config: Config, context: Context) -> Result<(), String> {
                     tokio::spawn(task);
                 }
                 Some(Command::CancelUpload(id)) => uploads.cancel(id),
-                Some(Command::Run(..) | Command::Stream(..) | Command::Cancel(_)) => {}
+                Some(Command::Run(..) | Command::Stream(..) | Command::Cancel(_) | Command::Put(..)) => {}
                 Some(Command::Close) | None => {
                     client.send(Event::Quit);
                     return worker.await.map_err(|e| format!("the mosh client stopped: {e}"))?;

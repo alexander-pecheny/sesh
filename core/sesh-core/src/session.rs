@@ -73,6 +73,7 @@ pub enum Command {
     Run(u32, String),
     Stream(u32, String),
     Cancel(u32),
+    Put(u32, PathBuf, String),
 }
 
 #[derive(Default)]
@@ -162,6 +163,12 @@ impl Session {
     pub fn stream(&self, command: String) -> u32 {
         let id = self.next_request.fetch_add(1, Ordering::Relaxed) + 1;
         let _ = self.commands.send(Command::Stream(id, command));
+        id
+    }
+
+    pub fn put(&self, local: PathBuf, remote: String) -> u32 {
+        let id = self.next_request.fetch_add(1, Ordering::Relaxed) + 1;
+        let _ = self.commands.send(Command::Put(id, local, remote));
         id
     }
 

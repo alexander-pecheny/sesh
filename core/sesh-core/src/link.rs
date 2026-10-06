@@ -100,6 +100,16 @@ async fn drive(config: Config, context: Context) -> Result<(), String> {
                 tokio::spawn(task);
             }
             Some(Command::CancelUpload(id)) => uploads.cancel(id),
+            Some(Command::Put(id, local, remote)) => {
+                let (handle, events) = (handle.clone(), events.clone());
+                tokio::spawn(async move {
+                    let (status, stderr) = match upload::put(&handle, &local, &remote).await {
+                        Ok(()) => (0, String::new()),
+                        Err(error) => (1, error),
+                    };
+                    events.ran(id, &Ran { status, stdout: String::new(), stderr });
+                });
+            }
             Some(Command::Close) | None => break,
             Some(_) => {}
         }

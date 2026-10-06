@@ -1,11 +1,14 @@
 //! Uploads: an image or video from the phone, written into `~/.sesh/uploads` over SFTP.
+//! Also `put`, which installs Sesh's transcript helper on a Host the same way.
 
+use std::path::Path;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 
 use russh::client;
 use russh::ChannelMsg;
 use russh_sftp::client::SftpSession;
+use russh_sftp::protocol::FileAttributes;
 use tokio::fs;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
@@ -95,6 +98,36 @@ async fn open<H: client::Handler>(handle: &client::Handle<H>) -> Result<SftpSess
     SftpSession::new(channel.into_stream())
         .await
         .map_err(|e| format!("sftp: {e}"))
+}
+
+/// Writes `local` to `remote`, a path under the home directory, as an executable. It lands
+/// beside the old copy and is renamed over it, since Linux refuses to overwrite a running program.
+pub async fn put<H: client::Handler>(handle: &client::Handle<H>, local: &Path, remote: &str) -> Result<(), String> {
+    let sftp = open(handle).await?;
+    let result = install(&sftp, local, remote).await;
+    let _ = sftp.close().await;
+    result
+}
+
+async fn install(sftp: &SftpSession, local: &Path, remote: &str) -> Result<(), String> {
+    let bytes = fs::read(local).await.map_err(|e| format!("{}: {e}", local.display()))?;
+    let parts: Vec<&str> = remote.split('/').collect();
+    for end in 1..parts.len() {
+        let directory = parts[..end].join("/");
+        if !sftp.try_exists(directory.as_str()).await.unwrap_or(false) {
+            sftp.create_dir(directory.as_str()).await.map_err(|e| format!("making {directory}: {e}"))?;
+        }
+    }
+    let fresh = format!("{remote}.new");
+    let mut file = sftp.create(fresh.as_str()).await.map_err(|e| format!("creating {fresh}: {e}"))?;
+    file.write_all(&bytes).await.map_err(|e| format!("writing {fresh}: {e}"))?;
+    file.shutdown().await.map_err(|e| format!("closing {fresh}: {e}"))?;
+    let executable = FileAttributes { permissions: Some(0o755), ..FileAttributes::empty() };
+    sftp.set_metadata(fresh.as_str(), executable)
+        .await
+        .map_err(|e| format!("making {fresh} executable: {e}"))?;
+    let _ = sftp.remove_file(remote).await;
+    sftp.rename(fresh.as_str(), remote).await.map_err(|e| format!("moving {fresh} to {remote}: {e}"))
 }
 
 async fn run(
@@ -404,6 +437,18 @@ mod tests {
             Ok(Self::ok(id))
         }
 
+        async fn setstat(&mut self, id: u32, path: String, attrs: FileAttributes) -> Result<Status, Self::Error> {
+            use std::os::unix::fs::PermissionsExt;
+            let mode = std::fs::Permissions::from_mode(attrs.permissions.ok_or(StatusCode::Failure)?);
+            std::fs::set_permissions(self.at(&path), mode).map_err(|_| StatusCode::Failure)?;
+            Ok(Self::ok(id))
+        }
+
+        async fn rename(&mut self, id: u32, from: String, to: String) -> Result<Status, Self::Error> {
+            std::fs::rename(self.at(&from), self.at(&to)).map_err(|_| StatusCode::Failure)?;
+            Ok(Self::ok(id))
+        }
+
         async fn remove(&mut self, id: u32, filename: String) -> Result<Status, Self::Error> {
             std::fs::remove_file(self.at(&filename)).map_err(|_| StatusCode::NoSuchFile)?;
             Ok(Self::ok(id))
@@ -552,5 +597,21 @@ mod tests {
 
         assert_eq!(error, "cancelled");
         assert!(landed(root.path()).is_empty(), "{:?}", landed(root.path()));
+    }
+
+    #[tokio::test]
+    async fn put_installs_an_executable_over_the_old_copy() {
+        use std::os::unix::fs::PermissionsExt;
+        let root = tempfile::tempdir().unwrap();
+        let here = tempfile::tempdir().unwrap();
+        let (_handle, sftp) = connect(root.path().to_path_buf(), None).await;
+        for bytes in [40, 90] {
+            let file = local(here.path(), "helper", bytes);
+            install(&sftp, &file.local, ".sesh/bin/helper").await.unwrap();
+        }
+        let installed = root.path().join(".sesh/bin/helper");
+        assert_eq!(std::fs::read(&installed).unwrap().len(), 90);
+        assert_eq!(installed.metadata().unwrap().permissions().mode() & 0o777, 0o755);
+        assert!(!root.path().join(".sesh/bin/helper.new").exists());
     }
 }

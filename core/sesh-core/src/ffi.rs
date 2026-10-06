@@ -383,6 +383,20 @@ pub unsafe extern "C" fn sesh_session_stream(session: *mut sesh_session_t, comma
     }
 }
 
+/// Writes the local file at `local_path` to `remote_path`, relative to the Host's home
+/// directory, with mode 0755. Its `on_ran` reports status 0, or 1 with the reason on stderr.
+#[no_mangle]
+pub unsafe extern "C" fn sesh_session_put(
+    session: *mut sesh_session_t,
+    local_path: *const c_char,
+    remote_path: *const c_char,
+) -> u32 {
+    match (session.as_ref(), text(local_path), text(remote_path)) {
+        (Some(session), Some(local), Some(remote)) => session.session.put(PathBuf::from(local), remote),
+        _ => 0,
+    }
+}
+
 /// Stops a command from `sesh_session_stream`: TERM, then the channel is closed.
 #[no_mangle]
 pub unsafe extern "C" fn sesh_session_cancel(session: *mut sesh_session_t, id: u32) {
