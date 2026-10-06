@@ -1,3 +1,4 @@
+import CryptoKit
 import PhotosUI
 import SwiftUI
 
@@ -166,9 +167,15 @@ final class Projects: ObservableObject, Identifiable {
 
     /// Where Sesh's transcript helper lives on every Host (ADR 0006).
     static let helper = "~/.sesh/bin/sesh-transcript"
-    private static let helperVersion = Bundle.main.url(forResource: "version", withExtension: nil, subdirectory: "helpers")
-        .flatMap { try? String(contentsOf: $0, encoding: .utf8) }?
-        .trimmingCharacters(in: .whitespacesAndNewlines)
+    /// The published helpers this build trusts: their version, release and SHA-256 by platform.
+    private struct Helpers: Decodable {
+        let version: String
+        let url: String
+        let sha256: [String: String]
+    }
+    private static let helpers = Bundle.main.url(forResource: "helpers", withExtension: "json")
+        .flatMap { try? Data(contentsOf: $0) }
+        .flatMap { try? JSONDecoder().decode(Helpers.self, from: $0) }
 
     /// Also called on the way to the background: iOS would freeze the socket, and a command
     /// sent on it after waking would wait minutes for TCP to admit it is dead.
@@ -274,18 +281,35 @@ final class Projects: ObservableObject, Identifiable {
         await refresh()
     }
 
-    /// Copies the helper built for this Host's platform unless the same version is there.
+    /// Puts the published helper for this Host's platform in place unless that version is there.
+    /// The Host fetches it from GitHub; one that cannot gets it through the phone. Either way
+    /// only the exact bytes this build pinned are installed.
     private func install(platform: String, found: String) async -> String? {
-        let name = "sesh-transcript-" + platform.lowercased().replacingOccurrences(of: " ", with: "-")
-        guard let bundled = Bundle.main.url(forResource: name, withExtension: "gz", subdirectory: "helpers") else {
+        let name = platform.lowercased().replacingOccurrences(of: " ", with: "-")
+        guard let helpers = Self.helpers, let sha = helpers.sha256[name] else {
             unsupported = platform
             return nil
         }
-        guard found != Self.helperVersion else { return nil }
-        let remote = String(Self.helper.dropFirst(2))
-        var ran = await call { sesh_session_put($0, bundled.path, remote + ".gz") }
-        if ran.ok { ran = await run("gunzip -f \(Self.helper).gz && chmod 755 \(Self.helper)") }
-        return ran.ok ? nil : "Sesh could not copy its helper to the Host: \(ran.problem)"
+        guard found != helpers.version else { return nil }
+        let url = quote(helpers.url + "sesh-transcript-\(name).gz")
+        let gz = "$HOME/.sesh/bin/sesh-transcript.gz"
+        let unpack = "gunzip -f \(gz) && chmod 755 \(Self.helper)"
+        let check = "echo '\(sha)  '\(gz) | { sha256sum -c - || shasum -a 256 -c -; } >/dev/null 2>&1"
+        var ran = await run(
+            "mkdir -p ~/.sesh/bin && { curl -fsSL \(url) -o \(gz) || wget -qO \(gz) \(url); } && \(check) && \(unpack)")
+        if !ran.ok, let data = await Self.download(helpers.url + "sesh-transcript-\(name).gz", sha: sha) {
+            let file = FileManager.default.temporaryDirectory.appending(path: "sesh-transcript.gz")
+            try? data.write(to: file)
+            ran = await call { sesh_session_put($0, file.path, ".sesh/bin/sesh-transcript.gz") }
+            if ran.ok { ran = await run(unpack) }
+        }
+        return ran.ok ? nil : "Sesh could not install its helper on the Host: \(ran.problem)"
+    }
+
+    private static func download(_ url: String, sha: String) async -> Data? {
+        guard let source = URL(string: url), let (data, _) = try? await URLSession.shared.data(from: source)
+        else { return nil }
+        return SHA256.hash(data: data).map { String(format: "%02x", $0) }.joined() == sha ? data : nil
     }
 
     func refresh() async {

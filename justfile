@@ -9,7 +9,7 @@ ghosttykit:
 ghosttykit-prebuilt:
     ./scripts/fetch-ghosttykit.sh
 
-gen: ghosttykit core helpers licenses
+gen: ghosttykit core licenses
     xcodegen generate --quiet
 
 # Collects every linked crate's licence text into Resources/licenses.json.
@@ -28,9 +28,13 @@ run: build
 core:
     ./scripts/build-core.sh
 
-# sesh-transcript for each Host platform, into build/helpers, which the app bundles.
+# sesh-transcript for each Host platform, into build/helpers.
 helpers:
     ./scripts/build-helpers.sh
+
+# Publish the helpers as a GitHub release and pin them in Resources/helpers.json.
+helpers-release:
+    ./scripts/release-helpers.sh
 
 # Render every app-icon variant to build/icons; `just icon NAME` installs one.
 icons:

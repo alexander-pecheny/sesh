@@ -37,9 +37,7 @@ targets:
         type: folder
         buildPhase: resources
       - path: Resources/licenses.json
-      - path: build/helpers
-        type: folder
-        buildPhase: resources
+      - path: Resources/helpers.json
     dependencies:
       - framework: Frameworks/GhosttyKit.xcframework
         embed: false

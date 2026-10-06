@@ -454,15 +454,19 @@ dependencies are serde and serde_json.
 
 **Builds.** `just helpers` builds static musl binaries for Linux x86-64 and arm64 (linked
 by `rust-lld`, no C toolchain) and macOS arm64 and x86-64 into `build/helpers`, named
-`sesh-transcript-<uname -sm, lower-cased, space as dash>`, with the version in
-`build/helpers/version`. The app bundles the folder as `helpers/`. Each is about half a MB.
+`sesh-transcript-<uname -sm, lower-cased, space as dash>.gz`, with the version in
+`build/helpers/version`. `just helpers-release` publishes them as the GitHub release
+`helper-<version>` (the tag goes to Forgejo first, since its push mirror prunes tags GitHub
+alone has) and writes `Resources/helpers.json` from the published files: version, release
+URL, SHA-256 by platform. The app carries only that JSON. Run it whenever the helper changes.
 
 **Install.** On connect Projects runs `uname -sm` and `~/.sesh/bin/sesh-transcript
---version`; if the version differs from the bundled one, it puts the matching binary there
-over SFTP (`sesh_session_put`: written beside it with mode 0755 and renamed over, so a
-running copy is never overwritten). Every former `herdr agent follow|history|entry|answer|permit`
-call runs the helper instead. Projects refuses only when herdr is missing or the platform
-has no bundled helper (anything but Linux x86-64/arm64 and macOS).
+--version`; if the version differs from the pinned one, the Host downloads its build with
+curl or wget, checks the SHA-256 and unpacks it. If that fails, the phone downloads the same
+file, checks it and puts it there over SFTP (`sesh_session_put`). Every former
+`herdr agent follow|history|entry|answer|permit` call runs the helper instead. Projects
+refuses only when herdr is missing or the platform has no published helper (anything but
+Linux x86-64/arm64 and macOS).
 
 ## Follow-ups after phase 5
 

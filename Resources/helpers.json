@@ -1,0 +1,10 @@
+{
+  "version": "sesh-transcript 0.1.0+af257fb4d267e186",
+  "url": "https://github.com/alexander-pecheny/sesh/releases/download/helper-0.1.0-af257fb4d267e186/",
+  "sha256": {
+    "darwin-arm64": "8afb7fdad869d102fc5db966af58d2c82b6260e16135577e1b17c63fa7d58477",
+    "darwin-x86_64": "c75ebbc72798d0cc94076193362e5169780d8d66ef976827f27527b3bb9b1ed6",
+    "linux-aarch64": "4b934b1540f5c5a3ee3ff0bea4a1fdc5b28217cb40747a310dbc40e2c14a9e14",
+    "linux-x86_64": "5067e314a5c2db684d14213a4e29bd0ac20662a86dc8a80e57af3a1b26665a15"
+  }
+}
