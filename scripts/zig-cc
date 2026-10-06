@@ -1,0 +1,14 @@
+#!/bin/sh
+# The C compiler for the helper's musl targets. The cc crate passes Rust's target triple,
+# which zig does not know, so it becomes zig's, like x86_64-unknown-linux-musl to x86_64-linux-musl.
+for arg; do
+    shift
+    case $arg in
+        --target=*-unknown-linux-musl)
+            arch=${arg#--target=}
+            set -- "$@" -target "${arch%-unknown-linux-musl}-linux-musl"
+            ;;
+        *) set -- "$@" "$arg" ;;
+    esac
+done
+exec zig cc "$@"

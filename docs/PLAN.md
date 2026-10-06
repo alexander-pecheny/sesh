@@ -528,18 +528,21 @@ record's last write. The helper reads only `body.title`, `body.text`, `body.task
   `{"id","kind","body","base","deleted"}`, where `base` is the `seq` the client last saw for
   the record, 0 for a new one. For an `entry` or `document` whose stored `seq` differs from
   `base`, the body with the later `edited` wins and the other is kept as a new `conflict`
-  record whose body is `{"of": id, "kind", "task", "title", "text", "edited"}`. Every other
-  change simply wins. It prints `{"t":"record",...}` for each record it wrote, then the head,
-  and deletes FILE. Clients send changes as a file over SFTP, since a Document may exceed
-  the 128 KB a single command-line argument allows.
+  record whose body is `{"of": id, "kind", "task", "title", "text", "edited"}`, unless the
+  loser is a deletion, which leaves nothing to keep. Every other change simply wins. It
+  prints `{"t":"record",...}` for each record it wrote, then the head, and deletes FILE.
+  Clients send changes as a file over SFTP, since a Document may exceed the 128 KB a single
+  command-line argument allows.
 - `vault size DIR SESSION FILE` prints `{"size"}` of a Transcript copy, 0 when absent.
 - `vault append DIR SESSION FILE --offset N BYTES_FILE` appends the bytes when the copy is
   exactly N long, else fails with its real size; `vault copy DIR SESSION --from PATH` does
-  the same from a Transcript on this machine. Both index the new whole lines for search.
+  the same from a Transcript on this machine. Both print the new `{"size"}` and index the
+  new whole lines for search, telling the Agent from the copy's first line.
 - `vault search DIR QUERY [--limit N]` prints hits, best first:
   `{"t":"hit","kind","id","task","session","item","snippet"}`. Records match on title and
-  text; Transcript copies match on the user's messages and the Agent's replies, with `item`
-  the Conversation entry id.
+  text; Transcript copies match on the user's messages and the Agent's replies, as hits of
+  kind `transcript` whose `id` is the session, with `item` the Conversation entry id and an
+  added `file` naming the copy. `task` is a session record's `body.task`.
 - `follow`, `history` and `entry` take `--file PATH --agent AGENT` in place of a pane, to
   show a Transcript copy when its Agent session's machine is off.
 
