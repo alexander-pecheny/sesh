@@ -56,14 +56,9 @@ final class Machine: Runner, Identifiable, Hashable {
         await stream(command, line: Optional(line))
     }
 
-    /// `path` quoted for the shell, with a leading `~/` still meaning the home folder.
-    nonisolated static func shellPath(_ path: String) -> String {
-        path.hasPrefix("~/") ? "\"$HOME\"/" + quote(String(path.dropFirst(2))) : quote(path)
-    }
-
     /// Writes `data` to `path` on the machine, relative to its home folder unless absolute.
     func put(_ data: Data, to path: String) async -> Ran {
-        let target = Self.shellPath(path)
+        let target = shellPath(path)
         return await stream("mkdir -p \"$(dirname \(target))\" && cat > \(target)", line: nil, input: data)
     }
 

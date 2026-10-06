@@ -83,6 +83,11 @@ protocol Runner: AnyObject {
     func stream(_ command: String, line: @escaping (String) -> Void) async -> Ran
 }
 
+/// `path` quoted for the shell, with a leading `~/` still meaning the home folder.
+func shellPath(_ path: String) -> String {
+    path.hasPrefix("~/") ? "\"$HOME\"/" + quote(String(path.dropFirst(2))) : quote(path)
+}
+
 func quote(_ text: String) -> String { "'" + text.replacingOccurrences(of: "'", with: "'\\''") + "'" }
 
 enum Names {

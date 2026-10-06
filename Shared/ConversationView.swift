@@ -39,6 +39,15 @@ struct ConversationView: View {
                     if conversation.earlier { ProgressView().frame(maxWidth: .infinity) }
                     ForEach(Row.rows(conversation.items)) { row in
                         RowView(row: row, conversation: conversation)
+                            .padding(Metric.tiny)
+                            .background(
+                                conversation.focus.map(row.contains) == true ? flavour(.yellow).opacity(0.15) : .clear,
+                                in: .rect(cornerRadius: Metric.corner))
+                            .contextMenu {
+                                if let keep = conversation.bookmark, let entry = row.entry {
+                                    Button("Bookmark in the Journal") { keep(entry) }
+                                }
+                            }
                     }
                     ForEach(conversation.permissions) { PermissionCard(permission: $0, conversation: conversation) }
                     if working { WorkingRow() }
@@ -65,6 +74,12 @@ struct ConversationView: View {
                 if scrolling != .idle { atBottom = bottom }
             }
             .onScrollPhaseChange { _, phase in scrolling = phase }
+            .onChange(of: conversation.focus) {
+                guard let focus = conversation.focus,
+                      let row = Row.rows(conversation.items).first(where: { $0.contains(focus) }) else { return }
+                atBottom = false
+                withAnimation { reader.scrollTo(row.id, anchor: .top) }
+            }
             .onChange(of: conversation.items.count + conversation.permissions.count + (working ? 1 : 0)) {
                 if atBottom { reader.scrollTo(Self.end, anchor: .bottom) }
                 // A Conversation shorter than the screen never scrolls to the top to ask.
@@ -220,6 +235,22 @@ private enum Row: Identifiable {
         switch self {
         case .item(let item): item.id
         case .lookups(let entries): entries[0].id
+        }
+    }
+
+    func contains(_ id: String) -> Bool {
+        switch self {
+        case .item(let item): item.id == id
+        case .lookups(let entries): entries.contains { $0.id == id }
+        }
+    }
+
+    /// The entry a Bookmark of this row keeps.
+    var entry: Conversation.Entry? {
+        switch self {
+        case .item(.entry(let entry)): entry
+        case .lookups(let entries): entries.first
+        case .item(.switched): nil
         }
     }
 

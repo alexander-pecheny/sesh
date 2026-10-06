@@ -3,6 +3,7 @@ import SwiftUI
 /// A Task's working log: a box for the next Entry, then every Entry, newest first.
 struct JournalView: View {
     @Environment(\.colorScheme) private var colorScheme
+    @EnvironmentObject private var library: Library
     @ObservedObject var vault: Vault
     let task: String
     @State private var draft = ""
@@ -26,6 +27,7 @@ struct JournalView: View {
             .frame(maxWidth: .infinity)
         }
         .background(flavour(.base))
+        .environment(\.openURL, OpenURLAction { url in library.follow(url) ? .handled : .systemAction })
     }
 
     private var conflicts: [Record] { vault.children(.conflict, task: task).filter { $0.body.kind == "entry" } }

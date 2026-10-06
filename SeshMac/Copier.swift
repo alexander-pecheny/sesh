@@ -1,0 +1,73 @@
+import Foundation
+
+/// Copies every adopted Agent session's Transcripts into its Vault while the app runs, so a
+/// Conversation outlives its machine and the Agent's own clean-up (ADR 0008).
+@MainActor
+final class Copier {
+    private static let round = Duration.seconds(30)
+    /// Bytes moved per Transcript per round between two machines, so one huge file cannot
+    /// hold up the rest.
+    private static let chunk = 4 << 20
+
+    private weak var vault: Vault?
+    private var task: Task<Void, Never>?
+
+    init(vault: Vault) { self.vault = vault }
+
+    func start() {
+        guard task == nil else { return }
+        task = Task { [weak self] in
+            while !Task.isCancelled {
+                await self?.copyAll()
+                try? await Task.sleep(for: Self.round)
+            }
+        }
+    }
+
+    private struct Pane: Decodable {
+        struct Result: Decodable {
+            struct Info: Decodable {
+                struct Session: Decodable { let path: String? }
+                let agent_session: Session?
+            }
+            let pane: Info
+        }
+        let result: Result
+    }
+
+    private func copyAll() async {
+        guard let vault, vault.online else { return }
+        for session in vault.all(.session) {
+            guard let pane = session.body.pane else { continue }
+            let machine = TaskActions.machine(session.body.machine)
+            let ran = await machine.run("herdr pane get \(quote(pane))")
+            if let path = (try? JSONDecoder().decode(Pane.self, from: Data(ran.out.utf8)))?.result.pane.agent_session?.path,
+               !(session.body.transcripts ?? []).contains(path) {
+                var record = vault.records[session.id] ?? session
+                record.body.transcripts = (record.body.transcripts ?? []) + [path]
+                vault.write(record)
+            }
+            for path in vault.records[session.id]?.body.transcripts ?? [] {
+                await copy(path, of: session, from: machine, into: vault)
+            }
+        }
+    }
+
+    private func copy(_ path: String, of session: Record, from machine: Machine, into vault: Vault) async {
+        let helper = "\(Helper.path) vault"
+        if machine == vault.machine {
+            _ = await machine.run("\(helper) copy \(vault.folder) \(session.id) --from \(quote(path))")
+            return
+        }
+        struct Size: Decodable { let size: Int }
+        let name = (path as NSString).lastPathComponent
+        let have = await vault.machine.run("\(helper) size \(vault.folder) \(session.id) \(quote(name))")
+        guard let size = try? JSONDecoder().decode(Size.self, from: Data(have.out.utf8)).size else { return }
+        let read = await machine.run("tail -c +\(size + 1) \(quote(path)) | head -c \(Self.chunk) | base64 | tr -d '\\n'")
+        guard read.ok, let bytes = Data(base64Encoded: read.out), !bytes.isEmpty else { return }
+        let staged = "\(vault.folder)/inbox/\(UUID().uuidString.lowercased()).bytes"
+        guard (await vault.machine.put(bytes, to: staged)).ok else { return }
+        _ = await vault.machine.run(
+            "\(helper) append \(vault.folder) \(session.id) \(quote(name)) --offset \(size) \(staged); rm -f \(staged)")
+    }
+}

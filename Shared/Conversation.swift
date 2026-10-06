@@ -103,6 +103,12 @@ final class Conversation: ObservableObject {
     /// Opens a file the Agent named, relative paths taken from the Agent's folder; nil where
     /// there is nowhere to open it.
     var openPath: ((String) -> Void)?
+    /// Keeps one entry as a Bookmark; nil where there is no Journal to keep it in.
+    var bookmark: ((Entry) -> Void)?
+    /// The entry a link or a search result asked to see, scrolled to and marked.
+    @Published var focus: String?
+    /// Whether the helper has sent the first batch of entries, which ends with a cursor.
+    private var loaded = false
     private(set) weak var runner: Runner?
     private var cursor: String?
     private var loading = false
@@ -125,7 +131,7 @@ final class Conversation: ObservableObject {
     private var target: String {
         switch source {
         case .pane(let pane): quote(pane)
-        case .file(let path, let agent): "--file \(quote(path)) --agent \(agent.rawValue)"
+        case .file(let path, let agent): "--file \(shellPath(path)) --agent \(agent.rawValue)"
         }
     }
 
@@ -166,7 +172,9 @@ final class Conversation: ObservableObject {
             permissions.removeAll { $0.id == permission.id }
             permissions.append(permission)
         case "permission_done": permissions.removeAll { $0.id == line.id }
-        case "cursor": cursor = line.cursor
+        case "cursor":
+            cursor = line.cursor
+            loaded = true
         default: break
         }
     }
@@ -182,6 +190,18 @@ final class Conversation: ObservableObject {
                 items.append(.entry(entry))
             }
         }
+    }
+
+    /// Pages back until `id` is loaded, then shows it. An id the Transcript no longer has
+    /// leaves the Conversation at its oldest entry.
+    func reveal(_ id: String) async {
+        for _ in 0..<50 where !loaded { try? await Task.sleep(for: .milliseconds(200)) }
+        while !items.contains(where: { $0.id == id }), earlier {
+            let count = items.count
+            await loadEarlier()
+            if items.count == count { break }
+        }
+        focus = items.contains(where: { $0.id == id }) ? id : items.first?.id
     }
 
     /// Fetches the page of entries before the first one shown and puts it above.

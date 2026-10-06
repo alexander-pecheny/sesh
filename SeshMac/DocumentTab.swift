@@ -4,6 +4,7 @@ import SwiftUI
 /// remembers the last text of. Edits to a file go to the file itself (ADR 0008).
 struct DocumentTab: View {
     @Environment(\.colorScheme) private var colorScheme
+    @EnvironmentObject private var library: Library
     @ObservedObject var vault: Vault
     let id: String
     @State private var text = ""
@@ -52,6 +53,7 @@ struct DocumentTab: View {
             }
         }
         .background(flavour(.base))
+        .environment(\.openURL, OpenURLAction { url in library.follow(url) ? .handled : .systemAction })
         .task { await load() }
         .alert("The file changed since Sesh read it", isPresented: Binding(get: { clash != nil }, set: { if !$0 { clash = nil } })) {
             Button("Keep my text", role: .destructive) { Task { await write(force: true) } }
@@ -94,7 +96,7 @@ struct DocumentTab: View {
             text = record.body.text ?? ""
             return loaded = true
         }
-        let ran = await machine.run("cat -- \(Machine.shellPath(path))")
+        let ran = await machine.run("cat -- \(shellPath(path))")
         if ran.ok {
             text = ran.out
             base = ran.out
@@ -116,7 +118,7 @@ struct DocumentTab: View {
         saving = true
         defer { saving = false }
         if !force {
-            let now = await machine.run("cat -- \(Machine.shellPath(path))")
+            let now = await machine.run("cat -- \(shellPath(path))")
             if now.ok, now.out != base { return clash = now.out }
         }
         let put = await machine.put(Data(text.utf8), to: path)

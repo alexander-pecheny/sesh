@@ -29,6 +29,7 @@ struct Sidebar: View {
             ForEach(library.vaults) { vault in
                 VaultSection(vault: vault, naming: $naming)
             }
+            UnfiledSection(title: "On this Mac", items: library.unfiled[""] ?? [])
         }
         .listStyle(.sidebar)
         .safeAreaInset(edge: .bottom) {
@@ -47,12 +48,16 @@ struct Sidebar: View {
 }
 
 private struct VaultSection: View {
+    @EnvironmentObject private var library: Library
     @ObservedObject var vault: Vault
     @Binding var naming: Sidebar.Naming?
 
     var body: some View {
         Section {
             Children(vault: vault, parent: nil, naming: $naming)
+            if let alias = vault.place.alias {
+                UnfiledGroup(items: library.unfiled[alias] ?? [])
+            }
         } header: {
             HStack {
                 Text(vault.name)
@@ -122,6 +127,7 @@ private struct FolderRow: View {
 }
 
 private struct TaskRow: View {
+    @EnvironmentObject private var library: Library
     @ObservedObject var vault: Vault
     let task: Record
     @Binding var naming: Sidebar.Naming?
@@ -129,7 +135,13 @@ private struct TaskRow: View {
     var body: some View {
         Text(task.body.title ?? "Untitled")
             .lineLimit(2)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .contentShape(.rect)
             .draggable(task.id)
+            .dropDestination(for: String.self) { ids, _ in
+                for id in ids { library.receive(id, into: task.id) }
+                return !ids.isEmpty
+            }
             .contextMenu {
                 Button("Rename") { naming = .init(goal: .rename(task), vault: vault, parent: nil) }
             }
@@ -269,6 +281,66 @@ private struct AddVault: View {
                     dismiss()
                 }
                 .disabled(Names.slug(name).isEmpty)
+            }
+        }
+    }
+}
+
+/// The Agent sessions on the Mac that no Task has adopted, under every Vault.
+private struct UnfiledSection: View {
+    let title: String
+    let items: [Library.Unfiled]
+
+    var body: some View {
+        if !items.isEmpty {
+            Section(title) { UnfiledGroup(items: items) }
+        }
+    }
+}
+
+private struct UnfiledGroup: View {
+    let items: [Library.Unfiled]
+    @State private var open = false
+
+    var body: some View {
+        if !items.isEmpty {
+            DisclosureGroup(isExpanded: $open) {
+                ForEach(items) { UnfiledRow(item: $0) }
+            } label: {
+                Label("Unfiled (\(items.count))", systemImage: "tray").foregroundStyle(.secondary)
+            }
+        }
+    }
+}
+
+private struct UnfiledRow: View {
+    @EnvironmentObject private var library: Library
+    let item: Library.Unfiled
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 1) {
+            Text(item.name).lineLimit(1)
+            Text("\(item.agent.title) in \(item.cwd)").font(.caption).foregroundStyle(.secondary).lineLimit(1).truncationMode(.head)
+        }
+        .draggable(Library.unfiledPrefix + item.id)
+        .help("Drag onto a Task to adopt it")
+        .contextMenu {
+            Menu("Adopt into") {
+                ForEach(library.vaults) { vault in
+                    Section(vault.name) {
+                        ForEach(vault.all(.task).filter { $0.body.archived != true }.sorted { ($0.body.title ?? "") < ($1.body.title ?? "") }) { task in
+                            Button(task.body.title ?? "Untitled") { library.adopt(item, into: task.id) }
+                        }
+                    }
+                }
+            }
+            Menu("Adopt into a new Task") {
+                ForEach(library.vaults) { vault in
+                    Button(vault.name) {
+                        let task = vault.create(.task, .init(title: item.name, position: Tree.next(in: nil, of: vault)))
+                        library.adopt(item, into: task.id)
+                    }
+                }
             }
         }
     }

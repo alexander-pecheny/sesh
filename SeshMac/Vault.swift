@@ -86,6 +86,7 @@ final class Vault: ObservableObject, Identifiable {
     private var queue: [Change] = []
     private var flushing = false
     private var following: Task<Void, Never>?
+    private lazy var copier = Copier(vault: self)
 
     nonisolated var id: String { place.name }
     var name: String { place.name }
@@ -158,6 +159,7 @@ final class Vault: ObservableObject, Identifiable {
     /// Keeps this copy in step with the Host until `stop`, coming back after every drop.
     func start() {
         guard following == nil else { return }
+        copier.start()
         following = Task { [weak self] in
             while !Task.isCancelled, let self {
                 await self.connect()

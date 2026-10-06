@@ -50,8 +50,11 @@ private struct TabButton: View {
 
     var body: some View {
         HStack(spacing: Metric.tiny) {
-            Image(systemName: icon).imageScale(.small)
-            Text(title).lineLimit(1)
+            Button { library.open(tab, in: task) } label: {
+                Label(title, systemImage: icon).lineLimit(1).contentShape(.rect)
+            }
+            .buttonStyle(.plain)
+            .keyboardShortcut(shortcut)
             if tab != .journal {
                 Button { library.close(tab, in: task) } label: { Image(systemName: "xmark").imageScale(.small) }
                     .buttonStyle(.borderless)
@@ -60,9 +63,35 @@ private struct TabButton: View {
         .padding(.horizontal, Metric.pad)
         .padding(.vertical, Metric.tiny)
         .background(selected ? Color.primary.opacity(0.1) : .clear, in: .rect(cornerRadius: 6))
-        .contentShape(.rect)
-        .onTapGesture { library.open(tab, in: task) }
+        .draggable(dragged)
+        .contextMenu {
+            if !recordID.isEmpty {
+                Menu("Move to Task") {
+                    ForEach(vault.all(.task).filter { $0.id != task && $0.body.archived != true }
+                        .sorted { ($0.body.title ?? "") < ($1.body.title ?? "") }) { other in
+                        Button(other.body.title ?? "Untitled") { library.move(recordID, to: other.id) }
+                    }
+                }
+            }
+        }
     }
+
+    /// Command-1 is always the Journal; the others follow in order up to nine.
+    private var shortcut: KeyboardShortcut? {
+        let index = [TabItem.journal] + (library.tabs[task] ?? [])
+        guard let position = index.firstIndex(of: tab), position < 9 else { return nil }
+        return KeyboardShortcut(KeyEquivalent(Character("\(position + 1)")))
+    }
+
+    private var recordID: String {
+        switch tab {
+        case .session(let id), .document(let id): id
+        case .journal, .terminal: ""
+        }
+    }
+
+    /// A session or Document Tab can be dropped on another Task in the sidebar.
+    private var dragged: String { recordID }
 
     private var icon: String {
         switch tab {
@@ -144,11 +173,20 @@ private struct SessionTab: View {
     @EnvironmentObject private var library: Library
     @ObservedObject var vault: Vault
     let id: String
+    @State private var conversation: Conversation?
 
     var body: some View {
-        if let session = vault.records[id] {
-            ConversationView(conversation: library.conversation(for: session), title: session.body.title ?? "Agent session", fresh: false)
-                .frame(minWidth: 420, maxWidth: .infinity, minHeight: 300, maxHeight: .infinity)
+        Group {
+            if let conversation, let session = vault.records[id] {
+                ConversationView(conversation: conversation, title: session.body.title ?? "Agent session", fresh: false)
+            } else {
+                ProgressView()
+            }
+        }
+        .frame(minWidth: 420, maxWidth: .infinity, minHeight: 300, maxHeight: .infinity)
+        .task {
+            guard let session = vault.records[id] else { return }
+            conversation = await library.conversation(for: session)
         }
     }
 }
