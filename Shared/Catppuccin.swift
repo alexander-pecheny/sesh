@@ -11,7 +11,11 @@ enum Catppuccin {
         case latte, mocha
 
         static var current: Flavour {
+            #if os(iOS)
             UITraitCollection.current.userInterfaceStyle == .dark ? .mocha : .latte
+            #else
+            NSApp?.effectiveAppearance.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua ? .mocha : .latte
+            #endif
         }
 
         func callAsFunction(_ swatch: Swatch) -> Color {

@@ -47,7 +47,7 @@ struct ConversationView: View {
                 .scrollTargetLayout()
                 .padding(16)
                 // An opening card with an unbroken path asks for more than the screen; never give it.
-                .containerRelativeFrame(.horizontal)
+                .fitWidth()
             }
             // Tracking the top row keeps it in place while a page lands above it.
             .scrollPosition(id: $topRow, anchor: .top)
@@ -80,22 +80,28 @@ struct ConversationView: View {
         }
         .background(flavour(.base))
         .navigationTitle(title)
-        .navigationBarTitleDisplayMode(.inline)
+        .inlineTitle()
+        #if os(macOS)
+        .navigationSubtitle(stateLabel)
+        .buttonStyle(.plain)
+        #endif
         .toolbar {
+            #if os(iOS)
             ToolbarItem(placement: .principal) {
                 VStack(spacing: 0) {
                     Text(title).font(.ui(15).weight(.semibold)).foregroundStyle(flavour(.text))
                     Text(stateLabel).font(.ui(11)).foregroundStyle(flavour(.subtext0))
                 }
             }
+            #endif
             if conversation.agent == .claude {
-                ToolbarItem(placement: .topBarTrailing) {
+                ToolbarItem(placement: .primaryAction) {
                     Button { Task { await openInClaude() } } label: { Label("Open in Claude", image: "external-link") }
                 }
             }
         }
         .task { await conversation.follow() }
-        .onAppear { if fresh { DispatchQueue.main.async { field.becomeFirstResponder() } } }
+        .onAppear { if fresh { DispatchQueue.main.async { field.focus() } } }
         .alert("Open it in the Claude app", isPresented: $lost) {
             Button("OK") {}
         } message: {
@@ -122,13 +128,15 @@ struct ConversationView: View {
 
     private var input: some View {
         HStack(alignment: .bottom, spacing: Metric.gap) {
-            if let projects = conversation.projects {
+            #if os(iOS)
+            if let projects = conversation.runner as? Projects {
                 UploadButton(projects: projects) { picking = true }
             } else {
                 Image.lucide("image-up", size: 20).foregroundStyle(flavour(.overlay0))
                     .frame(width: Metric.control, height: Metric.control)
             }
-            PlainText(field: field, text: $draft, font: .systemFont(ofSize: Metric.title), lines: 6)
+            #endif
+            PlainText(field: field, text: $draft, font: .systemFont(ofSize: Metric.title), lines: 6) { if canSend { Task { await send() } } }
                 .overlay(alignment: .leading) {
                     if draft.isEmpty {
                         Text("Message").font(.ui(Metric.title)).foregroundStyle(flavour(.overlay0)).allowsHitTesting(false)
@@ -159,19 +167,21 @@ struct ConversationView: View {
         .padding(.horizontal, Metric.pad)
         .padding(.vertical, Metric.gap)
         .background(flavour(.mantle))
+        #if os(iOS)
         .sheet(isPresented: $picking) {
             PhotoPicker { results in
                 picking = false
-                conversation.projects?.upload(results) { field.insertPaths($0) }
+                (conversation.runner as? Projects)?.upload(results) { field.insertPaths($0) }
             }
             .ignoresSafeArea()
         }
-        .fullScreenCover(isPresented: Binding(
+        #endif
+        .cover(isPresented: Binding(
             get: { conversation.viewing != nil }, set: { if !$0 { conversation.viewing = nil } }
         )) {
             if let image = conversation.viewing { ImageViewer(image: image) }
         }
-        .fullScreenCover(isPresented: $composing) {
+        .cover(isPresented: $composing) {
             Composer(text: $draft, canSend: canSend) { Task { await send() } }
         }
     }
@@ -298,7 +308,7 @@ private struct Composer: View {
                 .padding(Metric.gap)
                 .background(flavour(.base))
                 .navigationTitle("Message")
-                .navigationBarTitleDisplayMode(.inline)
+                .inlineTitle()
                 .toolbar {
                     ToolbarItem(placement: .cancellationAction) { Button("Done") { dismiss() } }
                     ToolbarItem(placement: .confirmationAction) {
@@ -309,7 +319,7 @@ private struct Composer: View {
                         .disabled(!canSend)
                     }
                 }
-                .onAppear { field.becomeFirstResponder() }
+                .onAppear { field.focus() }
         }
         .tint(flavour(.mauve))
     }
@@ -318,12 +328,12 @@ private struct Composer: View {
 /// An image from a message, whole, with pinch to zoom.
 private struct ImageViewer: View {
     @Environment(\.dismiss) private var dismiss
-    let image: UIImage
+    let image: PlatformImage
     @State private var scale = 1.0
     @GestureState private var pinch = 1.0
 
     var body: some View {
-        Image(uiImage: image)
+        Image(platform: image)
             .resizable()
             .scaledToFit()
             .scaleEffect(scale * pinch)
@@ -348,14 +358,14 @@ private struct RemoteImage: View {
     @Environment(\.colorScheme) private var colorScheme
     let path: String
     let conversation: Conversation
-    @State private var image: UIImage?
+    @State private var image: PlatformImage?
 
     private var flavour: Catppuccin.Flavour { colorScheme == .dark ? .mocha : .latte }
 
     var body: some View {
         Group {
             if let image {
-                Image(uiImage: image).resizable().scaledToFill()
+                Image(platform: image).resizable().scaledToFill()
             } else {
                 Image.lucide("image", size: 20).foregroundStyle(flavour(.overlay1))
             }
@@ -964,6 +974,7 @@ private struct TodoBar: View {
     }
 }
 
+#if os(iOS)
 private struct UploadButton: View {
     @Environment(\.colorScheme) private var colorScheme
     @ObservedObject var projects: Projects
@@ -990,3 +1001,4 @@ private struct UploadButton: View {
         .uploadFailure($projects.uploadError)
     }
 }
+#endif

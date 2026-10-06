@@ -2,49 +2,10 @@ import CryptoKit
 import PhotosUI
 import SwiftUI
 
-/// The coding agents Projects can start and show. Anything else herdr finds stays hidden.
-enum Agent: String, CaseIterable, Identifiable {
-    case claude, codex, pi
-
-    var id: String { rawValue }
-    var title: String { self == .pi ? "pi" : rawValue.capitalized }
-
-    /// Permissions are always bypassed: she cannot be at the terminal to approve them.
-    func flags(_ name: String) -> String {
-        switch self {
-        case .claude: "--remote-control \(quote(name)) --dangerously-skip-permissions"
-        case .codex: "--dangerously-bypass-approvals-and-sandbox"
-        case .pi: ""
-        }
-    }
-
-    var install: String {
-        switch self {
-        case .claude: "curl -fsSL https://claude.ai/install.sh | bash"
-        case .codex: "npm install -g @openai/codex"
-        case .pi: "npm install -g @mariozechner/pi-coding-agent"
-        }
-    }
-}
-
 /// A Projects Tab: one Link to the Host, on which it lists folders and drives herdr to run
 /// Agent sessions. Core callbacks arrive on tokio threads and hop to main in `LinkBridge`.
 @MainActor
-final class Projects: ObservableObject, Identifiable {
-    struct Ran {
-        let status: Int32
-        let out: String
-        let err: String
-        var ok: Bool { status == 0 }
-
-        /// herdr prints its errors as JSON on stderr; anything else is shown as it came.
-        var problem: String {
-            let herdr = try? JSONDecoder().decode(HerdrError.self, from: Data(err.utf8))
-            let text = herdr?.error.message ?? err.trimmingCharacters(in: .whitespacesAndNewlines)
-            return text.isEmpty ? "the command failed with status \(status)" : text
-        }
-    }
-
+final class Projects: ObservableObject, Identifiable, Runner {
     struct AgentSession: Identifiable, Equatable {
         let id: String
         let name: String
@@ -165,18 +126,7 @@ final class Projects: ObservableObject, Identifiable {
 
     var needsHerdr: Bool { missing.contains("herdr") }
 
-    /// Where Sesh's transcript helper lives on every Host (ADR 0006).
-    static let helper = "~/.sesh/bin/sesh-transcript"
-    /// The published helpers this build trusts: their version, release and SHA-256 by platform.
-    private struct Helpers: Decodable {
-        let version: String
-        let url: String
-        let sha256: [String: String]
-    }
-    private static let helpers = Bundle.main.url(forResource: "helpers", withExtension: "json")
-        .flatMap { try? Data(contentsOf: $0) }
-        .flatMap { try? JSONDecoder().decode(Helpers.self, from: $0) }
-
+    static let helper = Helper.path
     /// Also called on the way to the background: iOS would freeze the socket, and a command
     /// sent on it after waking would wait minutes for TCP to admit it is dead.
     func close() {
@@ -285,23 +235,19 @@ final class Projects: ObservableObject, Identifiable {
     /// The Host fetches it from GitHub; one that cannot gets it through the phone. Either way
     /// only the exact bytes this build pinned are installed.
     private func install(platform: String, found: String) async -> String? {
-        let name = platform.lowercased().replacingOccurrences(of: " ", with: "-")
-        guard let helpers = Self.helpers, let sha = helpers.sha256[name] else {
+        let name = Helper.name(platform)
+        guard let published = Helper.published, let sha = published.sha256[name], let download = Helper.download(name)
+        else {
             unsupported = platform
             return nil
         }
-        guard found != helpers.version else { return nil }
-        let url = quote(helpers.url + "sesh-transcript-\(name).gz")
-        let gz = "$HOME/.sesh/bin/sesh-transcript.gz"
-        let unpack = "gunzip -f \(gz) && chmod 755 \(Self.helper)"
-        let check = "echo '\(sha)  '\(gz) | { sha256sum -c - || shasum -a 256 -c -; } >/dev/null 2>&1"
-        var ran = await run(
-            "mkdir -p ~/.sesh/bin && { curl -fsSL \(url) -o \(gz) || wget -qO \(gz) \(url); } && \(check) && \(unpack)")
-        if !ran.ok, let data = await Self.download(helpers.url + "sesh-transcript-\(name).gz", sha: sha) {
+        guard found != published.version else { return nil }
+        var ran = await run(download)
+        if !ran.ok, let data = await Self.download(published.url + "sesh-transcript-\(name).gz", sha: sha) {
             let file = FileManager.default.temporaryDirectory.appending(path: "sesh-transcript.gz")
             try? data.write(to: file)
             ran = await call { sesh_session_put($0, file.path, ".sesh/bin/sesh-transcript.gz") }
-            if ran.ok { ran = await run(unpack) }
+            if ran.ok { ran = await run(Helper.unpack) }
         }
         return ran.ok ? nil : "Sesh could not install its helper on the Host: \(ran.problem)"
     }
@@ -626,15 +572,9 @@ final class Projects: ObservableObject, Identifiable {
     }
 }
 
-func quote(_ text: String) -> String { "'" + text.replacingOccurrences(of: "'", with: "'\\''") + "'" }
-
 // MARK: What herdr prints
 
 private struct Herdr<Result: Decodable>: Decodable { let result: Result }
-private struct HerdrError: Decodable {
-    struct Detail: Decodable { let message: String }
-    let error: Detail
-}
 private struct AgentList: Decodable {
     struct Agent: Decodable {
         let agent: String
@@ -719,7 +659,7 @@ private final class LinkBridge {
         },
         on_ran: { userdata, id, status, out, err in
             guard let userdata else { return }
-            let result = Projects.Ran(
+            let result = Ran(
                 status: status,
                 out: out.map { String(cString: $0) } ?? "",
                 err: err.map { String(cString: $0) } ?? "")

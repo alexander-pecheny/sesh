@@ -3,6 +3,7 @@ options:
   bundleIdPrefix: me.pecheny
   deploymentTarget:
     iOS: "18.0"
+    macOS: "15.0"
   createIntermediateGroups: true
 
 settings:
@@ -26,6 +27,7 @@ targets:
     platform: iOS
     sources:
       - path: Sesh
+      - path: Shared
       - path: Resources/Fonts
         type: folder
         buildPhase: resources
@@ -55,3 +57,23 @@ targets:
       configs:
         Release:
           EXCLUDED_SOURCE_FILE_NAMES: Fixtures
+
+  SeshMac:
+    type: application
+    platform: macOS
+    sources:
+      - path: SeshMac
+      - path: Shared
+      - path: Resources/Icons.xcassets
+      - path: Resources/helpers.json
+    dependencies:
+      - package: MarkdownUI
+    settings:
+      base:
+        PRODUCT_NAME: Sesh
+        PRODUCT_BUNDLE_IDENTIFIER: me.pecheny.sesh.mac
+        GENERATE_INFOPLIST_FILE: YES
+        INFOPLIST_KEY_LSApplicationCategoryType: public.app-category.developer-tools
+        ENABLE_HARDENED_RUNTIME: YES
+        ENABLE_APP_SANDBOX: NO
+        CODE_SIGN_IDENTITY: "-"

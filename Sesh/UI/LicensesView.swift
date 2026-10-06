@@ -84,10 +84,6 @@ struct LicensesView: View {
     }
 }
 
-extension Array {
-    subscript(safe index: Int) -> Element? { indices.contains(index) ? self[index] : nil }
-}
-
 private struct TextScreen: View {
     let title: String
     let body_: String

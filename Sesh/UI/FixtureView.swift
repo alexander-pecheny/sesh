@@ -10,7 +10,7 @@ struct FixtureView: View {
 
     init(name: String) {
         self.name = name
-        let conversation = Conversation(pane: "fixture", agent: nil, projects: nil)
+        let conversation = Conversation(pane: "fixture", agent: nil, runner: nil)
         let url = Bundle.main.url(forResource: name, withExtension: "jsonl", subdirectory: "Fixtures")
         let lines = url.flatMap { try? String(contentsOf: $0, encoding: .utf8) } ?? ""
         // In bursts after the screen appears, as history comes from a Host, then the last

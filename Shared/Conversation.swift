@@ -90,27 +90,48 @@ final class Conversation: ObservableObject {
     @Published private(set) var earlier = false
     @Published var problem: String?
     /// An image from a message, open on the whole screen.
-    @Published var viewing: UIImage?
+    @Published var viewing: PlatformImage?
 
-    let pane: String
-    private(set) weak var projects: Projects?
+    /// Where the entries come from: a live pane, or a Transcript copy in a Vault when the
+    /// Agent session's machine is off.
+    enum Source: Equatable {
+        case pane(String)
+        case file(path: String, agent: Agent)
+    }
+
+    let source: Source
+    private(set) weak var runner: Runner?
     private var cursor: String?
     private var loading = false
     private var expanded: Set<String> = []
-    private var images: [String: UIImage] = [:]
+    private var images: [String: PlatformImage] = [:]
 
-    init(pane: String, agent: Agent?, projects: Projects?) {
-        self.pane = pane
+    init(source: Source, agent: Agent?, runner: Runner?) {
+        self.source = source
         self.agent = agent
-        self.projects = projects
+        self.runner = runner
+    }
+
+    convenience init(pane: String, agent: Agent?, runner: Runner?) {
+        self.init(source: .pane(pane), agent: agent, runner: runner)
+    }
+
+    /// The live pane, which only a running Agent session has.
+    var pane: String? { if case .pane(let pane) = source { pane } else { nil } }
+
+    private var target: String {
+        switch source {
+        case .pane(let pane): quote(pane)
+        case .file(let path, let agent): "--file \(quote(path)) --agent \(agent.rawValue)"
+        }
     }
 
     /// Follows until the screen goes away, picking up after the last cursor whenever the
     /// Link drops, so a reconnect neither repeats nor misses an entry.
     func follow() async {
-        while !Task.isCancelled, let projects {
+        while !Task.isCancelled, let runner {
             let since = cursor.map { " --since \(quote($0))" } ?? ""
-            let ended = await projects.stream("\(Projects.helper) follow \(quote(pane))\(since)") { [weak self] in
+            let ended = await runner.stream("\(Helper.path) follow \(target)\(since)") { [weak self] in
                 self?.apply($0)
             }
             guard !Task.isCancelled else { return }
@@ -162,12 +183,12 @@ final class Conversation: ObservableObject {
 
     /// Fetches the page of entries before the first one shown and puts it above.
     func loadEarlier() async {
-        guard earlier, !loading, let projects,
+        guard earlier, !loading, let runner,
               let first = items.lazy.compactMap({ if case .entry(let entry) = $0 { entry } else { nil } }).first
         else { return }
         loading = true
         defer { loading = false }
-        let ran = await projects.run("\(Projects.helper) history \(quote(pane)) --before \(quote(first.id)) --last \(Self.page)")
+        let ran = await runner.run("\(Helper.path) history \(target) --before \(quote(first.id)) --last \(Self.page)")
         guard ran.ok else { return earlier = false }
         var older: [Item] = []
         for text in ran.out.split(separator: "\n") {
@@ -187,16 +208,18 @@ final class Conversation: ObservableObject {
     // MARK: Talking to the Agent
 
     private func run(_ command: String) async -> String? {
-        guard let projects else { return nil }
-        let ran = await projects.run(command)
+        guard let runner else { return nil }
+        let ran = await runner.run(command)
         return ran.ok ? nil : ran.problem
     }
 
     func send(_ text: String) async -> String? {
-        await run("herdr agent prompt \(quote(pane)) \(quote(text))")
+        guard let pane else { return "This Agent session is not running, so it cannot take a message." }
+        return await run("herdr agent prompt \(quote(pane)) \(quote(text))")
     }
 
     func stop() async {
+        guard let pane else { return }
         problem = await run("herdr agent send-keys \(quote(pane)) esc")
     }
 
@@ -208,17 +231,17 @@ final class Conversation: ObservableObject {
             return object
         }
         let data = (try? JSONSerialization.data(withJSONObject: json)) ?? Data("[]".utf8)
-        return await run("\(Projects.helper) answer \(quote(pane)) --json \(quote(String(decoding: data, as: UTF8.self)))")
+        return await run("\(Helper.path) answer \(target) --json \(quote(String(decoding: data, as: UTF8.self)))")
     }
 
     func permit(_ allow: Bool) async {
-        problem = await run("\(Projects.helper) permit \(quote(pane)) \(allow ? "allow" : "deny")")
+        problem = await run("\(Helper.path) permit \(target) \(allow ? "allow" : "deny")")
     }
 
     /// The helper cuts long output down; the whole entry is fetched the first time it is opened.
     func expand(_ result: Entry) async {
-        guard result.truncated == true, let projects, expanded.insert(result.id).inserted else { return }
-        let ran = await projects.run("\(Projects.helper) entry \(quote(pane)) \(quote(result.id))")
+        guard result.truncated == true, let runner, expanded.insert(result.id).inserted else { return }
+        let ran = await runner.run("\(Helper.path) entry \(target) \(quote(result.id))")
         guard ran.ok, let entry = try? JSONDecoder().decode(Entry.self, from: Data(ran.out.utf8)) else {
             expanded.remove(result.id)
             return
@@ -226,16 +249,20 @@ final class Conversation: ObservableObject {
         add(entry)
     }
 
-    func image(_ path: String) async -> UIImage? {
+    func image(_ path: String) async -> PlatformImage? {
         if let known = images[path] { return known }
-        guard let projects else { return Self.sample }
-        let ran = await projects.run("base64 < \(quote(path)) | tr -d '\\n'")
-        let image = Data(base64Encoded: ran.out).flatMap(UIImage.init)
+        guard let runner else { return Self.sample }
+        let ran = await runner.run("base64 < \(quote(path)) | tr -d '\\n'")
+        let image = Data(base64Encoded: ran.out).flatMap(PlatformImage.init(data:))
         images[path] = image
         return image
     }
 
-    func link() async -> URL? { await projects?.link(for: pane) }
+    #if os(iOS)
+    func link() async -> URL? {
+        guard let pane else { return nil }
+        return await (runner as? Projects)?.link(for: pane)
+    }
 
     /// What a fixture's images look like, since there is no Host to fetch them from.
     private static let sample = UIGraphicsImageRenderer(size: CGSize(width: 300, height: 200)).image { context in
@@ -243,4 +270,9 @@ final class Conversation: ObservableObject {
         let gradient = CGGradient(colorsSpace: nil, colors: colours as CFArray, locations: nil)!
         context.cgContext.drawLinearGradient(gradient, start: .zero, end: CGPoint(x: 300, y: 200), options: [])
     }
+    #else
+    func link() async -> URL? { nil }
+
+    private static let sample: PlatformImage? = nil
+    #endif
 }

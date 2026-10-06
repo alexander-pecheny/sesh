@@ -73,7 +73,7 @@ private struct ConversationScreen: View {
         self.pane = pane
         self.fresh = fresh
         let agent = projects.sessions.first { $0.pane == pane }?.agent
-        _conversation = StateObject(wrappedValue: Conversation(pane: pane, agent: agent, projects: projects))
+        _conversation = StateObject(wrappedValue: Conversation(pane: pane, agent: agent, runner: projects))
     }
 
     var body: some View {
