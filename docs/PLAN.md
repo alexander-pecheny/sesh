@@ -549,6 +549,14 @@ record's last write. The helper reads only `body.title`, `body.text`, `body.task
 Entry ids hash the Transcript's file name, not its whole path, so a copy and its source give
 the same ids and a Bookmark (`sesh://VAULT/SESSION/ITEM`) works on both.
 
+**Where it stands (7 October 2026).** Steps 1 to 8 are built on the Mac and were tried
+against vps-he. Three parts are still missing. An Agent session Tab has only its Conversation
+face: herdr has no command that attaches to one pane, so the terminal face waits for the
+fork to grow one. Sesh does not install the fork yet, because the fork has no public
+release builds. Transcripts are copied only while the Mac app runs. Until `just
+helpers-release` publishes a helper that speaks the Vault protocol, launch the app with
+`-helpers $PWD/build/helpers` to install the local build.
+
 **Later.** State marks on Tasks and a Waiting list, ⌘K to jump by name, a better view of
 Conflict copies, archiving with Worktree removal, several Vaults in the UI, the fork on a
 public mirror with release builds, distribution, and Tasks on the phone.
