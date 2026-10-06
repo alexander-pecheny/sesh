@@ -263,8 +263,8 @@ final class Projects: ObservableObject, Identifiable, Runner {
         let ran = await run("herdr agent list && herdr workspace list")
         let lines = ran.out.split(separator: "\n").map { Data($0.utf8) }
         guard ran.ok, lines.count == 2,
-              let agents = try? JSONDecoder().decode(Herdr<AgentList>.self, from: lines[0]).result.agents,
-              let workspaces = try? JSONDecoder().decode(Herdr<WorkspaceList>.self, from: lines[1]).result.workspaces
+              let agents = try? JSONDecoder().decode(HerdrReply<AgentList>.self, from: lines[0]).result.agents,
+              let workspaces = try? JSONDecoder().decode(HerdrReply<WorkspaceList>.self, from: lines[1]).result.workspaces
         else { return }
         self.workspaces = workspaces.map(Workspace.init).sorted { $0.number < $1.number }
         let byId = Dictionary(workspaces.map { ($0.workspace_id, $0) }, uniquingKeysWith: { first, _ in first })
@@ -307,14 +307,6 @@ final class Projects: ObservableObject, Identifiable, Runner {
         return ran.ok ? nil : ran.problem
     }
 
-    /// Menus an Agent may open before its first prompt, and the keys that get past them.
-    private static let menus = [
-        (prompt: "Yes, I trust this folder", keys: "down enter"),
-        (prompt: "Do you trust the contents of this directory", keys: "enter"),
-        (prompt: "Skip until next version", keys: "down enter"),
-        (prompt: "Continue without trusting", keys: "down down enter"),
-    ]
-
     /// Starts an Agent session in `folder`, on a new branch of it, or in `workspace`, and returns
     /// its pane. The pane is closed on failure so no half-started Agent lingers.
     func start(
@@ -325,30 +317,8 @@ final class Projects: ObservableObject, Identifiable, Runner {
         case .failure(let failure): return .failure(failure)
         case .success(let id): pane = id
         }
-        var ran = await run(
-            "herdr agent start \(quote(name)) --kind \(agent.rawValue) --pane \(quote(pane)) --timeout 60000"
-                + " -- \(agent.flags(name))")
-        let notReady = !ran.ok && (ran.err + ran.out).contains("agent_not_ready")
-        if ran.ok || notReady {
-            // She picked this folder and pressed Start, which answers the trust question;
-            // updates are skipped and new hooks left for her to trust.
-            var answered = false
-            for _ in Self.menus.indices {
-                let screen = await run("herdr pane read \(quote(pane)) --source visible")
-                guard let keys = Self.menus.first(where: { screen.out.contains($0.prompt) })?.keys else { break }
-                _ = await run("herdr agent send-keys \(quote(pane)) \(keys)")
-                answered = true
-                try? await Task.sleep(for: .seconds(2))
-            }
-            if answered || notReady {
-                ran = await run("herdr agent wait \(quote(pane)) --until idle --until done --timeout 30000")
-            }
-        }
-        guard ran.ok else {
-            let screen = await run("herdr pane read \(quote(pane)) --source recent-unwrapped --lines 40")
-            _ = await run("herdr pane close \(quote(pane))")
-            let tail = screen.out.split(separator: "\n").filter { !$0.allSatisfy(\.isWhitespace) }.suffix(12)
-            return .failure(Failure(message: ([ran.problem] + tail.map(String.init)).joined(separator: "\n")))
+        if let problem = await Herdr.launch(agent, name: name, pane: pane, on: self) {
+            return .failure(Failure(message: problem))
         }
         if agent == .claude { _ = await link(for: pane) }
         await refresh()
@@ -366,7 +336,7 @@ final class Projects: ObservableObject, Identifiable, Runner {
         var workspace = chosen
         var folder = folder
         if workspace == nil || folder.isEmpty {
-            let panes = (try? JSONDecoder().decode(Herdr<PaneList>.self, from: Data(await run("herdr pane list").out.utf8)))?
+            let panes = (try? JSONDecoder().decode(HerdrReply<PaneList>.self, from: Data(await run("herdr pane list").out.utf8)))?
                 .result.panes ?? []
             if let workspace {
                 folder = panes.first { $0.workspace_id == workspace }?.cwd ?? home
@@ -387,7 +357,7 @@ final class Projects: ObservableObject, Identifiable, Runner {
 
     private func rootPane(_ ran: Ran) -> Result<String, Failure> {
         guard ran.ok else { return .failure(Failure(message: ran.problem)) }
-        guard let created = try? JSONDecoder().decode(Herdr<Created>.self, from: Data(ran.out.utf8)) else {
+        guard let created = try? JSONDecoder().decode(HerdrReply<Created>.self, from: Data(ran.out.utf8)) else {
             return .failure(Failure(message: "herdr said something Sesh cannot read"))
         }
         return .success(created.result.root_pane.pane_id)
@@ -415,24 +385,13 @@ final class Projects: ObservableObject, Identifiable, Runner {
     /// A name herdr accepts as an agent name and git as a branch: the folder's, then two words.
     func suggestName(for folder: String) -> String {
         let taken = Set(sessions.map(\.name))
-        let base = String(Self.slug((folder as NSString).lastPathComponent).prefix(14))
+        let base = String(Names.slug((folder as NSString).lastPathComponent).prefix(14))
         for _ in 0..<50 {
             let words = [Self.adjectives.randomElement()!, Self.nouns.randomElement()!]
-            let name = Self.slug(([base] + words).filter { !$0.isEmpty }.joined(separator: "-"))
+            let name = Names.slug(([base] + words).filter { !$0.isEmpty }.joined(separator: "-"))
             if !taken.contains(name) { return name }
         }
-        return Self.slug(base + "-\(Int.random(in: 100...999))")
-    }
-
-    static func slug(_ text: String) -> String {
-        var slug = ""
-        for character in text.lowercased() {
-            let keep = character.isASCII && (character.isLetter || character.isNumber || character == "_")
-            if keep { slug.append(character) } else if !slug.isEmpty, slug.last != "-" { slug.append("-") }
-        }
-        while slug.last == "-" { slug.removeLast() }
-        if let first = slug.first, !first.isLetter { slug = "c-" + slug }
-        return String(slug.prefix(32))
+        return Names.slug(base + "-\(Int.random(in: 100...999))")
     }
 
     private static let adjectives = [
@@ -574,7 +533,7 @@ final class Projects: ObservableObject, Identifiable, Runner {
 
 // MARK: What herdr prints
 
-private struct Herdr<Result: Decodable>: Decodable { let result: Result }
+private struct HerdrReply<Result: Decodable>: Decodable { let result: Result }
 private struct AgentList: Decodable {
     struct Agent: Decodable {
         let agent: String

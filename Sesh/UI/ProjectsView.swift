@@ -383,7 +383,7 @@ private struct StartSheet: View {
                         if git { Toggle("On a new branch", isOn: $branch) }
                     } footer: {
                         Text(branch
-                             ? "\(agent.title) works on its own copy of \((folder as NSString).lastPathComponent), on a branch named \(Projects.slug(name))."
+                             ? "\(agent.title) works on its own copy of \((folder as NSString).lastPathComponent), on a branch named \(Names.slug(name))."
                              : "\(agent.title) keeps running on the Host after you close Sesh.")
                     }
                 }
@@ -413,7 +413,7 @@ private struct StartSheet: View {
     }
 
     private func start() async {
-        let slug = Projects.slug(name)
+        let slug = Names.slug(name)
         guard !slug.isEmpty else { return problem = "Give it a name first." }
         name = slug
         working = true

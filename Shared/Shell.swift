@@ -84,3 +84,17 @@ protocol Runner: AnyObject {
 }
 
 func quote(_ text: String) -> String { "'" + text.replacingOccurrences(of: "'", with: "'\\''") + "'" }
+
+enum Names {
+    /// A name herdr accepts as an agent name and git as a branch.
+    static func slug(_ text: String) -> String {
+        var slug = ""
+        for character in text.lowercased() {
+            let keep = character.isASCII && (character.isLetter || character.isNumber || character == "_")
+            if keep { slug.append(character) } else if !slug.isEmpty, slug.last != "-" { slug.append("-") }
+        }
+        while slug.last == "-" { slug.removeLast() }
+        if let first = slug.first, !first.isLetter { slug = "c-" + slug }
+        return String(slug.prefix(32))
+    }
+}

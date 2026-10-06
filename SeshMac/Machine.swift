@@ -48,7 +48,8 @@ final class Machine: Runner, Identifiable, Hashable {
 
     /// Writes `data` to `path` on the machine, relative to its home folder unless absolute.
     func put(_ data: Data, to path: String) async -> Ran {
-        await stream("mkdir -p \"$(dirname \(quote(path)))\" && cat > \(quote(path))", line: nil, input: data)
+        let target = path.hasPrefix("~/") ? "\"$HOME\"/" + quote(String(path.dropFirst(2))) : quote(path)
+        return await stream("mkdir -p \"$(dirname \(target))\" && cat > \(target)", line: nil, input: data)
     }
 
     private func stream(_ command: String, line: ((String) -> Void)?, input: Data? = nil) async -> Ran {
