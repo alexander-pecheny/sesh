@@ -5,11 +5,15 @@
 set -euo pipefail
 
 export PATH="$HOME/.cargo/bin:$PATH"
-# Pure Rust needs no C toolchain: rust-lld links musl from the target's own libc.
+root=$(cd "$(dirname "$0")/.." && pwd)
+# zig compiles SQLite for musl and rust-lld links it with the target's own libc.
+export CC_x86_64_unknown_linux_musl="$root/scripts/zig-cc"
+export CC_aarch64_unknown_linux_musl="$root/scripts/zig-cc"
 export CARGO_TARGET_X86_64_UNKNOWN_LINUX_MUSL_LINKER=rust-lld
 export CARGO_TARGET_AARCH64_UNKNOWN_LINUX_MUSL_LINKER=rust-lld
+# The Vault needs only SQLite's FTS5 and JSON, and leaving out the rest saves 80 KB.
+export LIBSQLITE3_FLAGS="-USQLITE_ENABLE_FTS3 -USQLITE_ENABLE_RTREE -USQLITE_ENABLE_DBSTAT_VTAB -USQLITE_ENABLE_STAT4"
 
-root=$(cd "$(dirname "$0")/.." && pwd)
 out="$root/build/helpers"
 mkdir -p "$out"
 cd "$root/core"

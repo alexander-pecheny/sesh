@@ -3,6 +3,7 @@
 mod claude;
 mod codex;
 mod pi;
+pub mod vault;
 
 use std::fs::File;
 use std::io::{BufRead, Read, Seek, SeekFrom};
@@ -252,9 +253,10 @@ impl Transcript {
             "pi" => Parser::Pi(Default::default()),
             _ => return None,
         };
-        let path = path.into();
+        let path: PathBuf = path.into();
+        let name = path.file_name().unwrap_or_default().to_string_lossy();
         Some(Self {
-            tag: format!("{:08x}", fnv1a(path.to_string_lossy().as_bytes())),
+            tag: format!("{:08x}", fnv1a(name.as_bytes())),
             path,
             offset: 0,
             start: 0,
@@ -310,6 +312,31 @@ impl Transcript {
             }
             size = size.saturating_mul(2);
         }
+    }
+
+    /// Search indexes a Transcript copy a piece at a time, so this returns pi's other branches too.
+    pub fn read_from(&mut self, offset: u64, items: bool) -> std::io::Result<Vec<Entry>> {
+        self.parser = self.parser.fresh();
+        self.entries.clear();
+        (self.start, self.offset) = (offset, offset);
+        let Some(mut file) = self.open()? else {
+            return Ok(Vec::new());
+        };
+        file.seek(SeekFrom::Start(offset))?;
+        let mut bytes = Vec::new();
+        file.read_to_end(&mut bytes)?;
+        if let Parser::Codex(parser) = &mut self.parser {
+            parser.items = items || contains(&bytes, b"\"item_completed\"");
+        }
+        self.feed(&bytes);
+        Ok(match &self.parser {
+            Parser::Pi(parser) => parser.all().cloned().collect(),
+            _ => std::mem::take(&mut self.entries),
+        })
+    }
+
+    pub fn codex_items(&self) -> bool {
+        matches!(&self.parser, Parser::Codex(parser) if parser.items)
     }
 
     /// Up to `n` entries before entry `id`, oldest first, and whether earlier ones

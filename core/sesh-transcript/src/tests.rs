@@ -317,6 +317,19 @@ fn reading_resumes_at_a_cursor_without_repeating_or_missing_entries() {
 }
 
 #[test]
+fn a_copy_gives_the_same_ids_as_its_source() {
+    let lines = &claude_lines();
+    let source = parse("claude", lines);
+    let mut copy = Transcript::new("claude", "/vault/transcripts/s1/t.jsonl").unwrap();
+    let bytes: String = lines.iter().map(|line| format!("{line}\n")).collect();
+    copy.feed(bytes.as_bytes());
+    assert_eq!(ids(&copy.entries), ids(&source.entries));
+    let mut other = Transcript::new("claude", "/home/u/u.jsonl").unwrap();
+    other.feed(bytes.as_bytes());
+    assert_ne!(ids(&other.entries), ids(&source.entries));
+}
+
+#[test]
 fn results_are_clipped_to_their_ends() {
     let long: String = (0..100).map(|line| format!("line {line}\n")).collect();
     let entry = Entry::result("r".into(), &Value::Null, "c".into(), long.clone(), false);

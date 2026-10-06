@@ -5,10 +5,12 @@ use std::process::Command;
 use std::time::{Duration, Instant};
 
 use serde_json::{json, Value};
+use sesh_transcript::vault::{self, Vault};
 use sesh_transcript::{permission, Entry, Transcript, AGENTS, PROTOCOL};
 
 const VERSION: &str = concat!(env!("CARGO_PKG_VERSION"), "+", env!("SOURCE_HASH"));
 const POLL: Duration = Duration::from_millis(250);
+const VAULT_POLL: Duration = Duration::from_millis(500);
 /// While a session's Transcript cannot be found, look again every this many polls.
 const RETRY: u32 = 8;
 const KEY_PAUSE: Duration = Duration::from_millis(200);
@@ -17,7 +19,11 @@ const AGENT_GONE_AFTER: Duration = Duration::from_secs(2);
 const DEFAULT_LAST: usize = 50;
 const USAGE: &str = "usage: sesh-transcript --version | follow --protocol | follow <pane> [--since CURSOR] [--last N]
        | history <pane> --before ID [--last N] | entry <pane> ID
-       | answer <pane> --json ANSWERS | permit <pane> allow|deny";
+       | answer <pane> --json ANSWERS | permit <pane> allow|deny
+       | vault init DIR | vault pull|follow DIR [--since SEQ] | vault push DIR FILE
+       | vault size DIR SESSION FILE | vault append DIR SESSION FILE --offset N BYTES_FILE
+       | vault copy DIR SESSION --from PATH | vault search DIR QUERY [--limit N]
+follow, history and entry take --file PATH --agent AGENT in place of <pane>.";
 
 /// A failed command says why on stderr and exits 1; usage errors exit 2.
 type Exit = Result<i32, String>;
@@ -35,6 +41,7 @@ fn main() {
         Some("entry") => entry(rest),
         Some("answer") => answer(rest),
         Some("permit") => permit(rest),
+        Some("vault") => vault(rest),
         _ => usage(),
     };
     std::process::exit(exit.unwrap_or_else(|message| {
@@ -48,12 +55,11 @@ fn usage() -> Exit {
     Ok(2)
 }
 
-/// The pane and the `--name value` options among `names`.
-fn parse_args<'a>(
-    args: &'a [String],
-    names: &[&str],
-) -> Option<(&'a str, HashMap<&'a str, &'a str>)> {
-    let (mut target, mut options) = (None, HashMap::new());
+type Options<'a> = HashMap<&'a str, &'a str>;
+
+/// The plain arguments and the `--name value` options among `names`.
+fn parse_args<'a>(args: &'a [String], names: &[&str]) -> Option<(Vec<&'a str>, Options<'a>)> {
+    let (mut plain, mut options) = (Vec::new(), HashMap::new());
     let mut args = args.iter();
     while let Some(arg) = args.next() {
         match (arg.strip_prefix("--"), args.as_slice().first()) {
@@ -61,11 +67,51 @@ fn parse_args<'a>(
                 options.insert(name, value.as_str());
                 args.next();
             }
-            (None, _) if target.is_none() => target = Some(arg.as_str()),
+            (None, _) => plain.push(arg.as_str()),
             _ => return None,
         }
     }
-    Some((target?, options))
+    Some((plain, options))
+}
+
+enum Target<'a> {
+    Pane(&'a str),
+    File(Value),
+}
+
+impl Target<'_> {
+    /// The pane as herdr reports it; a file's is made up to name its Agent and path.
+    fn pane(&self) -> Result<Value, String> {
+        match self {
+            Self::Pane(pane_id) => pane_info(pane_id),
+            Self::File(pane) => Ok(pane.clone()),
+        }
+    }
+}
+
+impl std::fmt::Display for Target<'_> {
+    fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+        match self {
+            Self::Pane(pane_id) => write!(f, "pane {pane_id}"),
+            Self::File(pane) => write!(f, "{}", pane["agent_session"]["path"]),
+        }
+    }
+}
+
+fn parse_target<'a>(
+    args: &'a [String],
+    names: &[&str],
+) -> Option<(Target<'a>, Vec<&'a str>, Options<'a>)> {
+    let names = [names, &["file", "agent"]].concat();
+    let (mut plain, options) = parse_args(args, &names)?;
+    let target = match (options.get("file"), options.get("agent")) {
+        (Some(path), Some(agent)) => {
+            Target::File(json!({"agent": agent, "agent_session": {"agent": agent, "path": path}}))
+        }
+        (None, None) if !plain.is_empty() => Target::Pane(plain.remove(0)),
+        _ => return None,
+    };
+    Some((target, plain, options))
 }
 
 fn parse_last(options: &HashMap<&str, &str>) -> Option<usize> {
@@ -99,18 +145,18 @@ fn pane_info(pane_id: &str) -> Result<Value, String> {
 }
 
 /// The pane and its Agent, or why it has none Conversations support.
-fn agent_pane(pane_id: &str) -> Result<(Value, String), String> {
-    let pane = pane_info(pane_id)?;
+fn agent_pane(target: &Target) -> Result<(Value, String), String> {
+    let pane = target.pane()?;
     match pane["agent"].as_str() {
         Some(agent) if AGENTS.contains(&agent) => Ok((pane.clone(), agent.to_string())),
-        _ => Err(format!("pane {pane_id} does not run claude, codex or pi")),
+        _ => Err(format!("{target} does not run claude, codex or pi")),
     }
 }
 
-fn pane_transcript(pane_id: &str) -> Result<(Transcript, String, Value), String> {
-    let (pane, agent) = agent_pane(pane_id)?;
+fn pane_transcript(target: &Target) -> Result<(Transcript, String, Value), String> {
+    let (pane, agent) = agent_pane(target)?;
     let path = transcript_path(&pane)
-        .ok_or_else(|| format!("{agent} in pane {pane_id} has reported no transcript"))?;
+        .ok_or_else(|| format!("{agent} in {target} has reported no transcript"))?;
     let transcript = Transcript::new(&agent, path).expect("agent is supported");
     Ok((transcript, agent, pane))
 }
@@ -179,13 +225,13 @@ fn follow(args: &[String]) -> Exit {
         println!("{PROTOCOL}");
         return Ok(0);
     }
-    let Some((pane_id, options)) = parse_args(args, &["since", "last"]) else {
+    let Some((target, rest, options)) = parse_target(args, &["since", "last"]) else {
         return usage();
     };
-    let Some(last) = parse_last(&options) else {
+    let (Some(last), true) = (parse_last(&options), rest.is_empty()) else {
         return usage();
     };
-    let (pane, agent) = agent_pane(pane_id)?;
+    let (pane, agent) = agent_pane(&target)?;
     let mut follower = Follower {
         agent,
         last,
@@ -203,7 +249,7 @@ fn follow(args: &[String]) -> Exit {
         if stdout_closed() {
             return Ok(0);
         }
-        match pane_info(pane_id) {
+        match target.pane() {
             Ok(pane) if pane["agent"].is_string() => {
                 agent_seen = Instant::now();
                 follower.tick(&pane)?;
@@ -443,10 +489,13 @@ fn stdout_closed() -> bool {
 // MARK: entry and history
 
 fn entry(args: &[String]) -> Exit {
-    let [pane_id, id] = args else {
+    let Some((target, rest, _)) = parse_target(args, &[]) else {
         return usage();
     };
-    let (mut transcript, _, _) = pane_transcript(pane_id)?;
+    let [id] = rest[..] else {
+        return usage();
+    };
+    let (mut transcript, _, _) = pane_transcript(&target)?;
     if let Some(end) = transcript.locate(id).map_err(|err| err.to_string())? {
         transcript
             .read_tail(Some(end), |entries| {
@@ -464,13 +513,15 @@ fn entry(args: &[String]) -> Exit {
 }
 
 fn history(args: &[String]) -> Exit {
-    let Some((pane_id, options)) = parse_args(args, &["before", "last"]) else {
+    let Some((target, rest, options)) = parse_target(args, &["before", "last"]) else {
         return usage();
     };
-    let (Some(before), Some(last)) = (options.get("before"), parse_last(&options)) else {
+    let (Some(before), Some(last), true) =
+        (options.get("before"), parse_last(&options), rest.is_empty())
+    else {
         return usage();
     };
-    let (mut transcript, _, _) = pane_transcript(pane_id)?;
+    let (mut transcript, _, _) = pane_transcript(&target)?;
     let (entries, more) = transcript
         .history(before, last)
         .map_err(|err| err.to_string())?
@@ -481,6 +532,103 @@ fn history(args: &[String]) -> Exit {
     }
     writeln!(out, "{}", json!({"t": "history", "more": more})).map_err(|err| err.to_string())?;
     Ok(0)
+}
+
+// MARK: vault
+
+fn vault(args: &[String]) -> Exit {
+    let Some((plain, options)) = parse_args(args, &["since", "offset", "from", "limit"]) else {
+        return usage();
+    };
+    let number = |name| {
+        options
+            .get(name)
+            .map(|value| value.parse::<u64>())
+            .transpose()
+    };
+    let (Ok(since), Ok(offset), Ok(limit)) = (number("since"), number("offset"), number("limit"))
+    else {
+        return usage();
+    };
+    let since = since.unwrap_or_default() as i64;
+    let lines = match (plain.as_slice(), offset, options.get("from")) {
+        (&["init", dir], None, None) => {
+            let vault = Vault::open(dir, true)?;
+            vec![vault::head_line(vault.head()?)]
+        }
+        (&["pull", dir], None, None) => return vault_follow(dir, since, false),
+        (&["follow", dir], None, None) => return vault_follow(dir, since, true),
+        (&["push", dir, file], None, None) => vault_push(dir, file)?,
+        (&["size", dir, session, file], None, None) => {
+            let vault = Vault::open(dir, false)?;
+            vec![json!({"size": vault.size(session, file)?})]
+        }
+        (&["append", dir, session, file, bytes], Some(offset), None) => {
+            let vault = Vault::open(dir, false)?;
+            let bytes = std::fs::read(bytes).map_err(|err| format!("{bytes}: {err}"))?;
+            vec![json!({"size": vault.append(session, file, offset, &bytes)?})]
+        }
+        (&["copy", dir, session], None, Some(from)) => {
+            let vault = Vault::open(dir, false)?;
+            vec![json!({"size": vault.copy(session, Path::new(from))?})]
+        }
+        (&["search", dir, query], None, None) => {
+            let vault = Vault::open(dir, false)?;
+            vault.search(query, limit.map(|limit| limit as usize))?
+        }
+        _ => return usage(),
+    };
+    print_lines(&lines)
+}
+
+fn print_lines(lines: &[Value]) -> Exit {
+    let mut out = std::io::stdout().lock();
+    lines
+        .iter()
+        .try_for_each(|line| writeln!(out, "{line}"))
+        .and_then(|()| out.flush())
+        .map_err(|err| err.to_string())?;
+    Ok(0)
+}
+
+fn vault_follow(dir: &str, mut since: i64, follow: bool) -> Exit {
+    let vault = Vault::open(dir, false)?;
+    let mut version = None;
+    loop {
+        let now = Some(vault.data_version()?);
+        if version != now {
+            let (records, head) = vault.pull(since)?;
+            if version.is_none() || !records.is_empty() {
+                let mut lines: Vec<Value> = records.iter().map(vault::Record::line).collect();
+                lines.push(vault::head_line(head));
+                print_lines(&lines)?;
+            }
+            (version, since) = (now, head);
+        }
+        if !follow {
+            return Ok(0);
+        }
+        std::thread::sleep(VAULT_POLL);
+        if stdout_closed() {
+            return Ok(0);
+        }
+    }
+}
+
+fn vault_push(dir: &str, file: &str) -> Result<Vec<Value>, String> {
+    let text = std::fs::read_to_string(file).map_err(|err| format!("{file}: {err}"))?;
+    let changes = text
+        .lines()
+        .filter(|line| !line.trim().is_empty())
+        .map(serde_json::from_str)
+        .collect::<Result<Vec<vault::Change>, _>>()
+        .map_err(|err| format!("{file}: {err}"))?;
+    let mut vault = Vault::open(dir, false)?;
+    let (records, head) = vault.push(changes)?;
+    std::fs::remove_file(file).map_err(|err| format!("{file}: {err}"))?;
+    let mut lines: Vec<Value> = records.iter().map(vault::Record::line).collect();
+    lines.push(vault::head_line(head));
+    Ok(lines)
 }
 
 // MARK: answer and permit
@@ -509,7 +657,7 @@ fn answer(args: &[String]) -> Exit {
     }
     let answers: Vec<Answer> =
         serde_json::from_str(answers).map_err(|err| format!("invalid answers: {err}"))?;
-    let (transcript, agent, pane) = pane_transcript(pane_id)?;
+    let (transcript, agent, pane) = pane_transcript(&Target::Pane(pane_id))?;
     let pending = &pane["permission"];
     if agent != "claude" || pending["tool"] != "AskUserQuestion" {
         return Err(format!("no question is open in pane {pane_id}"));
@@ -584,7 +732,7 @@ fn permit(args: &[String]) -> Exit {
     let [pane_id, decision] = args else {
         return usage();
     };
-    let (_, agent) = agent_pane(pane_id)?;
+    let (_, agent) = agent_pane(&Target::Pane(pane_id))?;
     let (key, open): (&str, fn(&str) -> bool) = match (agent.as_str(), decision.as_str()) {
         ("claude", "allow") => ("1", claude_permission_open),
         ("claude", "deny") => ("esc", claude_permission_open),

@@ -56,10 +56,11 @@ impl Parser {
     }
 
     pub(super) fn find(&self, id: &str) -> Option<&Entry> {
-        self.nodes
-            .values()
-            .flat_map(|node| &node.entries)
-            .find(|entry| entry.id == id)
+        self.all().find(|entry| entry.id == id)
+    }
+
+    pub(super) fn all(&self) -> impl Iterator<Item = &Entry> {
+        self.nodes.values().flat_map(|node| &node.entries)
     }
 
     fn message(&mut self, message: &Value, at: &Value, ids: &mut Ids) -> Vec<Entry> {
