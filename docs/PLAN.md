@@ -328,6 +328,10 @@ protocol below is the contract between them.
 
 ### herdr fork
 
+`follow`, `history`, `entry`, `answer` and `permit` have since moved into Sesh's own
+`sesh-transcript` with the same protocol (Phase 9); the fork keeps its copies for now and
+only adds Transcript paths and permission hooks.
+
 **Transcript paths.** `session_ref_from_report` keeps `agent_session_path` for every
 Agent, not only pi and omp. The Codex hook sends `transcript_path` as
 `agent_session_path`. `agent list` reports both id and path. Resume keeps working.
@@ -431,6 +435,34 @@ Acceptance: on localhost with the fork installed, start one Agent session of eac
 from Projects, exchange a message with each, see an edit card's diff, answer a Claude
 question and a permission prompt from the phone, and reconnect mid-reply without a gap
 or repeat.
+
+## Phase 9: transcript helper
+
+Settled with the owner on 6 October 2026; see ADR 0006. Projects now works on any Host with
+stock herdr.
+
+**Helper.** `core/sesh-transcript` holds the Transcript parsers moved from the fork, and a
+binary that speaks protocol 2 exactly as Phase 8 describes: `follow <pane> [--since C]
+[--last N]`, `follow --protocol`, `history`, `entry`, `answer`, `permit`, plus `--version`,
+which prints the crate version and a hash of its sources. It reads each pane with
+`herdr pane get` every 250 ms, finds the Transcript from the reported path (the fork's
+`path`, or stock herdr's `kind: path` for pi), else by session id under
+`$CLAUDE_CONFIG_DIR`/`~/.claude/projects` or `$CODEX_HOME`/`~/.codex/sessions`, and presses
+keys with `herdr pane send-keys`/`send-text`, reading the screen with `herdr pane read`.
+Permission cards appear only on the fork, whose hooks put `permission` on the pane. Its only
+dependencies are serde and serde_json.
+
+**Builds.** `just helpers` builds static musl binaries for Linux x86-64 and arm64 (linked
+by `rust-lld`, no C toolchain) and macOS arm64 and x86-64 into `build/helpers`, named
+`sesh-transcript-<uname -sm, lower-cased, space as dash>`, with the version in
+`build/helpers/version`. The app bundles the folder as `helpers/`. Each is about half a MB.
+
+**Install.** On connect Projects runs `uname -sm` and `~/.sesh/bin/sesh-transcript
+--version`; if the version differs from the bundled one, it puts the matching binary there
+over SFTP (`sesh_session_put`: written beside it with mode 0755 and renamed over, so a
+running copy is never overwritten). Every former `herdr agent follow|history|entry|answer|permit`
+call runs the helper instead. Projects refuses only when herdr is missing or the platform
+has no bundled helper (anything but Linux x86-64/arm64 and macOS).
 
 ## Follow-ups after phase 5
 
