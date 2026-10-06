@@ -67,6 +67,8 @@ struct ConversationView: View {
             .onScrollPhaseChange { _, phase in scrolling = phase }
             .onChange(of: conversation.items.count + conversation.permissions.count + (working ? 1 : 0)) {
                 if atBottom { reader.scrollTo(Self.end, anchor: .bottom) }
+                // A Conversation shorter than the screen never scrolls to the top to ask.
+                if nearTop { Task { await loadEarlier() } }
             }
         }
         .scrollDismissesKeyboard(.interactively)

@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # Builds sesh-transcript for every Host platform into build/helpers, each named after what
 # `uname -sm` prints there, plus the version they all report, for the app to bundle.
+# Gzipped, because App Store validation rejects macOS executables inside an iOS app.
 set -euo pipefail
 
 export PATH="$HOME/.cargo/bin:$PATH"
@@ -17,7 +18,7 @@ for pair in x86_64-unknown-linux-musl:linux-x86_64 aarch64-unknown-linux-musl:li
     target=${pair%%:*}
     rustup target add "$target" >/dev/null 2>&1
     cargo build --quiet --profile helper --target "$target" -p sesh-transcript
-    cp "target/$target/helper/sesh-transcript" "$out/sesh-transcript-${pair##*:}"
+    gzip -9 -c "target/$target/helper/sesh-transcript" > "$out/sesh-transcript-${pair##*:}.gz"
 done
-"$out/sesh-transcript-darwin-$(uname -m)" --version > "$out/version"
+"target/$(uname -m | sed s/arm64/aarch64/)-apple-darwin/helper/sesh-transcript" --version > "$out/version"
 ls -l "$out"

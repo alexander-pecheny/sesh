@@ -277,13 +277,14 @@ final class Projects: ObservableObject, Identifiable {
     /// Copies the helper built for this Host's platform unless the same version is there.
     private func install(platform: String, found: String) async -> String? {
         let name = "sesh-transcript-" + platform.lowercased().replacingOccurrences(of: " ", with: "-")
-        guard let bundled = Bundle.main.url(forResource: name, withExtension: nil, subdirectory: "helpers") else {
+        guard let bundled = Bundle.main.url(forResource: name, withExtension: "gz", subdirectory: "helpers") else {
             unsupported = platform
             return nil
         }
         guard found != Self.helperVersion else { return nil }
         let remote = String(Self.helper.dropFirst(2))
-        let ran = await call { sesh_session_put($0, bundled.path, remote) }
+        var ran = await call { sesh_session_put($0, bundled.path, remote + ".gz") }
+        if ran.ok { ran = await run("gunzip -f \(Self.helper).gz && chmod 755 \(Self.helper)") }
         return ran.ok ? nil : "Sesh could not copy its helper to the Host: \(ran.problem)"
     }
 
