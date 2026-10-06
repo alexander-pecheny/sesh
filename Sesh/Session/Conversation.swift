@@ -89,6 +89,8 @@ final class Conversation: ObservableObject {
     /// Whether entries older than the first one shown can still be fetched.
     @Published private(set) var earlier = false
     @Published var problem: String?
+    /// An image from a message, open on the whole screen.
+    @Published var viewing: UIImage?
 
     let pane: String
     private(set) weak var projects: Projects?

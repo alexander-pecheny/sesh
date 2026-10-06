@@ -163,6 +163,11 @@ struct ConversationView: View {
             }
             .ignoresSafeArea()
         }
+        .fullScreenCover(isPresented: Binding(
+            get: { conversation.viewing != nil }, set: { if !$0 { conversation.viewing = nil } }
+        )) {
+            if let image = conversation.viewing { ImageViewer(image: image) }
+        }
         .fullScreenCover(isPresented: $composing) {
             Composer(text: $draft, canSend: canSend) { Task { await send() } }
         }
@@ -341,7 +346,6 @@ private struct RemoteImage: View {
     let path: String
     let conversation: Conversation
     @State private var image: UIImage?
-    @State private var viewing = false
 
     private var flavour: Catppuccin.Flavour { colorScheme == .dark ? .mocha : .latte }
 
@@ -357,8 +361,7 @@ private struct RemoteImage: View {
         .background(flavour(.surface0))
         .clipShape(.rect(cornerRadius: 14))
         .task { image = await conversation.image(path) }
-        .onTapGesture { viewing = image != nil }
-        .fullScreenCover(isPresented: $viewing) { if let image { ImageViewer(image: image) } }
+        .onTapGesture { conversation.viewing = image }
         .accessibilityLabel((path as NSString).lastPathComponent)
         .accessibilityAddTraits(.isButton)
     }
