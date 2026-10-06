@@ -12,6 +12,8 @@ struct ProjectsView: View {
             switch projects.stage {
             case .ready where projects.needsHerdr:
                 NeedsHerdr()
+            case .ready where projects.unsupported != nil:
+                Notice(text: "Projects cannot run on \(projects.unsupported ?? "") yet. Sesh carries its helper for Linux on x86-64 and arm64, and for macOS.") {}
             case .ready:
                 NavigationStack(path: $projects.route) {
                     FolderView(projects: projects, path: projects.home)
@@ -129,24 +131,18 @@ struct NeedsHerdr: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 16) {
-            Text("This Host needs Sesh's herdr")
+            Text("This Host needs herdr")
                 .font(.ui(17))
                 .foregroundStyle(flavour(.text))
-            Text("Projects shows Claude, Codex and pi as chat through a build of herdr made for Sesh. Whoever looks after the Host can install it, with Rust and Zig on the PATH, by running:")
+            Text("Projects runs Claude, Codex and pi in herdr and shows them as chat. Whoever looks after the Host can install it by running:")
                 .font(.ui(14))
                 .foregroundStyle(flavour(.subtext0))
             Install(commands: """
-                git clone https://code.pecheny.me/pecheny/herdr.git
-                cd herdr && just build
-                install -m755 target/release/herdr ~/.local/bin/herdr
-                herdr server live-handoff
+                curl -fsSL https://herdr.dev/install.sh | sh
                 herdr integration install claude
                 herdr integration install codex
                 herdr integration install pi
                 """)
-            Text("Codex then shows its permission prompts here only once its new hook is trusted: open Codex, type /hooks and press t.")
-                .font(.ui(14))
-                .foregroundStyle(flavour(.subtext0))
         }
         .padding(24)
     }

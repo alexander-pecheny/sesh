@@ -120,7 +120,8 @@ final class Projects: ObservableObject, Identifiable {
     @Published var savePassword = false
     @Published private(set) var home = ""
     @Published private(set) var missing: [String] = []
-    @Published private(set) var herdrProtocol: Int?
+    /// What `uname -sm` printed on a Host Sesh carries no transcript helper for.
+    @Published private(set) var unsupported: String?
     @Published private(set) var sessions: [AgentSession] = []
     @Published private(set) var workspaces: [Workspace] = []
     @Published var route: [Place] = []
@@ -161,10 +162,13 @@ final class Projects: ObservableObject, Identifiable {
 
     var canBranch: Bool { !missing.contains("git") }
 
-    /// herdr's own build cannot follow a Transcript, so Projects needs the fork (ADR 0005).
-    var needsHerdr: Bool {
-        missing.contains("herdr") || !Conversation.protocols.contains(herdrProtocol ?? 0)
-    }
+    var needsHerdr: Bool { missing.contains("herdr") }
+
+    /// Where Sesh's transcript helper lives on every Host (ADR 0006).
+    static let helper = "~/.sesh/bin/sesh-transcript"
+    private static let helperVersion = Bundle.main.url(forResource: "version", withExtension: nil, subdirectory: "helpers")
+        .flatMap { try? String(contentsOf: $0, encoding: .utf8) }?
+        .trimmingCharacters(in: .whitespacesAndNewlines)
 
     /// Also called on the way to the background: iOS would freeze the socket, and a command
     /// sent on it after waking would wait minutes for TCP to admit it is dead.
@@ -217,15 +221,15 @@ final class Projects: ObservableObject, Identifiable {
 
     // MARK: Commands on the Host
 
-    func run(_ command: String) async -> Ran { await call(command, line: nil) }
+    func run(_ command: String) async -> Ran { await call { sesh_session_run($0, command) } }
 
     /// Runs `command` until it exits or the calling task is cancelled, handing each line of
     /// its stdout to `line` as it arrives.
     func stream(_ command: String, line: @escaping (String) -> Void) async -> Ran {
-        await call(command, line: line)
+        await call(line: line) { sesh_session_stream($0, command) }
     }
 
-    private func call(_ command: String, line: ((String) -> Void)?) async -> Ran {
+    private func call(line: ((String) -> Void)? = nil, start: (OpaquePointer) -> UInt32) async -> Ran {
         guard !paused else { return Ran(status: -1, out: "", err: "not connected") }
         if !linked {
             if handle == nil { connect() }
@@ -234,7 +238,7 @@ final class Projects: ObservableObject, Identifiable {
             }
         }
         guard let handle, !Task.isCancelled else { return Ran(status: -1, out: "", err: "not connected") }
-        let id = line == nil ? sesh_session_run(handle, command) : sesh_session_stream(handle, command)
+        let id = start(handle)
         guard id != 0 else { return Ran(status: -1, out: "", err: "not connected") }
         if let line { streams[id] = (Data(), line) }
         return await withTaskCancellationHandler {
@@ -252,7 +256,8 @@ final class Projects: ObservableObject, Identifiable {
         let ran = await run("""
             for t in herdr claude codex pi git; do command -v "$t" >/dev/null 2>&1 || printf '%s ' "$t"; done
             echo; printf '%s\\n' "$HOME"
-            herdr agent follow --protocol 2>/dev/null || echo
+            uname -sm
+            \(Self.helper) --version 2>/dev/null || echo
             if command -v herdr >/dev/null 2>&1 && ! herdr workspace list >/dev/null 2>&1; then
                 nohup herdr server </dev/null >/dev/null 2>&1 &
                 for i in 1 2 3 4 5; do sleep 1; herdr workspace list >/dev/null 2>&1 && break; done
@@ -260,16 +265,30 @@ final class Projects: ObservableObject, Identifiable {
             """)
         guard stage == .checking else { return }
         let lines = ran.out.components(separatedBy: "\n")
-        guard ran.ok, lines.count > 2 else { return fail(ran.problem) }
+        guard ran.ok, lines.count > 3 else { return fail(ran.problem) }
         missing = lines[0].split(separator: " ").map(String.init)
         home = lines[1]
-        herdrProtocol = Int(lines[2].trimmingCharacters(in: .whitespaces))
+        if !needsHerdr, let problem = await install(platform: lines[2], found: lines[3]) { return fail(problem) }
+        guard stage == .checking else { return }
         stage = .ready
         await refresh()
     }
 
+    /// Copies the helper built for this Host's platform unless the same version is there.
+    private func install(platform: String, found: String) async -> String? {
+        let name = "sesh-transcript-" + platform.lowercased().replacingOccurrences(of: " ", with: "-")
+        guard let bundled = Bundle.main.url(forResource: name, withExtension: nil, subdirectory: "helpers") else {
+            unsupported = platform
+            return nil
+        }
+        guard found != Self.helperVersion else { return nil }
+        let remote = String(Self.helper.dropFirst(2))
+        let ran = await call { sesh_session_put($0, bundled.path, remote) }
+        return ran.ok ? nil : "Sesh could not copy its helper to the Host: \(ran.problem)"
+    }
+
     func refresh() async {
-        guard stage == .ready, !needsHerdr else { return }
+        guard stage == .ready, !needsHerdr, unsupported == nil else { return }
         let ran = await run("herdr agent list && herdr workspace list")
         let lines = ran.out.split(separator: "\n").map { Data($0.utf8) }
         guard ran.ok, lines.count == 2,

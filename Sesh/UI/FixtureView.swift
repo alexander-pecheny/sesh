@@ -3,7 +3,7 @@ import SwiftUI
 
 /// `xcrun simctl launch <udid> me.pecheny.sesh -fixture claude` draws a Conversation from
 /// Resources/Fixtures/claude.jsonl with no Host behind it; `-fixture refusal` draws the
-/// screen a Host without Sesh's herdr gets.
+/// screen a Host without herdr gets.
 struct FixtureView: View {
     let name: String
     @StateObject private var conversation: Conversation

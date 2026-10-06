@@ -1,11 +1,11 @@
 import SwiftUI
 
-/// One Agent session as chat, built from the lines `herdr agent follow` prints. herdr has
-/// already turned every Agent's Transcript into the same entries (ADR 0005).
+/// One Agent session as chat, built from the lines Sesh's transcript helper prints. The
+/// helper has already turned every Agent's Transcript into the same entries (ADR 0006).
 @MainActor
 final class Conversation: ObservableObject {
     static let protocols: Set<Int> = [1, 2]
-    /// The first protocol whose herdr can page back through a Transcript with `agent history`.
+    /// The first protocol that can page back through a Transcript with `history`.
     private static let paging = 2
     private static let page = 50
 
@@ -110,7 +110,7 @@ final class Conversation: ObservableObject {
     func follow() async {
         while !Task.isCancelled, let projects {
             let since = cursor.map { " --since \(quote($0))" } ?? ""
-            let ended = await projects.stream("herdr agent follow \(quote(pane))\(since)") { [weak self] in
+            let ended = await projects.stream("\(Projects.helper) follow \(quote(pane))\(since)") { [weak self] in
                 self?.apply($0)
             }
             guard !Task.isCancelled else { return }
@@ -127,7 +127,7 @@ final class Conversation: ObservableObject {
         case "hello":
             agent = line.agent.flatMap(Agent.init) ?? agent
             if let number = line.protocol, !Self.protocols.contains(number) {
-                problem = "herdr speaks protocol \(number), which this Sesh does not know. Update Sesh."
+                problem = "The Host's helper speaks protocol \(number), which this Sesh does not know. Update Sesh."
             }
             earlier = (line.protocol ?? 0) >= Self.paging
         case "entry":
@@ -167,7 +167,7 @@ final class Conversation: ObservableObject {
         else { return }
         loading = true
         defer { loading = false }
-        let ran = await projects.run("herdr agent history \(quote(pane)) --before \(quote(first.id)) --last \(Self.page)")
+        let ran = await projects.run("\(Projects.helper) history \(quote(pane)) --before \(quote(first.id)) --last \(Self.page)")
         guard ran.ok else { return earlier = false }
         var older: [Item] = []
         for text in ran.out.split(separator: "\n") {
@@ -208,17 +208,17 @@ final class Conversation: ObservableObject {
             return object
         }
         let data = (try? JSONSerialization.data(withJSONObject: json)) ?? Data("[]".utf8)
-        return await run("herdr agent answer \(quote(pane)) --json \(quote(String(decoding: data, as: UTF8.self)))")
+        return await run("\(Projects.helper) answer \(quote(pane)) --json \(quote(String(decoding: data, as: UTF8.self)))")
     }
 
     func permit(_ allow: Bool) async {
-        problem = await run("herdr agent permit \(quote(pane)) \(allow ? "allow" : "deny")")
+        problem = await run("\(Projects.helper) permit \(quote(pane)) \(allow ? "allow" : "deny")")
     }
 
-    /// herdr cuts long output down; the whole entry is fetched the first time it is opened.
+    /// The helper cuts long output down; the whole entry is fetched the first time it is opened.
     func expand(_ result: Entry) async {
         guard result.truncated == true, let projects, expanded.insert(result.id).inserted else { return }
-        let ran = await projects.run("herdr agent entry \(quote(pane)) \(quote(result.id))")
+        let ran = await projects.run("\(Projects.helper) entry \(quote(pane)) \(quote(result.id))")
         guard ran.ok, let entry = try? JSONDecoder().decode(Entry.self, from: Data(ran.out.utf8)) else {
             expanded.remove(result.id)
             return
