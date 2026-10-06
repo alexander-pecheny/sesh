@@ -468,6 +468,49 @@ file, checks it and puts it there over SFTP (`sesh_session_put`). Every former
 refuses only when herdr is missing or the platform has no published helper (anything but
 Linux x86-64/arm64 and macOS).
 
+## Phase 10: Tasks on the Mac
+
+Settled with the owner on 7 October 2026; see ADRs 0008 and 0009 and the Tasks section of
+CONTEXT.md. A Mac app that joins a notetaker to herdr: each Task has a plain title, a
+Journal, an optional Worktree and Tabs, and owns its Agent sessions for good. It is for the
+owner alone for now: unsandboxed, built and installed from Xcode. The phone comes later.
+
+**Build order.**
+
+1. A macOS target in this project sharing the Rust core, Hosts and Keys, the Conversation
+   model and view. Mac versions only of the shell and of the UIKit-only views (the text
+   input, the image viewer). The iOS target does not change.
+2. One Vault on vps-he: a SQLite database and Transcript copies beside it, written only by
+   the helper, which serves it over the SSH connection. Each device keeps a full copy
+   without Transcripts and queues its writes, offline included, from the first build.
+   Entries and Documents merge one by one; the later edit wins and the other becomes a
+   Conflict copy.
+3. The left pane: Vaults, folders and Tasks by title, reordered by dragging.
+4. New Task: a title, then an optional Worktree on a Vault Host or the Mac, with branch and
+   folder suggested from the title (`pecheny/fix-flaky-login-test`). Sesh installs the
+   herdr fork into `~/.sesh/bin` where it is missing, checked against a pinned SHA-256,
+   and uses the everyday herdr server; a private one only when a stock or older herdr holds
+   it. Each Task is one herdr Workspace named after its title; renaming a Task renames the
+   Workspace, never the branch or folder.
+5. Tabs: the Journal (Entries newest first, each editable and deletable), Documents from the
+   Vault or a Host, Terminals (a plain shell in the Worktree that ends with its Tab) and
+   Agent sessions with two faces, the Conversation and the Agent's own terminal, switched by
+   one shortcut. Every Tab but the Journal can move to another Task.
+6. Transcript copies into the Vault as sessions run; Unfiled per Vault Host plus one for the
+   Mac; adopting a session and moving it between Tasks. Adopting prefills the title from
+   the Agent's first message.
+7. Bookmarks: an Entry quoting one Conversation item, or a passage of it, with a
+   `sesh://` link naming the Vault, Agent session and item. Links work in any Entry or
+   Document and switch Task when needed. Paths in a Conversation are links: Markdown opens
+   as a Document in the same Task, other files read-only, an open file focuses its Tab.
+8. Search across every open Vault, run on each Vault Host with SQLite full-text search over
+   the database and the Transcript copies; offline, the device searches its copy without
+   Conversations and says so. A hit opens its exact place.
+
+**Later.** State marks on Tasks and a Waiting list, ⌘K to jump by name, a better view of
+Conflict copies, archiving with Worktree removal, several Vaults in the UI, the fork on a
+public mirror with release builds, distribution, and Tasks on the phone.
+
 ## Follow-ups after phase 5
 
 - Bump libghostty. As of 11 September 2026 the fork's main is 2,753 commits past our
