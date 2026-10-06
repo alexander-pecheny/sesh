@@ -1,6 +1,6 @@
 [workspace]
 resolver = "2"
-members = ["sesh-core"]
+members = ["sesh-core", "sesh-transcript"]
 
 [workspace.package]
 version = "0.1.0"
@@ -9,3 +9,10 @@ edition = "2021"
 [profile.release]
 lto = true
 codegen-units = 1
+
+# The helper Sesh copies to each Host: small beats fast.
+[profile.helper]
+inherits = "release"
+opt-level = "z"
+panic = "abort"
+strip = true

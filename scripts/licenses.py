@@ -6,7 +6,8 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
 CARGO = os.path.expanduser("~/.cargo/bin/cargo")
-TARGET = "aarch64-apple-ios"
+# The app links sesh-core; sesh-transcript ships to Hosts inside it.
+PACKAGES = [("sesh-core", "aarch64-apple-ios"), ("sesh-transcript", "x86_64-unknown-linux-musl")]
 # russh and its two helper crates declare Apache-2.0 and ship no licence file.
 FALLBACK = ROOT / "Resources/LICENSE-Apache-2.0.txt"
 
@@ -22,15 +23,16 @@ BUNDLED = [
 
 
 def linked_crates():
-    out = subprocess.run(
-        [CARGO, "tree", "-e", "normal", "--target", TARGET, "-p", "sesh-core",
-         "--prefix", "none", "--no-dedupe"],
-        cwd=ROOT / "core", capture_output=True, text=True, check=True).stdout
     crates = {}
-    for line in out.splitlines():
-        m = re.match(r"^([a-zA-Z0-9_.-]+) v([0-9][^ ]*)(?: \((.*)\))?$", line.strip())
-        if m:
-            crates[(m.group(1), m.group(2))] = m.group(3)
+    for package, target in PACKAGES:
+        out = subprocess.run(
+            [CARGO, "tree", "-e", "normal", "--target", target, "-p", package,
+             "--prefix", "none", "--no-dedupe"],
+            cwd=ROOT / "core", capture_output=True, text=True, check=True).stdout
+        for line in out.splitlines():
+            m = re.match(r"^([a-zA-Z0-9_.-]+) v([0-9][^ ]*)(?: \((.*)\))?$", line.strip())
+            if m:
+                crates[(m.group(1), m.group(2))] = m.group(3)
     return crates
 
 
@@ -68,7 +70,7 @@ def main():
     licenses = spdx()
     entries = []
     for (name, version), path in sorted(linked_crates().items()):
-        if name == "sesh-core":
+        if name in ("sesh-core", "sesh-transcript"):
             continue
         directory = path if path else registry_dir(name, version)
         text = read_texts(directory)
