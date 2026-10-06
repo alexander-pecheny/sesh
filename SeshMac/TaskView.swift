@@ -31,7 +31,8 @@ struct TaskView: View {
                 switch current {
                 case .journal: JournalView(vault: vault, task: id)
                 case .session(let session): SessionTab(vault: vault, id: session).id(session)
-                case .document, .terminal: Text("Not built yet").foregroundStyle(.secondary)
+                case .document(let document): DocumentTab(vault: vault, id: document).id(document)
+                case .terminal: Text("Not built yet").foregroundStyle(.secondary)
                 }
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -96,6 +97,12 @@ private struct AddMenu: View {
                     ForEach(Agent.allCases) { agent in
                         Button("New \(agent.title) session") { start(agent, on: machine) }
                     }
+                }
+            }
+            Section {
+                Button("New Document") {
+                    let document = vault.create(.document, .init(title: "Untitled", text: "", task: task.id, edited: 0))
+                    library.open(.document(document.id), in: task.id)
                 }
             }
             let sessions = vault.children(.session, task: task.id).sorted { ($0.body.position ?? 0) < ($1.body.position ?? 0) }

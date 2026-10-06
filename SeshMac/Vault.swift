@@ -93,7 +93,7 @@ final class Vault: ObservableObject, Identifiable {
 
     init(_ place: Place) {
         self.place = place
-        machine = place.alias.map { Machine(alias: $0) } ?? .mac
+        machine = .named(place.alias)
         load()
     }
 
@@ -201,27 +201,40 @@ final class Vault: ObservableObject, Identifiable {
         }
     }
 
-    /// Sends the queue as a file, since one Document can outgrow a command line.
+    /// Sends the queue as a file, since one Document can outgrow a command line, until it is empty.
     private func flush() async {
-        guard online, !flushing, !queue.isEmpty else { return }
+        guard online, !flushing else { return }
         flushing = true
         defer { flushing = false }
-        let sent = queue
-        let lines = sent.compactMap { try? JSONEncoder().encode($0) }.map { String(decoding: $0, as: UTF8.self) }
-        let name = "\(folder)/inbox/\(UUID().uuidString.lowercased()).jsonl"
-        let put = await machine.put(Data((lines.joined(separator: "\n") + "\n").utf8), to: name)
-        guard put.ok else { return problem = put.problem }
-        let ran = await machine.run("\(Helper.path) vault push \(folder) \(name)")
-        guard ran.ok else { return problem = ran.problem }
-        // Only what was sent leaves the queue; edits made meanwhile wait for the next flush.
-        for change in sent {
-            guard let index = queue.firstIndex(where: { $0.id == change.id }),
-                  queue[index].body == change.body, queue[index].deleted == change.deleted else { continue }
-            queue.remove(at: index)
+        while online, !queue.isEmpty {
+            let sent = queue
+            let lines = sent.compactMap { try? JSONEncoder().encode($0) }.map { String(decoding: $0, as: UTF8.self) }
+            let name = "\(folder)/inbox/\(UUID().uuidString.lowercased()).jsonl"
+            let put = await machine.put(Data((lines.joined(separator: "\n") + "\n").utf8), to: name)
+            guard put.ok else { return problem = put.problem }
+            let ran = await machine.run("\(Helper.path) vault push \(folder) \(name)")
+            guard ran.ok else { return problem = ran.problem }
+            // Only what was sent leaves the queue; edits made meanwhile wait for the next round.
+            for change in sent {
+                guard let index = queue.firstIndex(where: { $0.id == change.id }),
+                      queue[index].body == change.body, queue[index].deleted == change.deleted else { continue }
+                queue.remove(at: index)
+            }
+            for text in ran.out.split(separator: "\n") { acknowledge(String(text)) }
+            pending = queue.count
+            save()
         }
-        for text in ran.out.split(separator: "\n") { apply(String(text)) }
-        pending = queue.count
-        save()
-        if !queue.isEmpty { await flush() }
+    }
+
+    /// A record the Host wrote for us. An edit still queued for it now builds on its new seq,
+    /// or the Host would take it for a clash with our own earlier write.
+    private func acknowledge(_ text: String) {
+        guard let line = try? JSONDecoder().decode(Line.self, from: Data(text.utf8)), line.t == "record",
+              let id = line.id, let lineSeq = line.seq, let index = queue.firstIndex(where: { $0.id == id })
+        else { return apply(text) }
+        let change = queue[index]
+        queue[index] = Change(id: id, kind: change.kind, body: change.body, base: lineSeq, deleted: change.deleted)
+        records[id]?.seq = lineSeq
+        seq = max(seq, lineSeq)
     }
 }

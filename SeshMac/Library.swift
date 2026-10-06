@@ -4,10 +4,23 @@ import Foundation
 @MainActor
 final class Library: ObservableObject {
     @Published private(set) var vaults: [Vault] = []
-    @Published var selection: String?
+    @Published var selection: String? { didSet { keep() } }
     /// The open Tabs of each Task by its id; the Journal is never in here, as it never closes.
-    @Published var tabs: [String: [TabItem]] = [:]
-    @Published var current: [String: TabItem] = [:]
+    @Published var tabs: [String: [TabItem]] = [:] { didSet { keep() } }
+    @Published var current: [String: TabItem] = [:] { didSet { keep() } }
+
+    private struct Kept: Codable {
+        var selection: String?
+        var tabs: [String: [TabItem]]
+        var current: [String: TabItem]
+    }
+
+    /// What was open survives a restart; Terminals do not, as their shells ended with the app.
+    private func keep() {
+        let tabs = tabs.mapValues { $0.filter { if case .terminal = $0 { false } else { true } } }
+        let current = current.filter { if case .terminal = $0.value { false } else { true } }
+        UserDefaults.standard.set(try? JSONEncoder().encode(Kept(selection: selection, tabs: tabs, current: current)), forKey: "tabs")
+    }
 
     private static let key = "vaults"
     /// Kept while the app runs, so switching Tabs neither loses the place nor refetches.
@@ -18,6 +31,10 @@ final class Library: ObservableObject {
         let conversation = Conversation(
             pane: session.body.pane ?? "", agent: session.body.agent.flatMap(Agent.init),
             runner: TaskActions.machine(session.body.machine))
+        conversation.openPath = { [weak self] path in
+            guard let self, let vault = self.vault(of: session.id), let current = vault.records[session.id] else { return }
+            TaskActions.open(path, from: current, in: vault, library: self)
+        }
         conversations[session.id] = conversation
         return conversation
     }
@@ -27,6 +44,9 @@ final class Library: ObservableObject {
             .flatMap { try? JSONDecoder().decode([Vault.Place].self, from: $0) } ?? []
         vaults = places.map(Vault.init)
         vaults.forEach { $0.start() }
+        if let kept = UserDefaults.standard.data(forKey: "tabs").flatMap({ try? JSONDecoder().decode(Kept.self, from: $0) }) {
+            (selection, tabs, current) = (kept.selection, kept.tabs, kept.current)
+        }
     }
 
     func add(_ place: Vault.Place) {
@@ -52,7 +72,7 @@ final class Library: ObservableObject {
 }
 
 /// One Tab of a Task. Sessions and Documents are records; a Terminal lives only while open.
-enum TabItem: Hashable, Identifiable {
+enum TabItem: Hashable, Identifiable, Codable {
     case journal
     case session(String)
     case document(String)

@@ -11,12 +11,22 @@ final class Machine: Runner, Identifiable, Hashable {
     nonisolated static func == (a: Machine, b: Machine) -> Bool { a.alias == b.alias }
     nonisolated func hash(into hasher: inout Hasher) { hasher.combine(alias) }
 
-    init(alias: String?) { self.alias = alias }
+    private init(alias: String?) { self.alias = alias }
 
     nonisolated var id: String { alias ?? "" }
     var title: String { alias ?? "This Mac" }
 
     static let mac = Machine(alias: nil)
+    private static var known: [String: Machine] = [:]
+
+    /// One object per Host for the app's life: Conversations hold their machine weakly.
+    static func named(_ alias: String?) -> Machine {
+        guard let alias else { return mac }
+        if let machine = known[alias] { return machine }
+        let machine = Machine(alias: alias)
+        known[alias] = machine
+        return machine
+    }
     /// An interactive shell may greet first; everything before this line is its greeting.
     nonisolated static let mark = "--sesh-output--"
 
@@ -46,9 +56,14 @@ final class Machine: Runner, Identifiable, Hashable {
         await stream(command, line: Optional(line))
     }
 
+    /// `path` quoted for the shell, with a leading `~/` still meaning the home folder.
+    nonisolated static func shellPath(_ path: String) -> String {
+        path.hasPrefix("~/") ? "\"$HOME\"/" + quote(String(path.dropFirst(2))) : quote(path)
+    }
+
     /// Writes `data` to `path` on the machine, relative to its home folder unless absolute.
     func put(_ data: Data, to path: String) async -> Ran {
-        let target = path.hasPrefix("~/") ? "\"$HOME\"/" + quote(String(path.dropFirst(2))) : quote(path)
+        let target = Self.shellPath(path)
         return await stream("mkdir -p \"$(dirname \(target))\" && cat > \(target)", line: nil, input: data)
     }
 
@@ -147,11 +162,28 @@ extension Machine {
         let ran = await run("uname -sm; \(Helper.path) --version 2>/dev/null || echo")
         let lines = ran.out.components(separatedBy: "\n")
         guard ran.ok, lines.count > 1 else { return ran.problem }
+        if let local = Self.localHelpers { return await install(from: local, platform: lines[0], found: lines[1]) }
         guard let published = Helper.published, lines[1] != published.version else { return nil }
         guard let download = Helper.download(Helper.name(lines[0])) else {
             return "Sesh has no helper for \(lines[0]) on \(title)."
         }
         let installed = await run(download)
         return installed.ok ? nil : "Sesh could not install its helper on \(title): \(installed.problem)"
+    }
+
+    /// `-helpers DIR` points at `build/helpers`, so a helper not yet released can be tried.
+    private static let localHelpers = UserDefaults.standard.string(forKey: "helpers").map { URL(filePath: $0) }
+
+    private func install(from folder: URL, platform: String, found: String) async -> String? {
+        let version = (try? String(contentsOf: folder.appending(path: "version"), encoding: .utf8))?
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        guard found != version else { return nil }
+        guard let data = try? Data(contentsOf: folder.appending(path: "sesh-transcript-\(Helper.name(platform)).gz")) else {
+            return "There is no local helper for \(platform)."
+        }
+        let put = await put(data, to: "~/.sesh/bin/sesh-transcript.gz")
+        guard put.ok else { return put.problem }
+        let unpacked = await run(Helper.unpack)
+        return unpacked.ok ? nil : unpacked.problem
     }
 }

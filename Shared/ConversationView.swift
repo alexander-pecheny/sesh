@@ -101,6 +101,11 @@ struct ConversationView: View {
             }
         }
         .task { await conversation.follow() }
+        .environment(\.openURL, OpenURLAction { url in
+            guard let path = PathLinks.path(from: url), let open = conversation.openPath else { return .systemAction }
+            open(path)
+            return .handled
+        })
         .onAppear { if fresh { DispatchQueue.main.async { field.focus() } } }
         .alert("Open it in the Claude app", isPresented: $lost) {
             Button("OK") {}
@@ -250,7 +255,7 @@ private struct RowView: View {
         case .item(.entry(let entry)):
             switch entry.kind {
             case "user": UserBubble(entry: entry, conversation: conversation)
-            case "text": Markdown(text: entry.text ?? entry.summary)
+            case "text": Markdown(text: conversation.openPath == nil ? entry.text ?? entry.summary : PathLinks.link(entry.text ?? entry.summary))
             case "thinking": Thinking(entry: entry)
             case "tool": ToolCard(entry: entry, result: conversation.results[entry.id], conversation: conversation)
             case "question": QuestionCard(entry: entry, result: conversation.results[entry.id], conversation: conversation)
@@ -575,6 +580,8 @@ private struct Card<Header: View, Detail: View>: View {
     let icon: String
     var tint = Catppuccin.Swatch.overlay1
     var opens = true
+    /// A button beside the header, outside the one that opens the card.
+    var side: (label: String, icon: String, run: () -> Void)?
     @ViewBuilder let header: () -> Header
     @ViewBuilder let detail: () -> Detail
     var opened: () -> Void = {}
@@ -584,21 +591,30 @@ private struct Card<Header: View, Detail: View>: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: Metric.pad) {
-            Button {
-                guard opens else { return }
-                open.toggle()
-                if open { opened() }
-            } label: {
-                HStack(alignment: .top, spacing: Metric.pad) {
-                    Image.lucide(icon, size: Metric.body).foregroundStyle(flavour(tint)).padding(.top, 1)
-                    header().frame(maxWidth: .infinity, alignment: .leading)
-                    if opens {
-                        Image.lucide(open ? "chevron-down" : "chevron-right", size: Metric.note).foregroundStyle(flavour(.overlay1))
+            HStack(alignment: .top, spacing: Metric.pad) {
+                Button {
+                    guard opens else { return }
+                    open.toggle()
+                    if open { opened() }
+                } label: {
+                    HStack(alignment: .top, spacing: Metric.pad) {
+                        Image.lucide(icon, size: Metric.body).foregroundStyle(flavour(tint)).padding(.top, 1)
+                        header().frame(maxWidth: .infinity, alignment: .leading)
+                        if opens {
+                            Image.lucide(open ? "chevron-down" : "chevron-right", size: Metric.note).foregroundStyle(flavour(.overlay1))
+                        }
                     }
+                    .contentShape(.rect)
                 }
-                .contentShape(.rect)
+                .buttonStyle(.plain)
+                if let side {
+                    Button(action: side.run) {
+                        Image.lucide(side.icon, size: Metric.label).foregroundStyle(flavour(.overlay1))
+                    }
+                    .buttonStyle(.plain)
+                    .accessibilityLabel(side.label)
+                }
             }
-            .buttonStyle(.plain)
             if open { detail().frame(maxWidth: .infinity, alignment: .leading) }
         }
         .padding(Metric.pad)
@@ -619,7 +635,7 @@ private struct ToolCard: View {
         switch entry.tool {
         case "edit", "write":
             Card(icon: entry.tool == "edit" ? "file-pen" : "file-plus", tint: failed ? .red : .blue,
-                 opens: result?.diff != nil || result?.text != nil) {
+                 opens: result?.diff != nil || result?.text != nil, side: openSide) {
                 HStack(spacing: Metric.gap) {
                     Text(entry.file.map { ($0 as NSString).lastPathComponent } ?? entry.summary)
                         .font(.ui(Metric.label).weight(.medium)).foregroundStyle(flavour(.text)).lineLimit(1)
@@ -655,6 +671,11 @@ private struct ToolCard: View {
                 Text(entry.summary).font(.ui(Metric.label)).foregroundStyle(flavour(.text))
             } detail: { output } opened: { expand() }
         }
+    }
+
+    private var openSide: (label: String, icon: String, run: () -> Void)? {
+        guard let open = conversation.openPath, let file = entry.file else { return nil }
+        return ("Open \((file as NSString).lastPathComponent)", "external-link", { open(file) })
     }
 
     private var output: some View {

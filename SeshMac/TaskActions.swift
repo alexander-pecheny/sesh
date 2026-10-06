@@ -4,7 +4,7 @@ import Foundation
 /// Agent sessions in it (ADR 0009).
 @MainActor
 enum TaskActions {
-    static func machine(_ alias: String?) -> Machine { alias.map { Machine(alias: $0) } ?? .mac }
+    static func machine(_ alias: String?) -> Machine { .named(alias) }
 
     /// The machines a Task can start Tabs on: its Worktree's alone, or the Vault's and the Mac.
     static func machines(for task: Record, in vault: Vault) -> [Machine] {
@@ -33,7 +33,7 @@ enum TaskActions {
     }
 
     /// The Task's Workspace on `machine`, made if herdr has none, and a fresh pane in it.
-    private static func pane(for task: Record, on machine: Machine, label: String) async -> Result<Herdr.Opened, Herdr.Failure> {
+    private static func pane(for task: Record, on machine: Machine, label: String) async -> Result<(Herdr.Opened, String), Herdr.Failure> {
         let title = task.body.title ?? "Task"
         let open = await Herdr.workspaces(on: machine)
         let known = task.body.workspace.flatMap { open[$0] != nil && machine.alias == task.body.machine ? $0 : nil }
@@ -44,18 +44,18 @@ enum TaskActions {
         } else {
             folder = (await machine.run("printf %s \"$HOME\"")).out
         }
-        guard let workspace else { return await Herdr.workspace(folder, label: title, on: machine) }
-        return await Herdr.tab(in: workspace, folder: folder, label: label, on: machine)
+        guard let workspace else { return await Herdr.workspace(folder, label: title, on: machine).map { ($0, folder) } }
+        return await Herdr.tab(in: workspace, folder: folder, label: label, on: machine).map { ($0, folder) }
     }
 
     /// Starts `agent` for the Task and adopts the new Agent session from birth.
     static func startSession(_ agent: Agent, for task: Record, on machine: Machine, in vault: Vault) async -> Result<Record, Herdr.Failure> {
         if let problem = await machine.prepare() { return .failure(Herdr.Failure(problem)) }
         let name = Names.slug("\(task.body.title ?? "task")-\(agent.rawValue)")
-        let opened: Herdr.Opened
+        let opened: Herdr.Opened, folder: String
         switch await pane(for: task, on: machine, label: agent.title) {
         case .failure(let failure): return .failure(failure)
-        case .success(let value): opened = value
+        case .success(let value): (opened, folder) = value
         }
         if let problem = await Herdr.launch(agent, name: name, pane: opened.pane, on: machine) {
             return .failure(Herdr.Failure(problem))
@@ -63,7 +63,19 @@ enum TaskActions {
         let count = vault.children(.session, task: task.id).filter { $0.body.agent == agent.rawValue }.count
         let session = vault.create(.session, .init(
             title: count == 0 ? agent.title : "\(agent.title) \(count + 1)", task: task.id,
-            position: Double(Date().timeIntervalSince1970), machine: machine.alias, pane: opened.pane, agent: agent.rawValue))
+            position: Double(Date().timeIntervalSince1970), machine: machine.alias, path: folder, pane: opened.pane, agent: agent.rawValue))
         return .success(session)
+    }
+
+    /// Opens a file in the Task as a Document, reusing the Tab if it is open already.
+    static func open(_ path: String, from session: Record, in vault: Vault, library: Library) {
+        guard let task = session.body.task else { return }
+        let absolute = path.hasPrefix("/") || path.hasPrefix("~/") ? path
+            : ((session.body.path ?? "~") as NSString).appendingPathComponent(path)
+        let known = vault.children(.document, task: task)
+            .first { $0.body.path == absolute && $0.body.machine == session.body.machine }
+        let document = known ?? vault.create(.document, .init(
+            title: (absolute as NSString).lastPathComponent, task: task, machine: session.body.machine, path: absolute))
+        library.open(.document(document.id), in: task)
     }
 }

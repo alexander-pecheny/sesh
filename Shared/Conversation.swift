@@ -100,6 +100,9 @@ final class Conversation: ObservableObject {
     }
 
     let source: Source
+    /// Opens a file the Agent named, relative paths taken from the Agent's folder; nil where
+    /// there is nowhere to open it.
+    var openPath: ((String) -> Void)?
     private(set) weak var runner: Runner?
     private var cursor: String?
     private var loading = false

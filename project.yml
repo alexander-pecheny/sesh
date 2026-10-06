@@ -20,6 +20,9 @@ packages:
   MarkdownUI:
     url: https://github.com/gonzalezreal/swift-markdown-ui
     exactVersion: 2.4.1
+  cmark:
+    url: https://github.com/swiftlang/swift-cmark
+    exactVersion: 0.9.0
 
 targets:
   Sesh:
@@ -46,6 +49,10 @@ targets:
       - framework: Frameworks/SeshCore.xcframework
         embed: false
       - package: MarkdownUI
+      - package: cmark
+        product: cmark-gfm
+      - package: cmark
+        product: cmark-gfm-extensions
     settings:
       base:
         ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
@@ -68,6 +75,10 @@ targets:
       - path: Resources/helpers.json
     dependencies:
       - package: MarkdownUI
+      - package: cmark
+        product: cmark-gfm
+      - package: cmark
+        product: cmark-gfm-extensions
     settings:
       base:
         PRODUCT_NAME: Sesh
