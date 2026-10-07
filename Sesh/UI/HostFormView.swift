@@ -34,7 +34,6 @@ struct HostFormView: View {
                 Section {
                     LabeledField("Extra flags ssh", "-o ServerAliveInterval=30", text: $host.sshFlags)
                     LabeledField("Extra flags mosh", "--predict=adaptive", text: $host.moshFlags)
-                    LabeledField("Remote command", "tmux attach", text: $host.remoteCommand)
                 } footer: {
                     if let error { Text(error).foregroundStyle(.red) }
                 }

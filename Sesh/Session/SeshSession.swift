@@ -44,8 +44,8 @@ final class SeshSession: ObservableObject, Identifiable {
 
     let id = UUID()
     let host: Host
-    /// What runs on the Host instead of the Host's own remote command, as a Terminal Tab's attach.
-    let command: String?
+    /// What runs on the Host: a Terminal Tab's attach to its herdr pane.
+    let command: String
     let input = InputState()
     let terminal: Ghostty.TerminalView
 
@@ -54,7 +54,7 @@ final class SeshSession: ObservableObject, Identifiable {
     private var bridge = Bridge()
     private var finished: (([String], String?) -> Void)?
 
-    init(host: Host, store: Store, app: ghostty_app_t, command: String? = nil) {
+    init(host: Host, store: Store, app: ghostty_app_t, command: String) {
         self.host = host
         self.command = command
         self.store = store
@@ -126,7 +126,7 @@ final class SeshSession: ObservableObject, Identifiable {
         let pem = strings.make(key.flatMap { Keychain.read("key.\($0.id)") })
         let passphrase = strings.make(key.flatMap { Keychain.read("passphrase.\($0.id)") })
         let knownHosts = strings.make(store.knownHostsPath)
-        let command = strings.make(command ?? host.remoteCommand)
+        let command = strings.make(command)
         let userdata = Unmanaged.passRetained(bridge).toOpaque()
 
         switch host.transport {

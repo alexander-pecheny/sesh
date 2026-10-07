@@ -16,9 +16,10 @@ user attaches from a terminal; each Task is one herdr Workspace named after the 
 nothing runs, Sesh starts that default server itself. If a stock or older herdr holds it,
 Sesh uses a private server of its own rather than replace the user's.
 
-The phone's Projects mode is unchanged and still works with stock herdr (ADR 0006).
-Sessions started in another multiplexer are found for Unfiled by the helper; tmux and
-zellij wait for ADR 0007.
+The phone follows the same model as the Mac. Its main screen is the Tasks list, its
+Projects and Terminal modes are retired, and every shell it opens is a Terminal Tab in a
+Task, attached to a herdr pane, so nothing runs outside a Task. Sessions started in
+another multiplexer are found for Unfiled by the helper; tmux and zellij wait for ADR 0007.
 
 ## Considered options
 

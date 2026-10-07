@@ -17,7 +17,6 @@ struct Host: Codable, Identifiable, Equatable {
     var agentForwarding = false
     var sshFlags = ""
     var moshFlags = ""
-    var remoteCommand = ""
 
     var title: String { name.isEmpty ? "\(user)@\(address)" : name }
     var subtitle: String { "\(user)@\(address):\(port)" }
