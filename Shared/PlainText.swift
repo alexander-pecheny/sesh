@@ -78,6 +78,13 @@ final class PlainField: NSTextView, ObservableObject {
     /// Takes a pasted image and returns where it now lives, for its path to go in the text.
     var pasteImage: ((Data, String) async -> String?)?
 
+    /// Plain text has nothing to paste when the clipboard holds only an image, so AppKit
+    /// would disable Paste before `paste` could upload it.
+    override func validateUserInterfaceItem(_ item: NSValidatedUserInterfaceItem) -> Bool {
+        if item.action == #selector(paste(_:)), pasteImage != nil, PastedImage.available(.general) { return true }
+        return super.validateUserInterfaceItem(item)
+    }
+
     override func paste(_ sender: Any?) {
         guard let pasteImage, let (data, ext) = PastedImage.read(.general) else { return super.paste(sender) }
         Task { @MainActor in
@@ -207,6 +214,10 @@ struct PlainText: NSViewRepresentable {
 #if os(macOS)
 /// An image on the pasteboard, as PNG, or a copied image file as it is.
 enum PastedImage {
+    static func available(_ board: NSPasteboard) -> Bool {
+        board.availableType(from: [.png, .tiff, .fileURL]) != nil
+    }
+
     static func read(_ board: NSPasteboard) -> (Data, String)? {
         if let urls = board.readObjects(forClasses: [NSURL.self], options: [.urlReadingFileURLsOnly: true]) as? [URL],
            let url = urls.first, ["png", "jpg", "jpeg", "gif", "heic", "webp"].contains(url.pathExtension.lowercased()),

@@ -55,7 +55,7 @@ struct ConversationView: View {
                         .background(
                             conversation.focus.map(row.contains) == true ? flavour(.yellow).opacity(0.15) : .clear,
                             in: .rect(cornerRadius: Metric.corner))
-                        .bookmarkable(row.entry, keep: conversation.bookmark, column: row.prose ? Metric.proseColumn : nil)
+                        .bookmarkable(row.entry, keep: conversation.bookmark, copy: conversation.copyLink, column: row.prose ? Metric.proseColumn : nil)
                 }
                 ForEach(conversation.permissions) { PermissionCard(permission: $0, conversation: conversation) }
                 ForEach(conversation.queued) { QueuedBubble(message: $0, conversation: conversation, edit: takeBack) }
@@ -319,16 +319,17 @@ private struct AgentText: View {
     }
 }
 
-/// A Bookmark from a row's context menu and, where there is a pointer, an icon on hover:
-/// text that can be selected keeps its own context menu.
+/// A Bookmark, or a copied link, from a row's context menu and, where there is a pointer,
+/// icons on hover: text that can be selected keeps its own context menu.
 private struct Bookmarkable: ViewModifier {
     @Environment(\.colorScheme) private var colorScheme
     let entry: Conversation.Entry?
     let keep: ((Conversation.Entry) -> Void)?
+    let copy: ((Conversation.Entry) -> Void)?
     /// How wide a reply's text column is, so the icon sits at its corner, not the window's.
     let column: CGFloat?
     @State private var hovered = false
-    private static let gutter: CGFloat = 26
+    private static let gutter: CGFloat = 48
     #if DEBUG
     /// `-bookmarks YES` shows every icon, for a snapshot of a window no pointer reaches.
     private static let always = UserDefaults.standard.bool(forKey: "bookmarks")
@@ -340,19 +341,18 @@ private struct Bookmarkable: ViewModifier {
         if let entry, let keep {
             content
                 .padding(.trailing, Self.gutter)
-                .contextMenu { Button("Bookmark in the Journal") { keep(entry) } }
+                .contextMenu {
+                    Button("Bookmark in the Journal") { keep(entry) }
+                    if let copy { Button("Copy Link") { copy(entry) } }
+                }
                 .overlay(alignment: .topLeading) {
                     HStack(spacing: 0) {
                         Spacer(minLength: 0)
                         if hovered || Self.always {
-                            Button { keep(entry) } label: {
-                                Image(systemName: "bookmark")
-                                    .foregroundStyle((colorScheme == .dark ? Catppuccin.Flavour.mocha : .latte)(.overlay1))
-                                    .padding(Metric.tiny)
+                            if let copy {
+                                icon("link", help: "Copy a link to this message", label: "Copy Link") { copy(entry) }
                             }
-                            .buttonStyle(.plain)
-                            .help("Bookmark in the Journal")
-                            .accessibilityLabel("Bookmark")
+                            icon("bookmark", help: "Bookmark in the Journal", label: "Bookmark") { keep(entry) }
                         }
                     }
                     .frame(maxWidth: column.map { $0 + Self.gutter } ?? .infinity)
@@ -364,11 +364,23 @@ private struct Bookmarkable: ViewModifier {
             content
         }
     }
+
+    private func icon(_ name: String, help: String, label: String, action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            Image(systemName: name)
+                .foregroundStyle((colorScheme == .dark ? Catppuccin.Flavour.mocha : .latte)(.overlay1))
+                .padding(Metric.tiny)
+        }
+        .buttonStyle(.plain)
+        .help(help)
+        .accessibilityLabel(label)
+    }
 }
 
 extension View {
-    fileprivate func bookmarkable(_ entry: Conversation.Entry?, keep: ((Conversation.Entry) -> Void)?, column: CGFloat?) -> some View {
-        modifier(Bookmarkable(entry: entry, keep: keep, column: column))
+    fileprivate func bookmarkable(_ entry: Conversation.Entry?, keep: ((Conversation.Entry) -> Void)?,
+                                  copy: ((Conversation.Entry) -> Void)?, column: CGFloat?) -> some View {
+        modifier(Bookmarkable(entry: entry, keep: keep, copy: copy, column: column))
     }
 }
 

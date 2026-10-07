@@ -8,6 +8,7 @@ struct SeshApp: App {
     var body: some Scene {
         WindowGroup {
             RootView().environmentObject(ghostty).environmentObject(library).environmentObject(Store.shared)
+                .onOpenURL { _ = library.follow($0) }
         }
     }
 }

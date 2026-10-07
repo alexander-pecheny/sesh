@@ -7,6 +7,9 @@ struct SeshMacApp: App {
     var body: some Scene {
         WindowGroup {
             RootView().environmentObject(library)
+                .onOpenURL { _ = library.follow($0) }
+                // A link opens in the window that is already there, not a new one.
+                .handlesExternalEvents(preferring: ["*"], allowing: ["*"])
                 .onReceive(NotificationCenter.default.publisher(for: NSApplication.willTerminateNotification)) { _ in
                     Machine.stopAll()
                 }

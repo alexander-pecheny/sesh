@@ -102,6 +102,9 @@ targets:
         ASSETCATALOG_COMPILER_APPICON_NAME: MacIcon
         GENERATE_INFOPLIST_FILE: YES
         INFOPLIST_KEY_LSApplicationCategoryType: public.app-category.developer-tools
+        # Merged into the generated Info.plist: the sesh:// links a Bookmark copies.
+        INFOPLIST_FILE: SeshMac/Info.plist
+        SESH_URL_SCHEME: sesh
         ENABLE_HARDENED_RUNTIME: YES
         ENABLE_APP_SANDBOX: NO
         CODE_SIGN_IDENTITY: "-"
@@ -110,3 +113,4 @@ targets:
         Debug:
           PRODUCT_NAME: Sesh Dev
           PRODUCT_BUNDLE_IDENTIFIER: me.pecheny.sesh.mac.dev
+          SESH_URL_SCHEME: sesh-dev

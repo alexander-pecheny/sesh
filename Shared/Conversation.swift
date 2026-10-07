@@ -125,6 +125,7 @@ final class Conversation: ObservableObject {
     @Published var repo: Repo?
     /// Keeps one entry as a Bookmark; nil where there is no Journal to keep it in.
     var bookmark: ((Entry) -> Void)?
+    var copyLink: ((Entry) -> Void)?
     /// The entry a link or a search result asked to see, scrolled to and marked.
     @Published var focus: String?
     /// Opens the Transcript of the subagent a tool call started, given the call's id.

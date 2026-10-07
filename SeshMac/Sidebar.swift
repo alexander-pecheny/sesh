@@ -284,6 +284,8 @@ private struct UnfiledGroup: View {
                 ForEach(items) { UnfiledRow(item: $0) }
             } label: {
                 Label("Unfiled (\(items.count))", systemImage: "tray").foregroundStyle(.secondary)
+                    // A group only folds; it is nothing to open.
+                    .selectionDisabled()
             }
         }
     }
@@ -343,6 +345,7 @@ private struct ArchiveGroup: View {
                 ForEach(archived) { TaskRow(vault: vault, task: $0, naming: $naming).tag($0.id) }
             } label: {
                 Label("Archive (\(archived.count))", systemImage: "archivebox").foregroundStyle(.secondary)
+                    .selectionDisabled()
             }
         }
     }

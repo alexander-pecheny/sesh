@@ -1,4 +1,9 @@
 import Foundation
+#if os(macOS)
+import AppKit
+#else
+import UIKit
+#endif
 
 /// Every Vault this Mac has opened, and what is open in each Task.
 @MainActor
@@ -71,6 +76,7 @@ final class Library: ObservableObject {
         }
         if let cached = conversations[session.id] { return cached }
         conversation.bookmark = { [weak self] entry in self?.bookmark(entry, in: session.id) }
+        conversation.copyLink = { [weak self] entry in self?.copyLink(entry, in: session.id) }
         if let folder = session.body.path {
             Task { [weak conversation] in
                 let remote = await machine.run("git -C \(quote(folder)) remote get-url origin")
@@ -388,6 +394,16 @@ final class Library: ObservableObject {
 
     static func link(vault: String, session: String, item: String) -> URL? {
         URL(string: "sesh://\(vault)/\(session)/\(item)")
+    }
+
+    func copyLink(_ entry: Conversation.Entry, in session: String) {
+        guard let vault = vault(of: session), let url = Self.link(vault: vault.name, session: session, item: entry.id) else { return }
+        #if os(macOS)
+        NSPasteboard.general.clearContents()
+        NSPasteboard.general.setString(url.absoluteString, forType: .string)
+        #else
+        UIPasteboard.general.url = url
+        #endif
     }
 
     /// An Entry in the session's Task quoting the item, with a link back to it.
