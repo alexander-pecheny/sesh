@@ -8,6 +8,30 @@ final class Library: ObservableObject {
     /// The open Tabs of each Task by its id; the Journal is never in here, as it never closes.
     @Published var tabs: [String: [TabItem]] = [:] { didSet { keep() } }
     @Published var current: [String: TabItem] = [:] { didSet { keep() } }
+    /// Agent sessions being started, by Task, shown as Tabs until their Agent is ready.
+    @Published var starting: [String: [Starting]] = [:]
+
+    struct Starting: Identifiable, Hashable {
+        let id = UUID()
+        let agent: Agent
+        let machine: String
+    }
+
+    /// Opens a Tab for the new session at once, and swaps in its Conversation once the Agent
+    /// can take a prompt; starting one takes tens of seconds.
+    func start(_ agent: Agent, for task: Record, on machine: Machine, problem: @escaping (String) -> Void) {
+        guard let vault = vault(of: task.id) else { return }
+        let pending = Starting(agent: agent, machine: machine.title)
+        starting[task.id, default: []].append(pending)
+        Task {
+            let result = await TaskActions.startSession(agent, for: task, on: machine, in: vault)
+            starting[task.id]?.removeAll { $0 == pending }
+            switch result {
+            case .success(let session): open(.session(session.id), in: task.id)
+            case .failure(let failure): problem(failure.message)
+            }
+        }
+    }
 
     private struct Kept: Codable {
         var selection: String?

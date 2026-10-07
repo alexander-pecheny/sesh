@@ -38,7 +38,9 @@ struct Prose: NSViewRepresentable {
         else { return nil }
         container.containerSize = NSSize(width: width, height: .greatestFiniteMagnitude)
         layout.ensureLayout(for: container)
-        return CGSize(width: width, height: ceil(layout.usedRect(for: container).height))
+        let used = layout.usedRect(for: container)
+        // As wide as the longest line, so a short message makes a small bubble.
+        return CGSize(width: min(width, ceil(used.width)), height: ceil(used.height))
     }
 
     func makeCoordinator() -> Coordinator { Coordinator() }
@@ -90,6 +92,7 @@ private final class LinkTextView: NSTextView {
 }
 
 /// Walks cmark's tree into one attributed string, in the app's colours and sizes.
+@MainActor
 private struct Renderer {
     let flavour: Catppuccin.Flavour
     private var body: NSFont { .systemFont(ofSize: Metric.body) }
@@ -151,7 +154,16 @@ private struct Renderer {
             let code = String(cString: cmark_node_get_literal(node)).trimmingCharacters(in: .newlines)
             var style = attributes(font: mono, style: paragraph(indent: indent + Metric.pad))
             style[.backgroundColor] = NSColor(flavour(.mantle))
-            out.append(NSAttributedString(string: code + "\n", attributes: style))
+            let block = NSMutableAttributedString(string: code + "\n", attributes: style)
+            #if canImport(Highlightr)
+            let language = cmark_node_get_fence_info(node).map { String(cString: $0) }
+            if let coloured = Highlight.code(code, language: language, dark: flavour == .mocha, size: Metric.note) {
+                coloured.enumerateAttribute(.foregroundColor, in: NSRange(location: 0, length: coloured.length)) { colour, range, _ in
+                    if let colour { block.addAttribute(.foregroundColor, value: colour, range: range) }
+                }
+            }
+            #endif
+            out.append(block)
         case "block_quote":
             let start = out.length
             blocks(of: node, into: out, depth: depth + 1)
@@ -208,7 +220,8 @@ private struct Renderer {
             var style = base
             switch kind(child) {
             case "text": out.append(NSAttributedString(string: plain(child), attributes: style))
-            case "softbreak": out.append(NSAttributedString(string: " ", attributes: style))
+            // Agents write one line per thought and mean it as a line, as chat apps show it.
+            case "softbreak": out.append(NSAttributedString(string: "\u{2028}", attributes: style))
             case "linebreak": out.append(NSAttributedString(string: "\u{2028}", attributes: style))
             case "code":
                 style[.font] = mono

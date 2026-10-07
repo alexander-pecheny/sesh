@@ -113,7 +113,7 @@ final class Conversation: ObservableObject {
     /// The Transcript the helper is reading now.
     private(set) var transcript: String?
     /// Whether the helper has sent the first batch of entries, which ends with a cursor.
-    private var loaded = false
+    @Published private(set) var loaded = false
     private(set) weak var runner: Runner?
     private var cursor: String?
     private var loading = false
@@ -182,6 +182,8 @@ final class Conversation: ObservableObject {
         case "permission_done": permissions.removeAll { $0.id == line.id }
         case "cursor":
             cursor = line.cursor
+            // A new Agent session has no Transcript until its first message, so nothing is older.
+            if !loaded, items.isEmpty { earlier = false }
             loaded = true
         default: break
         }

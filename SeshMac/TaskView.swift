@@ -15,6 +15,15 @@ struct TaskView: View {
                 ForEach(tabs) { tab in
                     TabButton(vault: vault, task: id, tab: tab, selected: tab == current)
                 }
+                ForEach(library.starting[id] ?? []) { pending in
+                    HStack(spacing: Metric.tiny) {
+                        ProgressView().controlSize(.small)
+                        Text("Starting \(pending.agent.title)…").lineLimit(1)
+                    }
+                    .foregroundStyle(.secondary)
+                    .padding(.horizontal, Metric.pad)
+                    .help("Starting \(pending.agent.title) on \(pending.machine)")
+                }
                 if let task = vault.records[id] { AddMenu(vault: vault, task: task) }
                 Spacer()
                 if let task = vault.records[id], let branch = task.body.branch {
@@ -45,6 +54,15 @@ struct TaskView: View {
             .frame(maxWidth: .infinity, maxHeight: .infinity)
         }
         .navigationTitle(vault.records[id]?.body.title ?? "Task")
+        #if DEBUG
+        // `-start claude` starts an Agent session in the chosen Task, for tests with no menus.
+        .task {
+            guard let agent = UserDefaults.standard.string(forKey: "start").flatMap(Agent.init) else { return }
+            for _ in 0..<40 where vault.records[id] == nil || !vault.online { try? await Task.sleep(for: .milliseconds(500)) }
+            guard let task = vault.records[id] else { return }
+            library.start(agent, for: task, on: TaskActions.machines(for: task, in: vault)[0]) { Ghostty.logger.error("start failed: \($0, privacy: .public)") }
+        }
+        #endif
     }
 }
 
@@ -125,7 +143,6 @@ private struct AddMenu: View {
     @EnvironmentObject private var library: Library
     @ObservedObject var vault: Vault
     let task: Record
-    @State private var starting: String?
     @State private var problem: String?
 
     var body: some View {
@@ -153,28 +170,20 @@ private struct AddMenu: View {
                 }
             }
         } label: {
-            if starting != nil { ProgressView().controlSize(.small) } else { Image(systemName: "plus") }
+            Image(systemName: "plus")
         }
         .menuStyle(.borderlessButton)
         .menuIndicator(.hidden)
         .fixedSize()
         .padding(.horizontal, Metric.gap)
-        .help(starting.map { "Starting \($0)" } ?? "New Tab")
-        .disabled(starting != nil)
+        .help("New Tab")
         .alert("Sesh could not start it", isPresented: Binding(get: { problem != nil }, set: { if !$0 { problem = nil } })) {
             Button("OK", role: .cancel) {}
         } message: { Text(problem ?? "") }
     }
 
     private func start(_ agent: Agent, on machine: Machine) {
-        starting = agent.title
-        Task {
-            defer { starting = nil }
-            switch await TaskActions.startSession(agent, for: task, on: machine, in: vault) {
-            case .success(let session): library.open(.session(session.id), in: task.id)
-            case .failure(let failure): problem = failure.message
-            }
-        }
+        library.start(agent, for: task, on: machine) { problem = $0 }
     }
 }
 

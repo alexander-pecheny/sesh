@@ -39,16 +39,18 @@ struct DocumentTab: View {
                     .padding(Metric.pad)
                     .onAppear { DispatchQueue.main.async { field.focus() } }
             } else {
+                if !markdown {
+                    CodeView(text: text, language: path.map { ($0 as NSString).pathExtension })
+                } else {
                 ScrollView {
                     Group {
-                        if markdown { Markdown(text: text) } else {
-                            Text(text).font(.system(size: Metric.note, design: .monospaced))
-                        }
+                        Markdown(text: text)
                     }
                     .textSelection(.enabled)
                     .padding(Metric.wide)
                     .frame(maxWidth: 820, alignment: .leading)
                     .frame(maxWidth: .infinity)
+                }
                 }
             }
         }
@@ -133,5 +135,46 @@ struct DocumentTab: View {
         record.body.text = seen
         record.body.edited = Int64(Date().timeIntervalSince1970 * 1000)
         vault.write(record)
+    }
+}
+
+/// A source file, coloured and selectable, at its own width: code is not reflowed.
+private struct CodeView: NSViewRepresentable {
+    @Environment(\.colorScheme) private var colorScheme
+    let text: String
+    let language: String?
+
+    func makeNSView(context: Context) -> NSScrollView {
+        let scroll = NSTextView.scrollableTextView()
+        scroll.drawsBackground = false
+        scroll.hasHorizontalScroller = true
+        guard let view = scroll.documentView as? NSTextView else { return scroll }
+        view.isEditable = false
+        view.drawsBackground = false
+        view.textContainerInset = NSSize(width: Metric.wide, height: Metric.pad)
+        view.isHorizontallyResizable = true
+        view.maxSize = NSSize(width: CGFloat.greatestFiniteMagnitude, height: .greatestFiniteMagnitude)
+        view.textContainer?.widthTracksTextView = false
+        view.textContainer?.containerSize = NSSize(width: CGFloat.greatestFiniteMagnitude, height: .greatestFiniteMagnitude)
+        return scroll
+    }
+
+    func updateNSView(_ scroll: NSScrollView, context: Context) {
+        guard let view = scroll.documentView as? NSTextView, context.coordinator.shown != "\(colorScheme)\(text)" else { return }
+        context.coordinator.shown = "\(colorScheme)\(text)"
+        let dark = colorScheme == .dark
+        let font = NSFont.monospacedSystemFont(ofSize: Metric.note, weight: .regular)
+        let plain = NSAttributedString(string: text, attributes: [
+            .font: font, .foregroundColor: NSColor((dark ? Catppuccin.Flavour.mocha : .latte)(.text)),
+        ])
+        view.textStorage?.setAttributedString(Highlight.code(text, language: language, dark: dark, size: Metric.note) ?? plain)
+        view.sizeToFit()
+    }
+
+    func makeCoordinator() -> Coordinator { Coordinator() }
+
+    /// What the view shows, so it is coloured once rather than on every update.
+    final class Coordinator {
+        var shown = ""
     }
 }

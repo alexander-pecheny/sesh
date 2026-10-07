@@ -16,7 +16,8 @@ struct ConversationView: View {
     @State private var atBottom = true
     @State private var nearTop = false
     @State private var topRow: String?
-    @State private var scrolling = ScrollPhase.idle
+    /// Counts the user's sends: whoever sends wants to see the reply, wherever they had scrolled.
+    @State private var sent = 0
 
     private var flavour: Catppuccin.Flavour { colorScheme == .dark ? .mocha : .latte }
     private var working: Bool { conversation.state == "working" }
@@ -41,6 +42,12 @@ struct ConversationView: View {
             ScrollView {
                 LazyVStack(alignment: .leading, spacing: 14) {
                     if conversation.earlier { ProgressView().frame(maxWidth: .infinity) }
+                    if conversation.loaded, conversation.items.isEmpty, conversation.pane != nil {
+                        Text("\(conversation.agent?.title ?? "The Agent") is ready. Its Conversation starts with your first message.")
+                            .font(.ui(Metric.label)).foregroundStyle(flavour(.overlay1))
+                            .frame(maxWidth: .infinity)
+                            .padding(.top, Metric.wide)
+                    }
                     ForEach(Row.rows(conversation.items)) { row in
                         RowView(row: row, conversation: conversation)
                             .padding(Metric.tiny)
@@ -68,23 +75,31 @@ struct ConversationView: View {
                 nearTop = top
                 if top { Task { await loadEarlier() } }
             }
-            .onScrollGeometryChange(for: Bool.self) { geometry in
-                geometry.visibleRect.maxY >= geometry.contentSize.height - Metric.control
-            } action: { _, bottom in
-                // Growing content also moves the bottom away; only the reader's own scrolling counts.
-                if scrolling != .idle { atBottom = bottom }
+            .onScrollGeometryChange(for: Edge.self) { geometry in
+                Edge(height: geometry.contentSize.height, bottom: geometry.visibleRect.maxY)
+            } action: { old, new in
+                // New content moves the end away without the reader moving; only a change at the
+                // same height, a scroll or a resize, says whether the end is in view.
+                guard new.height == old.height else { return }
+                atBottom = new.bottom >= new.height - Metric.control
             }
-            .onScrollPhaseChange { _, phase in scrolling = phase }
             .onChange(of: conversation.focus) {
                 guard let focus = conversation.focus,
                       let row = Row.rows(conversation.items).first(where: { $0.contains(focus) }) else { return }
                 atBottom = false
                 withAnimation { reader.scrollTo(row.id, anchor: .top) }
             }
+            .onChange(of: sent) {
+                atBottom = true
+                reader.scrollTo(Self.end, anchor: .bottom)
+            }
             .onChange(of: changes) {
-                if atBottom { reader.scrollTo(Self.end, anchor: .bottom) }
                 // A Conversation shorter than the screen never scrolls to the top to ask.
                 if nearTop { Task { await loadEarlier() } }
+                guard atBottom else { return }
+                reader.scrollTo(Self.end, anchor: .bottom)
+                // Text measured by AppKit settles its height a moment later; follow it there.
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.15) { if atBottom { reader.scrollTo(Self.end, anchor: .bottom) } }
             }
         }
         .scrollDismissesKeyboard(.interactively)
@@ -224,7 +239,10 @@ struct ConversationView: View {
     private func send() async {
         sending = true
         let text = draft.trimmingCharacters(in: .whitespacesAndNewlines)
-        if let problem = await conversation.send(text) { conversation.problem = problem } else { draft = "" }
+        if let problem = await conversation.send(text) { conversation.problem = problem } else {
+            draft = ""
+            sent += 1
+        }
         sending = false
     }
 
@@ -283,6 +301,12 @@ extension View {
     fileprivate func bookmarkable(_ entry: Conversation.Entry?, keep: ((Conversation.Entry) -> Void)?) -> some View {
         modifier(Bookmarkable(entry: entry, keep: keep))
     }
+}
+
+/// How tall the Conversation is and where the visible part ends.
+private struct Edge: Equatable {
+    let height: CGFloat
+    let bottom: CGFloat
 }
 
 /// What the list shows: one entry, or a run of reads, searches and fetches as one line.
@@ -373,7 +397,7 @@ private struct UserBubble: View {
                 }
             }
             if let text = entry.text, !text.isEmpty {
-                Text(text)
+                message(text)
                     .font(.ui(15))
                     .foregroundStyle(flavour(.text))
                     .padding(.horizontal, 14)
@@ -384,6 +408,15 @@ private struct UserBubble: View {
         }
         .readable(alignment: .trailing)
         .padding(.leading, 48)
+    }
+
+    /// The user's Markdown too: the whole of it on the Mac, its inline marks on the phone.
+    @ViewBuilder private func message(_ text: String) -> some View {
+        #if os(macOS)
+        Prose(text: text)
+        #else
+        Text(LocalizedStringKey(text))
+        #endif
     }
 }
 

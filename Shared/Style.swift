@@ -32,10 +32,10 @@ extension View {
     /// The window is the container on the Mac, wider than a split view's column.
     func fitWidth() -> some View { frame(maxWidth: .infinity) }
 
-    /// Prose in a centred column no wider than `Metric.measure`, which is hard to read beyond
-    /// that on a wide window.
+    /// Prose no wider than `Metric.measure`, which is hard to read beyond that on a wide
+    /// window: the Agent's on the left, the user's on the right, as in a chat.
     func readable(alignment: Alignment = .leading) -> some View {
-        frame(maxWidth: Metric.measure, alignment: alignment).frame(maxWidth: .infinity)
+        frame(maxWidth: Metric.measure, alignment: alignment).frame(maxWidth: .infinity, alignment: alignment)
     }
 
     func cover<Content: View>(isPresented: Binding<Bool>, @ViewBuilder content: @escaping () -> Content) -> some View {

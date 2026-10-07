@@ -23,6 +23,9 @@ packages:
   cmark:
     url: https://github.com/swiftlang/swift-cmark
     exactVersion: 0.9.0
+  Highlightr:
+    url: https://github.com/raspu/Highlightr
+    exactVersion: 2.3.0
 
 targets:
   Sesh:
@@ -86,6 +89,7 @@ targets:
       - sdk: Metal.framework
       - sdk: QuartzCore.framework
       - sdk: IOSurface.framework
+      - package: Highlightr
       - package: MarkdownUI
       - package: cmark
         product: cmark-gfm
