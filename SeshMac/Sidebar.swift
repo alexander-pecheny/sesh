@@ -58,15 +58,29 @@ private struct VaultSection: View {
     @State private var open = true
 
     var body: some View {
-        Section(isExpanded: $open) {
-            Children(vault: vault, parent: nil, naming: $naming)
-            ArchiveGroup(vault: vault, naming: $naming)
-            if let alias = vault.place.alias {
-                UnfiledGroup(items: library.unfiled[alias] ?? [])
+        // The sidebar's own fold shows its chevron only on hover; this one always shows.
+        Section {
+            if open {
+                Children(vault: vault, parent: nil, naming: $naming)
+                ArchiveGroup(vault: vault, naming: $naming)
+                if let alias = vault.place.alias {
+                    UnfiledGroup(items: library.unfiled[alias] ?? [])
+                }
             }
         } header: {
             HStack {
-                Text(vault.name)
+                Button {
+                    withAnimation(.easeOut(duration: 0.15)) { open.toggle() }
+                } label: {
+                    HStack(spacing: 4) {
+                        Image(systemName: "chevron.right")
+                            .font(.caption2.weight(.semibold))
+                            .rotationEffect(.degrees(open ? 90 : 0))
+                        Text(vault.name)
+                    }
+                    .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
                 Circle().fill(vault.online ? .green : .secondary).frame(width: 6, height: 6)
                     .help(vault.problem ?? (vault.online ? "Up to date with \(vault.machine.title)" : "Offline"))
                 if vault.pending > 0 { Text("\(vault.pending)").font(.caption2).foregroundStyle(.secondary) }
