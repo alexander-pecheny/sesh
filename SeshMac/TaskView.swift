@@ -32,6 +32,12 @@ struct TaskView: View {
                 case .journal: JournalView(vault: vault, task: id)
                 case .session(let session): SessionTab(vault: vault, id: session).id(session)
                 case .document(let document): DocumentTab(vault: vault, id: document).id(document)
+                case .subagent(let session, let path, let title):
+                    if let record = vault.records[session] {
+                        ConversationView(conversation: library.subagentConversation(path: path, of: record), title: title, fresh: false)
+                            .frame(minWidth: 420, maxWidth: .infinity, minHeight: 300, maxHeight: .infinity)
+                            .id(path)
+                    }
                 case .terminal(let terminal):
                     if let surface = library.terminal(terminal) { Ghostty.Terminal(view: surface).id(terminal) }
                 }
@@ -87,7 +93,7 @@ private struct TabButton: View {
     private var recordID: String {
         switch tab {
         case .session(let id), .document(let id): id
-        case .journal, .terminal: ""
+        case .journal, .terminal, .subagent: ""
         }
     }
 
@@ -100,6 +106,7 @@ private struct TabButton: View {
         case .session: "bubble.left.and.text.bubble.right"
         case .document: "doc.text"
         case .terminal: "terminal"
+        case .subagent: "person.2"
         }
     }
 
@@ -108,6 +115,7 @@ private struct TabButton: View {
         case .journal: "Journal"
         case .session(let id), .document(let id): vault.records[id]?.body.title ?? "Untitled"
         case .terminal: "Terminal"
+        case .subagent(_, _, let title): title
         }
     }
 }

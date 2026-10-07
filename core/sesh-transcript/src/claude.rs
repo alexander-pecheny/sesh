@@ -16,14 +16,25 @@ const NOT_TYPED: [&str; 6] = [
 
 #[derive(Default)]
 pub(super) struct Parser {
+    /// A subagent's own Transcript, whose every line is a sidechain of its parent's.
+    pub(super) subagent: bool,
     questions: HashMap<String, String>,
     hidden_results: HashSet<String>,
     tasks: Vec<(String, String)>,
 }
 
 impl Parser {
+    pub(super) fn new(subagent: bool) -> Self {
+        Self {
+            subagent,
+            ..Default::default()
+        }
+    }
+
     pub(super) fn line(&mut self, line: &Value, ids: &mut Ids, out: &mut Vec<Entry>) {
-        if line["isSidechain"] == true || line["isMeta"] == true || line["isCompactSummary"] == true
+        if (line["isSidechain"] == true && !self.subagent)
+            || line["isMeta"] == true
+            || line["isCompactSummary"] == true
         {
             return;
         }

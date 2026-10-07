@@ -8,15 +8,7 @@ enum PathLinks {
     static let scheme = "sesh-path"
 
     static func link(_ markdown: String) -> String {
-        guard markdown.contains("`") else { return markdown }
-        cmark_gfm_core_extensions_ensure_registered()
-        guard let parser = cmark_parser_new(CMARK_OPT_DEFAULT) else { return markdown }
-        defer { cmark_parser_free(parser) }
-        for name in ["table", "strikethrough", "autolink", "tasklist"] {
-            if let extension_ = cmark_find_syntax_extension(name) { cmark_parser_attach_syntax_extension(parser, extension_) }
-        }
-        cmark_parser_feed(parser, markdown, markdown.utf8.count)
-        guard let root = cmark_parser_finish(parser) else { return markdown }
+        guard markdown.contains("`"), let root = Cmark.parse(markdown) else { return markdown }
         defer { cmark_node_free(root) }
 
         var spans: [UnsafeMutablePointer<cmark_node>] = []
@@ -63,5 +55,19 @@ enum PathLinks {
     static func path(from url: URL) -> String? {
         guard url.scheme == scheme else { return nil }
         return String(url.absoluteString.dropFirst(scheme.count + 1)).removingPercentEncoding
+    }
+}
+
+/// GitHub-flavoured Markdown as cmark's tree; the caller frees the root.
+enum Cmark {
+    static func parse(_ markdown: String) -> UnsafeMutablePointer<cmark_node>? {
+        cmark_gfm_core_extensions_ensure_registered()
+        guard let parser = cmark_parser_new(CMARK_OPT_DEFAULT) else { return nil }
+        defer { cmark_parser_free(parser) }
+        for name in ["table", "strikethrough", "autolink", "tasklist"] {
+            if let syntax = cmark_find_syntax_extension(name) { cmark_parser_attach_syntax_extension(parser, syntax) }
+        }
+        cmark_parser_feed(parser, markdown, markdown.utf8.count)
+        return cmark_parser_finish(parser)
     }
 }

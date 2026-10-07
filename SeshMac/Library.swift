@@ -45,6 +45,10 @@ final class Library: ObservableObject {
         }
         if let cached = conversations[session.id] { return cached }
         conversation.bookmark = { [weak self] entry in self?.bookmark(entry, in: session.id) }
+        conversation.openSubagent = { [weak self, weak conversation] call, title in
+            guard let self, let transcript = conversation?.transcript else { return }
+            Task { await self.openSubagent(call, title: title, of: session, transcript: transcript) }
+        }
         conversations[session.id] = conversation
         if let item = pendingFocus.removeValue(forKey: session.id) { Task { await conversation.reveal(item) } }
         return conversation
@@ -138,6 +142,41 @@ final class Library: ObservableObject {
     }
 
     static let unfiledPrefix = "unfiled:"
+
+    // MARK: Subagents
+
+    /// Claude keeps a subagent's Transcript beside its parent's, under `subagents`, with a
+    /// `.meta.json` naming the tool call that started it.
+    private func openSubagent(_ call: String, title: String, of session: Record, transcript: String) async {
+        guard let task = session.body.task else { return }
+        let folder = (transcript as NSString).deletingPathExtension + "/subagents"
+        let machine = TaskActions.machine(session.body.machine)
+        let ran = await machine.run("grep -l \(quote("\"toolUseId\":\"\(call)\"")) \(quote(folder))/*.meta.json | head -n 1")
+        let meta = ran.out.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard ran.ok, meta.hasSuffix(".meta.json") else {
+            conversations[session.id]?.problem = "Claude has not written a Transcript for this subagent yet."
+            return
+        }
+        open(.subagent(session: session.id, path: String(meta.dropLast(".meta.json".count)) + ".jsonl", title: title), in: task)
+    }
+
+    func subagentConversation(path: String, of session: Record) -> Conversation {
+        if let known = subagents[path] { return known }
+        let conversation = Conversation(source: .file(path: path, agent: .claude), agent: .claude,
+                                        runner: TaskActions.machine(session.body.machine))
+        conversation.openPath = { [weak self] file in
+            guard let self, let vault = self.vault(of: session.id), let current = vault.records[session.id] else { return }
+            TaskActions.open(file, from: current, in: vault, library: self)
+        }
+        conversation.openSubagent = { [weak self, weak conversation] call, title in
+            guard let self, let transcript = conversation?.transcript else { return }
+            Task { await self.openSubagent(call, title: title, of: session, transcript: transcript) }
+        }
+        subagents[path] = conversation
+        return conversation
+    }
+
+    private var subagents: [String: Conversation] = [:]
 
     // MARK: Terminals
 
@@ -238,6 +277,8 @@ enum TabItem: Hashable, Identifiable, Codable {
     case session(String)
     case document(String)
     case terminal(UUID)
+    /// A Claude subagent's own Transcript, read-only, opened from its parent's Conversation.
+    case subagent(session: String, path: String, title: String)
 
     var id: Self { self }
 }

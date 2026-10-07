@@ -226,7 +226,7 @@ enum Parser {
 impl Parser {
     fn fresh(&self) -> Self {
         match self {
-            Self::Claude(_) => Self::Claude(Default::default()),
+            Self::Claude(old) => Self::Claude(claude::Parser::new(old.subagent)),
             Self::Codex(_) => Self::Codex(Default::default()),
             Self::Pi(_) => Self::Pi(Default::default()),
         }
@@ -247,13 +247,15 @@ pub struct Transcript {
 
 impl Transcript {
     pub fn new(agent: &str, path: impl Into<PathBuf>) -> Option<Self> {
+        let path: PathBuf = path.into();
         let parser = match agent {
-            "claude" => Parser::Claude(Default::default()),
+            "claude" => Parser::Claude(claude::Parser::new(
+                path.parent().is_some_and(|folder| folder.ends_with("subagents")),
+            )),
             "codex" => Parser::Codex(Default::default()),
             "pi" => Parser::Pi(Default::default()),
             _ => return None,
         };
-        let path: PathBuf = path.into();
         let name = path.file_name().unwrap_or_default().to_string_lossy();
         Some(Self {
             tag: format!("{:08x}", fnv1a(name.as_bytes())),

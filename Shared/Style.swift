@@ -32,9 +32,10 @@ extension View {
     /// The window is the container on the Mac, wider than a split view's column.
     func fitWidth() -> some View { frame(maxWidth: .infinity) }
 
-    /// Prose no wider than 66 characters, which is hard to read beyond that on a wide window.
+    /// Prose in a centred column no wider than `Metric.measure`, which is hard to read beyond
+    /// that on a wide window.
     func readable(alignment: Alignment = .leading) -> some View {
-        frame(maxWidth: Metric.measure, alignment: alignment).frame(maxWidth: .infinity, alignment: alignment)
+        frame(maxWidth: Metric.measure, alignment: alignment).frame(maxWidth: .infinity)
     }
 
     func cover<Content: View>(isPresented: Binding<Bool>, @ViewBuilder content: @escaping () -> Content) -> some View {
@@ -69,12 +70,12 @@ enum Metric {
     static let body: CGFloat = 15
     static let title: CGFloat = 16
     #if os(macOS)
-    /// Room for 66 characters of ordinary prose, measured on a sentence rather than on "0",
+    /// Room for 99 characters of ordinary prose, measured on a sentence rather than on "0",
     /// which is wider than the average letter.
     static let measure: CGFloat = {
         let sample = "The quick brown fox jumps over the lazy dog, then naps by the river."
         let width = (sample as NSString).size(withAttributes: [.font: NSFont.systemFont(ofSize: body)]).width
-        return (66 * width / CGFloat(sample.count)).rounded(.up)
+        return (99 * width / CGFloat(sample.count)).rounded(.up)
     }()
     #endif
 }

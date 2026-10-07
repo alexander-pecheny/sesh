@@ -73,6 +73,7 @@ final class Conversation: ObservableObject {
         let t: String
         let `protocol`: Int?
         let agent: String?
+        let transcript: String?
         let state: String?
         let reason: String?
         let cursor: String?
@@ -107,6 +108,10 @@ final class Conversation: ObservableObject {
     var bookmark: ((Entry) -> Void)?
     /// The entry a link or a search result asked to see, scrolled to and marked.
     @Published var focus: String?
+    /// Opens the Transcript of the subagent a tool call started, given the call's id.
+    var openSubagent: ((_ call: String, _ title: String) -> Void)?
+    /// The Transcript the helper is reading now.
+    private(set) var transcript: String?
     /// Whether the helper has sent the first batch of entries, which ends with a cursor.
     private var loaded = false
     private(set) weak var runner: Runner?
@@ -156,6 +161,7 @@ final class Conversation: ObservableObject {
         switch line.t {
         case "hello":
             agent = line.agent.flatMap(Agent.init) ?? agent
+            transcript = line.transcript.flatMap { $0.isEmpty ? nil : $0 } ?? transcript
             if let number = line.protocol, !Self.protocols.contains(number) {
                 problem = "The Host's helper speaks protocol \(number), which this Sesh does not know. Update Sesh."
             }

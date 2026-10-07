@@ -47,11 +47,7 @@ struct ConversationView: View {
                             .background(
                                 conversation.focus.map(row.contains) == true ? flavour(.yellow).opacity(0.15) : .clear,
                                 in: .rect(cornerRadius: Metric.corner))
-                            .contextMenu {
-                                if let keep = conversation.bookmark, let entry = row.entry {
-                                    Button("Bookmark in the Journal") { keep(entry) }
-                                }
-                            }
+                            .bookmarkable(row.entry, keep: conversation.bookmark)
                     }
                     ForEach(conversation.permissions) { PermissionCard(permission: $0, conversation: conversation) }
                     ForEach(conversation.queued) { QueuedBubble(message: $0, conversation: conversation, edit: takeBack) }
@@ -95,7 +91,8 @@ struct ConversationView: View {
         .safeAreaInset(edge: .bottom, spacing: 0) {
             VStack(spacing: 0) {
                 if let todo = conversation.todo?.items, !todo.isEmpty { TodoBar(items: todo) }
-                input
+                // A Transcript read from a file, a copy or a subagent's, has no one to send to.
+                if conversation.pane != nil { input }
             }
         }
         .background(flavour(.base))
@@ -237,6 +234,57 @@ struct ConversationView: View {
     }
 }
 
+/// An Agent's reply: one selectable text on the Mac, so a copy can span paragraphs.
+private struct AgentText: View {
+    let text: String
+
+    var body: some View {
+        #if os(macOS)
+        Prose(text: text)
+        #else
+        Markdown(text: text)
+        #endif
+    }
+}
+
+/// A Bookmark from a row's context menu and, where there is a pointer, an icon on hover:
+/// text that can be selected keeps its own context menu.
+private struct Bookmarkable: ViewModifier {
+    @Environment(\.colorScheme) private var colorScheme
+    let entry: Conversation.Entry?
+    let keep: ((Conversation.Entry) -> Void)?
+    @State private var hovered = false
+
+    func body(content: Content) -> some View {
+        if let entry, let keep {
+            content
+                .contextMenu { Button("Bookmark in the Journal") { keep(entry) } }
+                .overlay(alignment: .topTrailing) {
+                    if hovered {
+                        Button { keep(entry) } label: {
+                            Image(systemName: "bookmark")
+                                .foregroundStyle((colorScheme == .dark ? Catppuccin.Flavour.mocha : .latte)(.overlay1))
+                                .padding(Metric.tiny)
+                        }
+                        .buttonStyle(.plain)
+                        .help("Bookmark in the Journal")
+                        .accessibilityLabel("Bookmark")
+                        .offset(x: Metric.wide)
+                    }
+                }
+                .onHover { hovered = $0 }
+        } else {
+            content
+        }
+    }
+}
+
+extension View {
+    fileprivate func bookmarkable(_ entry: Conversation.Entry?, keep: ((Conversation.Entry) -> Void)?) -> some View {
+        modifier(Bookmarkable(entry: entry, keep: keep))
+    }
+}
+
 /// What the list shows: one entry, or a run of reads, searches and fetches as one line.
 private enum Row: Identifiable {
     case item(Conversation.Item)
@@ -297,7 +345,7 @@ private struct RowView: View {
         case .item(.entry(let entry)):
             switch entry.kind {
             case "user": UserBubble(entry: entry, conversation: conversation)
-            case "text": Markdown(text: conversation.openPath == nil ? entry.text ?? entry.summary : PathLinks.link(entry.text ?? entry.summary))
+            case "text": AgentText(text: conversation.openPath == nil ? entry.text ?? entry.summary : PathLinks.link(entry.text ?? entry.summary))
                 .readable()
             case "thinking": Thinking(entry: entry)
             case "tool": ToolCard(entry: entry, result: conversation.results[entry.id], conversation: conversation)
@@ -738,7 +786,7 @@ private struct ToolCard: View {
                 }
             } detail: { output } opened: { expand() }
         case "task":
-            Card(icon: "bot", tint: .mauve, opens: result != nil) {
+            Card(icon: "bot", tint: .mauve, opens: result != nil, side: subagentSide) {
                 VStack(alignment: .leading, spacing: Metric.tiny) {
                     Text("Task").font(.ui(Metric.caption)).foregroundStyle(flavour(.subtext0))
                     Text(entry.description ?? entry.summary).font(.ui(Metric.label)).foregroundStyle(flavour(.text))
@@ -751,6 +799,14 @@ private struct ToolCard: View {
                 Text(entry.summary).font(.ui(Metric.label)).foregroundStyle(flavour(.text))
             } detail: { output } opened: { expand() }
         }
+    }
+
+    /// Claude's subagents keep their own Transcripts, which open in a Tab of their own.
+    private var subagentSide: (label: String, icon: String, run: () -> Void)? {
+        guard let open = conversation.openSubagent, let range = entry.id.range(of: ".call.") else { return nil }
+        let call = String(entry.id[range.upperBound...])
+        let title = entry.description ?? entry.summary
+        return ("Open the subagent", "external-link", { open(call, title) })
     }
 
     private var openSide: (label: String, icon: String, run: () -> Void)? {
