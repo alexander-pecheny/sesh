@@ -557,9 +557,22 @@ impl Follower {
     }
 }
 
+/// `SESH_TRACE=DIR` keeps every screen a debug build reads, timed, to replay it later.
+#[cfg(debug_assertions)]
+fn trace(ansi: &str) {
+    let Ok(dir) = std::env::var("SESH_TRACE") else { return };
+    let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap_or_default();
+    let _ = std::fs::write(format!("{dir}/{}.ansi", now.as_micros()), ansi);
+}
+
 /// The screen, once two reads agree: a read can land in the middle of Claude's redraw.
 fn settled(pane_id: &str, live: &Live) -> Option<View> {
-    let read = || View::read(&herdr(&["pane", "read", pane_id, "--source", "visible", "--format", "ansi"]).ok()?);
+    let read = || {
+        let ansi = herdr(&["pane", "read", pane_id, "--source", "visible", "--format", "ansi"]).ok()?;
+        #[cfg(debug_assertions)]
+        trace(&ansi);
+        View::read(&ansi)
+    };
     let mut view = read()?;
     if !live.changed(&view) {
         return Some(view);

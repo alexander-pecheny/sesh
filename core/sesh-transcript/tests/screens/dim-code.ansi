@@ -1,0 +1,40 @@
+  │ [0m[38;2;177;185;249msearch[0m    │ One node read per level, so about log n reads for n keys                       │
+  ├───────────┼────────────────────────────────────────────────────────────────────────────────┤
+  │ [0m[38;2;177;185;249minsert[0m    │ The cost of a search, plus a split at each full node on the way back up        │
+  ├───────────┼────────────────────────────────────────────────────────────────────────────────┤
+  │ [0m[38;2;177;185;249mdelete[0m    │ The cost of a search, plus a borrow or merge at each node left under half full │
+  └───────────┴────────────────────────────────────────────────────────────────────────────────┘
+
+  A B-tree buys its shallow shape with a little extra work on writes, and that is a good trade whenever reads are slow.
+
+[0m[38;2;153;153;153m✻ Baked for 18s · done 12:41 AM[0m
+
+[0m[38;2;153;153;153m[48;2;55;55;55m❯ [0m[38;2;255;255;255m[48;2;55;55;55mNew topic. Write about 400 words in several paragraphs (no line breaks inside paragraphs) on how TCP congestion [0m[48;2;55;55;55m     [0m
+[0m[48;2;55;55;55m  [0m[38;2;255;255;255m[48;2;55;55;55mcontrol works, with [0m[1m[38;2;255;255;255m[48;2;55;55;55mbold[0m[38;2;255;255;255m[48;2;55;55;55m terms, [0m[38;2;177;185;249m[48;2;55;55;55mcode[0m[38;2;255;255;255m[48;2;55;55;55m for algorithm names, a numbered list, and a short C code block with a blank [0m[48;2;55;55;55m    [0m
+[0m[48;2;55;55;55m  [0m[38;2;255;255;255m[48;2;55;55;55mline inside it. Then run [0m[38;2;177;185;249m[48;2;55;55;55msleep 3; echo ok[0m[38;2;255;255;255m[48;2;55;55;55m. Then a two-column table of three algorithms, and one closing sentence.[0m[48;2;55;55;55m    [0m
+
+[0m[38;2;255;255;255m⏺[0m A network has no central controller to tell senders how fast to go, so each sender must find out for itself. The
+  problem became plain in October 1986, when throughput on a link between two Berkeley sites fell from 32 kbit/s to 40
+  bit/s because senders answered lost packets by sending more. Van Jacobson published the remedy in 1988, and its core
+  idea still holds: probe for capacity, and back off at the first sign of trouble.
+
+  The sender keeps a [0m[1mcongestion window[0m, called [0m[38;2;177;185;249mcwnd[0m, which caps the bytes it may have in flight without
+  acknowledgement. An acknowledgement says that data got through. A lost packet says that a queue somewhere overflowed.
+  The classic scheme, [0m[38;2;177;185;249mReno[0m, moves through three phases:
+
+  1. [0m[1mSlow start[0m: the window begins at a few segments and grows by one segment per acknowledgement, so it doubles every
+     round trip, until it hits a threshold called [0m[38;2;177;185;249mssthresh [0mor a loss.
+  2. [0m[1mCongestion avoidance[0m: above the threshold the window grows by about one segment per round trip, a gentle linear
+     probe for spare capacity.
+  3. [0m[1mFast recovery[0m: three duplicate acknowledgements imply one lost segment, so the sender resends it and halves the
+     window. A timeout is graver: the window falls to one segment and slow start begins again.
+
+  The rules fit in a few lines of C:
+
+  [0m[2m[38;5;6mvoid [0m[38;5;3mon_ack[0m([0m[38;5;4mstruct [0mtcp *t) {
+      [0m[38;5;4mif [0m(t->cwnd < t->ssthresh)
+
+[0m[38;2;136;136;136m───────────────────────────────────────────────────────────────────────────────────────────────────────────────────────[0m
+[0m[38;2;153;153;153m❯ [0m
+[0m[38;2;136;136;136m───────────────────────────────────────────────────────────────────────────────────────────────────────────────────────[0m
+  [0m[38;2;255;107;128m⏵⏵ bypass permissions on[0m[38;2;153;153;153m (shift+tab to cycle) · esc to interrupt · ← for agents[0m

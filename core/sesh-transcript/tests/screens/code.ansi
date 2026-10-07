@@ -1,0 +1,40 @@
+  A minimal table with chaining fits in a few lines of Python:
+
+  [0m[38;5;4mclass[0m [0m[38;5;4mTable[0m:
+      [0m[38;5;4mdef [0m[38;5;3m__init__[0m(self, size=[0m[38;5;2m8[0m):
+          self.buckets = [[] [0m[38;5;4mfor [0m_ [0m[38;5;4min [0m[38;5;6mrange[0m(size)]
+
+      [0m[38;5;4mdef [0m[38;5;3mput[0m(self, key, value):
+          bucket = self.buckets[[0m[38;5;6mhash[0m(key) % [0m[38;5;6mlen[0m(self.buckets)]
+          [0m[38;5;4mfor [0mi, (k, _) [0m[38;5;4min [0m[38;5;6menumerate[0m(bucket):
+              [0m[38;5;4mif [0mk == key:
+                  bucket[i] = (key, value)
+                  [0m[38;5;4mreturn[0m
+          bucket.append((key, value))
+
+      [0m[38;5;4mdef [0m[38;5;3mget[0m(self, key):
+          bucket = self.buckets[[0m[38;5;6mhash[0m(key) % [0m[38;5;6mlen[0m(self.buckets)]
+          [0m[38;5;4mfor [0mk, v [0m[38;5;4min [0mbucket:
+              [0m[38;5;4mif [0mk == key:
+                  [0m[38;5;4mreturn[0m v
+          [0m[38;5;4mraise [0mKeyError(key)
+
+  Speed depends on the [0m[1mload factor[0m, the number of entries divided by the number of buckets. As the factor rises,
+  collisions multiply and lookups slow. Most implementations therefore resize once the factor passes a threshold, often
+  0.75: they allocate an array twice as large and reinsert every entry. A single resize is costly, but doublings are
+  rare, so the [0m[1mamortised [0mcost of an insert stays constant.
+
+  The worst case is grim. If every key lands in one bucket, a lookup degrades to a linear scan. Attackers have
+  exploited this by sending web servers keys crafted to collide, which is why Python and other languages randomise
+  their string hashes at start-up. Keys must also keep the same hash while stored, which is why Python allows tuples as
+  dictionary keys but not lists.
+
+[0m[38;2;153;153;153m [0m Pause three seconds, then print "second"
+[0m[38;2;153;153;153m  ⎿  $ sleep 3; echo second[0m
+
+[0m[38;2;215;119;87m✽ [0m[38;2;220;129;97mMisting…[0m[38;2;215;119;87m [0m[38;2;153;153;153m(27s · ↓ 2.3k tokens)[0m
+
+[0m[38;2;136;136;136m───────────────────────────────────────────────────────────────────────────────────────────────────────────────────────[0m
+[0m[38;2;153;153;153m❯ [0m
+[0m[38;2;136;136;136m───────────────────────────────────────────────────────────────────────────────────────────────────────────────────────[0m
+  [0m[38;2;255;107;128m⏵⏵ bypass permissions on[0m[38;2;153;153;153m (shift+tab to cycle) · esc to interrupt · ← for agents[0m

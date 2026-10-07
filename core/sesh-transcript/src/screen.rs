@@ -16,6 +16,8 @@ const GRACE: Duration = Duration::from_secs(3);
 const PROBE: usize = 60;
 /// How many entries' words are kept to recognise what the Transcript holds.
 const CORPUS: usize = 400;
+/// How far up from the bottom a menu in place of the prompt box can reach.
+const MENU: usize = 30;
 const SPINNERS: &str = "·✢✳✶✻✽*";
 const MARKERS: [char; 2] = ['⏺', '●'];
 /// Where a reply's link points is not on the screen; Sesh opens nothing for this.
@@ -243,10 +245,13 @@ impl View {
     pub fn read(ansi: &str) -> Option<View> {
         let rows = rows(ansi);
         let texts: Vec<String> = rows.iter().map(Row::text).collect();
-        let top = (0..texts.len().saturating_sub(2)).rev().find(|&i| {
+        let prompt = (0..texts.len().saturating_sub(2)).rev().find(|&i| {
             rule(&texts[i]) && (texts[i + 1].starts_with('❯') || texts[i + 1].starts_with('>'))
                 && texts[i + 2..].iter().any(|text| rule(text))
-        })?;
+        });
+        // A permission or question menu takes the prompt box's place, under a rule of its own.
+        let menu = || (texts.len().saturating_sub(MENU)..texts.len()).find(|&i| rule(&texts[i]));
+        let top = prompt.or_else(menu)?;
         let width = measure(texts[top].trim_end());
         // The status line sits above the prompt box, among right-edge notices, tips and the
         // todo list Claude draws under it.
@@ -378,7 +383,7 @@ fn marked(row: &Row) -> Kind {
 fn chrome(row: &Row) -> bool {
     let text = row.text();
     let lead = row.first_style().unwrap_or_default();
-    (lead.fg.grey() || lead.dim) && !text.trim_start().starts_with('▎')
+    (lead.fg.grey() || lead.dim && lead.fg == Colour::Default) && !text.trim_start().starts_with('▎')
 }
 
 /// A tool group's header, such as "Running 1 shell command…" or "Read 2 files".
@@ -400,21 +405,47 @@ fn markdown(rows: &[Row], width: usize) -> (String, String) {
     let margin = 2;
     let mut out: Vec<String> = Vec::new();
     let mut plain: Vec<String> = Vec::new();
+    // A blank line inside a code block splits it into paragraphs; they are one block again.
+    let mut code_block: Option<String> = None;
+    let mut coloured = false;
+    let fence = |text: String| (format!("```{}\n{text}\n```", language(&text)), text);
     for paragraph in rows.split(Row::blank).filter(|rows| !rows.is_empty()) {
         let first = paragraph[0].text();
+        let more_code = code_block.is_some() && (paragraph[0].indent() > 0 || coloured && highlighted(paragraph));
+        if more_code || code(paragraph, width, margin) {
+            let text = paragraph.iter().map(Row::text).collect::<Vec<_>>().join("\n");
+            code_block = Some(match code_block.take() {
+                Some(before) if more_code => format!("{before}\n\n{text}"),
+                Some(before) => {
+                    let (md, words) = fence(before);
+                    out.push(md);
+                    plain.push(words);
+                    text
+                }
+                None => text,
+            });
+            coloured = highlighted(paragraph);
+            continue;
+        }
+        if let Some(text) = code_block.take() {
+            let (md, words) = fence(text);
+            out.push(md);
+            plain.push(words);
+        }
         let (md, words) = if first.starts_with(['┌', '│', '├']) {
             table(paragraph)
         } else if first.trim_start().starts_with('▎') {
             quote(paragraph)
-        } else if code(paragraph, width, margin) {
-            let lines: Vec<String> = paragraph.iter().map(Row::text).collect();
-            let text = lines.join("\n");
-            (format!("```{}\n{text}\n```", language(&text)), text)
         } else if first.trim() == "---" && paragraph.len() == 1 {
             ("---".to_string(), String::new())
         } else {
             prose(paragraph, width, margin)
         };
+        out.push(md);
+        plain.push(words);
+    }
+    if let Some(text) = code_block {
+        let (md, words) = fence(text);
         out.push(md);
         plain.push(words);
     }
@@ -514,9 +545,6 @@ fn quote(rows: &[Row]) -> (String, String) {
 /// Code is set in colours prose never has, or wholly in the inline-code colour when it is
 /// more than one line.
 fn code(rows: &[Row], width: usize, margin: usize) -> bool {
-    let highlighted = rows.iter().flat_map(|row| &row.0).any(|span| {
-        !span.text.trim().is_empty() && matches!(span.style.fg, Colour::Index(n) if n != 12 && !Colour::Index(n).plain())
-    });
     let coded = |row: &Row| {
         row.0.iter().filter(|span| !span.text.trim().is_empty()).all(|span| inline_code(&span.style))
             && !row.blank()
@@ -526,7 +554,14 @@ fn code(rows: &[Row], width: usize, margin: usize) -> bool {
         .filter(|pair| !wraps(&pair[0], &pair[1].text(), width, margin))
         .count()
         + 1;
-    highlighted || (lines > 1 && rows.iter().all(coded))
+    highlighted(rows) || (lines > 1 && rows.iter().all(coded))
+}
+
+/// Coloured by a syntax highlighter, which a fence that names its language gets.
+fn highlighted(rows: &[Row]) -> bool {
+    rows.iter().flat_map(|row| &row.0).any(|span| {
+        !span.text.trim().is_empty() && matches!(span.style.fg, Colour::Index(n) if n != 12 && !Colour::Index(n).plain())
+    })
 }
 
 fn inline_code(style: &Style) -> bool {
@@ -543,7 +578,9 @@ fn language(code: &str) -> &'static str {
         "diff"
     } else if has(&["fn ", "let mut ", "impl ", "pub fn", "::new("]) {
         "rust"
-    } else if has(&["func ", "guard let", "@State", "import SwiftUI", "struct ", "var body"]) && !has(&["def "]) {
+    } else if has(&["#include", "->", "void ", "int main("]) && !has(&["func ", "def "]) {
+        "c"
+    } else if has(&["func ", "guard let", "@State", "import SwiftUI", "var body"]) && !has(&["def "]) {
         "swift"
     } else if has(&["def ", "import ", "print(", "self.", "elif "]) {
         "python"
@@ -942,7 +979,11 @@ impl Live {
 
     /// Takes in one settled read of the screen.
     pub fn see(&mut self, view: View, now: Instant) {
-        self.status = view.status.clone();
+        // Claude hides its spinner while a long reply streams; its word, not its stale count, stays.
+        self.status = match (view.status.is_empty(), self.stopped) {
+            (true, None) => self.status.split(" (").next().unwrap_or_default().to_string(),
+            _ => view.status.clone(),
+        };
         let held = view.blocks.iter().rposition(|block| self.corpus.holds(block, view.width));
         let fresh: Vec<&Block> = view
             .blocks
