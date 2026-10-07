@@ -1,6 +1,7 @@
 //! An Agent session's Transcript as Conversation entries, shared by Claude, Codex and pi.
 
 mod claude;
+pub use claude::Background;
 mod codex;
 mod pi;
 pub mod vault;
@@ -463,7 +464,7 @@ impl Transcript {
 
     /// Every entry ever parsed, including those on branches pi has left.
     /// What the Agent left running in the background: the starting call and its label.
-    pub fn background(&self) -> &[(String, String)] {
+    pub fn background(&self) -> &[claude::Background] {
         match &self.parser {
             Parser::Claude(parser) => &parser.background,
             _ => &[],

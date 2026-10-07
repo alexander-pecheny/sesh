@@ -450,7 +450,7 @@ impl Follower {
                 transcript
                     .background()
                     .iter()
-                    .map(|(call, label)| json!({"call": call, "label": label}))
+                    .map(|work| json!({"call": work.call, "label": work.label, "agent": work.agent}))
                     .collect()
             })
             .unwrap_or_default();

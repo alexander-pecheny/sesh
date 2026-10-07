@@ -177,7 +177,7 @@ final class Library: ObservableObject {
     }
 
     enum Mark: Int, Comparable {
-        case finished, working, waiting
+        case seen, finished, working, waiting
         static func < (a: Mark, b: Mark) -> Bool { a.rawValue < b.rawValue }
     }
 
@@ -193,7 +193,7 @@ final class Library: ObservableObject {
         guard let state = live[key(session)] else { return nil }
         if state.status == "blocked" { return .waiting }
         if state.status == "working" { return .working }
-        return state.done > seen[key(session), default: state.done] ? .finished : nil
+        return state.done > seen[key(session), default: state.done] ? .finished : .seen
     }
 
     func mark(ofTask task: String) -> Mark? {

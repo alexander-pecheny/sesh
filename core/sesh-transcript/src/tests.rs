@@ -568,5 +568,8 @@ fn claude_background_work_stays_listed_until_its_notification() {
             "content":format!("<task-notification>\n<tool-use-id>{id}</tool-use-id>\n<status>{status}</status>\n</task-notification>")}})
     };
     let transcript = parse("claude", &[started("toolu_a", "Watch CI"), started("toolu_b", "Run the suite"), notified("toolu_a", "completed")]);
-    assert_eq!(transcript.background(), [("toolu_b".to_string(), "Run the suite".to_string())]);
+    assert_eq!(
+        transcript.background(),
+        [Background { call: "toolu_b".into(), label: "Run the suite".into(), agent: false }]
+    );
 }

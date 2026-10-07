@@ -91,7 +91,14 @@ final class Conversation: ObservableObject {
     struct Background: Decodable, Equatable, Identifiable {
         let call: String
         let label: String
+        /// A subagent, which has a Transcript of its own, rather than a command.
+        var agent: Bool?
         var id: String { call }
+    }
+
+    /// The entry of the tool call that started `call`, if it is loaded.
+    func entry(forCall call: String) -> String? {
+        items.lazy.map(\.id).first { $0.hasSuffix(".call.\(call)") }
     }
     @Published private(set) var state = ""
     @Published private(set) var agent: Agent?

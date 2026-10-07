@@ -356,28 +356,61 @@ extension View {
 }
 
 /// What the Agent left running in the background, a command or a subagent; shown only while
-/// there is some, since the working row already says when the Agent itself works.
+/// there is some, since the working row already says when the Agent itself works. It opens
+/// a list of all of it, from which a subagent opens in its own Tab.
 private struct BackgroundLine: View {
     @Environment(\.colorScheme) private var colorScheme
     @ObservedObject var conversation: Conversation
+    @State private var listing = false
 
     private var flavour: Catppuccin.Flavour { colorScheme == .dark ? .mocha : .latte }
 
     var body: some View {
         if let first = conversation.background.first {
-            HStack(spacing: Metric.gap) {
-                ProgressView().controlSize(.mini)
-                Text("In the background: " + (conversation.background.count == 1 ? first.label : "\(first.label) and \(conversation.background.count - 1) more"))
-                    .foregroundStyle(flavour(.subtext0)).lineLimit(1).truncationMode(.tail)
-                    .help(conversation.background.map(\.label).joined(separator: "\n"))
-                Spacer(minLength: 0)
+            Button { listing = true } label: {
+                HStack(spacing: Metric.gap) {
+                    Image(systemName: "gearshape.2").foregroundStyle(flavour(.yellow))
+                    Text("In the background: " + (conversation.background.count == 1 ? first.label : "\(first.label) and \(conversation.background.count - 1) more"))
+                        .foregroundStyle(flavour(.subtext0)).lineLimit(1).truncationMode(.tail)
+                    Image(systemName: "chevron.up").foregroundStyle(flavour(.overlay1))
+                    Spacer(minLength: 0)
+                }
+                .font(.ui(Metric.caption))
+                .padding(.horizontal, Metric.wide)
+                .padding(.vertical, Metric.tiny)
+                .frame(maxWidth: .infinity)
+                .background(flavour(.mantle))
+                .contentShape(.rect)
             }
-            .font(.ui(Metric.caption))
-            .padding(.horizontal, Metric.wide)
-            .padding(.vertical, Metric.tiny)
-            .frame(maxWidth: .infinity)
-            .background(flavour(.mantle))
+            .buttonStyle(.plain)
+            .popover(isPresented: $listing, arrowEdge: .top) { list }
         }
+    }
+
+    private var list: some View {
+        VStack(alignment: .leading, spacing: Metric.gap) {
+            ForEach(conversation.background) { work in
+                HStack(spacing: Metric.gap) {
+                    Image(systemName: work.agent == true ? "person.2" : "terminal").foregroundStyle(flavour(.overlay1))
+                    Text(work.label).lineLimit(2).frame(maxWidth: 360, alignment: .leading)
+                    Spacer(minLength: Metric.gap)
+                    if work.agent == true, let open = conversation.openSubagent {
+                        Button("Open") {
+                            listing = false
+                            open(work.call, work.label)
+                        }
+                    }
+                    if let entry = conversation.entry(forCall: work.call) {
+                        Button("Show") {
+                            listing = false
+                            conversation.focus = entry
+                        }
+                    }
+                }
+                .font(.ui(Metric.note))
+            }
+        }
+        .padding(Metric.pad)
     }
 }
 
@@ -495,8 +528,14 @@ private struct UserBubble: View {
         .padding(.leading, 48)
     }
 
-    /// The user's Markdown too: the whole of it on the Mac, its inline marks on the phone.
-    @ViewBuilder private func message(_ text: String) -> some View {
+    private func message(_ text: String) -> some View { UserText(text: text) }
+}
+
+/// The user's Markdown too: the whole of it on the Mac, its inline marks on the phone.
+private struct UserText: View {
+    let text: String
+
+    var body: some View {
         #if os(macOS)
         Prose(text: text)
         #else
@@ -516,7 +555,7 @@ private struct QueuedBubble: View {
 
     var body: some View {
         VStack(alignment: .trailing, spacing: 6) {
-            Text(message.text)
+            UserText(text: message.text)
                 .font(.ui(15))
                 .foregroundStyle(flavour(.subtext0))
                 .padding(.horizontal, 14)

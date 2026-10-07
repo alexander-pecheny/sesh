@@ -14,13 +14,22 @@ const NOT_TYPED: [&str; 6] = [
     "Caveat: ",
 ];
 
+/// One piece of work left running in the background: the call that started it, what to call
+/// it, and whether it is a subagent rather than a command.
+#[derive(Clone, Debug, PartialEq)]
+pub struct Background {
+    pub call: String,
+    pub label: String,
+    pub agent: bool,
+}
+
 #[derive(Default)]
 pub(super) struct Parser {
     /// A subagent's own Transcript, whose every line is a sidechain of its parent's.
     pub(super) subagent: bool,
     /// Commands and Agents started in the background and not yet reported finished, by the
     /// call that started them, with what to call them.
-    pub(super) background: Vec<(String, String)>,
+    pub(super) background: Vec<Background>,
     questions: HashMap<String, String>,
     hidden_results: HashSet<String>,
     tasks: Vec<(String, String)>,
@@ -105,7 +114,11 @@ impl Parser {
                         .iter()
                         .find_map(|key| input[*key].as_str())
                         .unwrap_or(name);
-                    self.background.push((call.to_string(), label.lines().next().unwrap_or_default().to_string()));
+                    self.background.push(Background {
+                        call: call.to_string(),
+                        label: label.lines().next().unwrap_or_default().to_string(),
+                        agent: super::tool_kind(name) == "task",
+                    });
                 }
                 out.push(match name {
                     "AskUserQuestion" => {
@@ -136,7 +149,7 @@ impl Parser {
             return;
         };
         if status != "running" {
-            self.background.retain(|(started, _)| *started != call);
+            self.background.retain(|work| work.call != call);
         }
     }
 

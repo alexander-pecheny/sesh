@@ -366,20 +366,40 @@ private struct UnfiledRow: View {
     }
 }
 
-/// A Task's Agents at a glance: working, finished unseen, or waiting on the user.
+/// A Task's Agents at a glance, as one dot: hollow when idle and seen, yellow while working,
+/// green for a finished turn not seen yet, orange when an Agent waits on the user.
 struct MarkView: View {
     let mark: Library.Mark?
 
     var body: some View {
+        if let mark {
+            Group {
+                if mark == .seen {
+                    Circle().strokeBorder(.secondary, lineWidth: 1)
+                } else {
+                    Circle().fill(colour(mark))
+                }
+            }
+            .frame(width: 8, height: 8)
+            .help(help(mark))
+        }
+    }
+
+    private func colour(_ mark: Library.Mark) -> Color {
         switch mark {
-        case .working?:
-            ProgressView().controlSize(.mini).help("An Agent is working")
-        case .finished?:
-            Circle().fill(.green).frame(width: 7, height: 7).help("An Agent finished; not seen yet")
-        case .waiting?:
-            Circle().fill(.orange).frame(width: 7, height: 7).help("An Agent is waiting for you")
-        case nil:
-            EmptyView()
+        case .working: .yellow
+        case .finished: .green
+        case .waiting: .orange
+        case .seen: .clear
+        }
+    }
+
+    private func help(_ mark: Library.Mark) -> String {
+        switch mark {
+        case .working: "An Agent is working"
+        case .finished: "An Agent finished; not seen yet"
+        case .waiting: "An Agent is waiting for you"
+        case .seen: "Idle"
         }
     }
 }
