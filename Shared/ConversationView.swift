@@ -665,12 +665,16 @@ private struct QueuedBubble: View {
                 .padding(.vertical, 9)
                 .overlay(RoundedRectangle(cornerRadius: 18).strokeBorder(flavour(.surface1), style: StrokeStyle(lineWidth: 1, dash: [4, 3])))
             HStack(spacing: Metric.pad) {
-                Text("Sent when \(conversation.agent?.title ?? "the Agent") finishes").foregroundStyle(flavour(.overlay1))
-                Button("Edit") { edit(conversation.unqueue(message)) }
-                Button("Interrupt") { Task { await conversation.interrupt() } }
-                if conversation.agent == .claude {
-                    Button("Send now") { Task { await conversation.sendNow() } }
-                        .help("Claude takes it without stopping and reads it at its next step")
+                if message.handed {
+                    Text("Sent; \(conversation.agent?.title ?? "the Agent") reads it at its next step").foregroundStyle(flavour(.overlay1))
+                } else {
+                    Text("Sent when \(conversation.agent?.title ?? "the Agent") finishes").foregroundStyle(flavour(.overlay1))
+                    Button("Edit") { edit(conversation.unqueue(message)) }
+                    Button("Interrupt") { Task { await conversation.interrupt() } }
+                    if conversation.agent == .claude {
+                        Button("Send now") { Task { await conversation.sendNow() } }
+                            .help("Claude takes it without stopping and reads it at its next step")
+                    }
                 }
             }
             .font(.ui(Metric.caption))

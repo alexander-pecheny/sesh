@@ -193,7 +193,7 @@ final class Conversation: ObservableObject {
             if let entry = try? JSONDecoder().decode(Entry.self, from: data) { add(entry) }
         case "state":
             state = line.state ?? state
-            if state != "working", !queued.isEmpty { Task { await sendQueued() } }
+            if state != "working", !waiting.isEmpty { Task { await sendQueued() } }
         case "switch":
             items.append(.switched(id: items.count, reason: line.reason ?? "other"))
             todo = nil
@@ -217,6 +217,9 @@ final class Conversation: ObservableObject {
     }
 
     private func add(_ entry: Entry) {
+        if entry.kind == "user", let text = entry.text {
+            queued.removeAll { $0.handed && text.contains($0.text.trimmingCharacters(in: .whitespacesAndNewlines)) }
+        }
         switch entry.kind {
         case "result": if let call = entry.call { results[call] = entry }
         case "todo": todo = entry
@@ -287,22 +290,38 @@ final class Conversation: ObservableObject {
     struct Queued: Identifiable, Equatable {
         let id = UUID()
         let text: String
+        var handed = false
     }
 
     @Published private(set) var queued: [Queued] = []
     private var sendingQueued = false
 
+    /// Messages not yet handed to the Agent.
+    var waiting: [Queued] { queued.filter { !$0.handed } }
+
     /// Also called by the Library while no view follows the Conversation.
     func sendQueued() async {
-        guard !sendingQueued, let pane, !queued.isEmpty else { return }
+        guard !sendingQueued, !waiting.isEmpty else { return }
         sendingQueued = true
         defer { sendingQueued = false }
-        let text = queued.map(\.text).joined(separator: "\n\n")
-        queued = []
+        await hand()
+    }
+
+    /// The Agent holds a handed message until it reads it, and only then writes it to the
+    /// Transcript; it stays shown, as handed, until it is there.
+    private func hand() async {
+        guard let pane, !waiting.isEmpty else { return }
+        let ids = Set(waiting.map(\.id))
+        let text = waiting.map(\.text).joined(separator: "\n\n")
+        mark(ids, handed: true)
         if let failed = await run("herdr agent prompt \(quote(pane)) \(quote(text))") {
             problem = failed
-            queued.insert(Queued(text: text), at: 0)
+            mark(ids, handed: false)
         }
+    }
+
+    private func mark(_ ids: Set<UUID>, handed: Bool) {
+        for index in queued.indices where ids.contains(queued[index].id) { queued[index].handed = handed }
     }
 
     /// Takes a queued message back, for the input box.
@@ -321,15 +340,7 @@ final class Conversation: ObservableObject {
 
     /// Hands the queue to the Agent at once; Claude takes a message mid-turn, or while it
     /// waits on background work, and reads it at its next step.
-    func sendNow() async {
-        guard let pane, !queued.isEmpty else { return }
-        let text = queued.map(\.text).joined(separator: "\n\n")
-        queued = []
-        if let failed = await run("herdr agent prompt \(quote(pane)) \(quote(text))") {
-            problem = failed
-            queued.insert(Queued(text: text), at: 0)
-        }
-    }
+    func sendNow() async { await hand() }
 
     func stop() async {
         guard let pane else { return }
