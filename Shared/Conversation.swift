@@ -126,6 +126,9 @@ final class Conversation: ObservableObject {
     /// Keeps one entry as a Bookmark; nil where there is no Journal to keep it in.
     var bookmark: ((Entry) -> Void)?
     var copyLink: ((Entry) -> Void)?
+    /// What is typed and not sent; it outlives the view, which goes with every switch of Task.
+    var draft = "" { didSet { if draft != oldValue { saveDraft?(draft) } } }
+    var saveDraft: ((String) -> Void)?
     /// The entry a link or a search result asked to see, scrolled to and marked.
     @Published var focus: String?
     /// Opens the Transcript of the subagent a tool call started, given the call's id.
@@ -289,7 +292,8 @@ final class Conversation: ObservableObject {
     @Published private(set) var queued: [Queued] = []
     private var sendingQueued = false
 
-    private func sendQueued() async {
+    /// Also called by the Library while no view follows the Conversation.
+    func sendQueued() async {
         guard !sendingQueued, let pane, !queued.isEmpty else { return }
         sendingQueued = true
         defer { sendingQueued = false }

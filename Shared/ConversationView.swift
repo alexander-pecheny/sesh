@@ -9,6 +9,7 @@ struct ConversationView: View {
     let fresh: Bool
     var hidden = false
     @State private var draft = ""
+    @State private var notice: String?
     @State private var sending = false
     @State private var picking = false
     @State private var lost = false
@@ -55,7 +56,8 @@ struct ConversationView: View {
                         .background(
                             conversation.focus.map(row.contains) == true ? flavour(.yellow).opacity(0.15) : .clear,
                             in: .rect(cornerRadius: Metric.corner))
-                        .bookmarkable(row.entry, keep: conversation.bookmark, copy: conversation.copyLink, column: row.prose ? Metric.proseColumn : nil)
+                        .bookmarkable(row.entry, keep: confirmed(conversation.bookmark, "Bookmarked in the Journal"),
+                                  copy: confirmed(conversation.copyLink, "Link copied"), column: row.prose ? Metric.proseColumn : nil)
                 }
                 ForEach(conversation.permissions) { PermissionCard(permission: $0, conversation: conversation) }
                 ForEach(conversation.queued) { QueuedBubble(message: $0, conversation: conversation, edit: takeBack) }
@@ -82,16 +84,19 @@ struct ConversationView: View {
             // content shrank: rows above settling move both alike.
             let rose = new.top - old.top, shrank = new.height - old.height
             let resized = abs((new.bottom - new.top) - (old.bottom - old.top)) > 1
-            if new.bottom >= new.height - Metric.control {
+            // While a revealed row is held in place, the view is where the link put it.
+            let holding = pinned.map { $0.until > .now } ?? false
+            if holding {
+            } else if new.bottom >= new.height - Metric.control {
                 atBottom = true
-            } else if !resized, rose < -1, rose < shrank - 1, pinned.map({ $0.until < .now }) ?? true {
+            } else if !resized, rose < -1, rose < shrank - 1 {
                 atBottom = false
                 return
             }
             // New content, or text that has only now measured its height, moves the end away
             // without the reader moving: follow it if the end was in view.
             guard new.height != old.height else { return }
-            if let pinned, pinned.until > .now {
+            if holding, let pinned {
                 position.scrollTo(id: pinned.row, anchor: .top)
             } else if atBottom {
                 position.scrollTo(edge: .bottom)
@@ -104,6 +109,25 @@ struct ConversationView: View {
             // Text above it is still measuring its height; keep the row in place meanwhile.
             pinned = (row.id, .now + 2)
             position.scrollTo(id: row.id, anchor: .top)
+            // The highlight only shows where the link pointed; it fades once the eye has found it.
+            Task {
+                try? await Task.sleep(for: .seconds(3))
+                if conversation.focus == focus { withAnimation(.easeOut(duration: 1)) { conversation.focus = nil } }
+            }
+        }
+        .overlay(alignment: .top) {
+            if let notice {
+                Text(notice)
+                    .font(.ui(Metric.note).weight(.medium))
+                    .foregroundStyle(flavour(.text))
+                    .padding(.horizontal, Metric.pad)
+                    .padding(.vertical, Metric.gap)
+                    .background(flavour(.surface1), in: .capsule)
+                    .shadow(radius: 3)
+                    .padding(Metric.pad)
+                    .transition(.opacity)
+                    .allowsHitTesting(false)
+            }
         }
         .overlay(alignment: .bottom) {
             if !atBottom {
@@ -167,6 +191,7 @@ struct ConversationView: View {
             return .handled
         })
         .onAppear(perform: appeared)
+        .onChange(of: draft) { conversation.draft = draft }
         #if os(macOS)
         .onChange(of: hidden) { field.catchesTyping = !hidden }
         #endif
@@ -270,12 +295,27 @@ struct ConversationView: View {
     }
 
     private func appeared() {
+        if draft.isEmpty { draft = conversation.draft }
         if fresh { DispatchQueue.main.async { field.focus() } }
         #if os(macOS)
         let conversation = conversation
         field.pasteImage = { [weak conversation] data, ext in await conversation?.upload(data, ext: ext) }
         field.catchesTyping = !hidden
         #endif
+    }
+
+    /// An action on a message, followed by a word that it happened.
+    private func confirmed(_ action: ((Conversation.Entry) -> Void)?, _ words: String) -> ((Conversation.Entry) -> Void)? {
+        action.map { action in
+            { entry in
+                action(entry)
+                withAnimation { notice = words }
+                Task {
+                    try? await Task.sleep(for: .seconds(1.5))
+                    withAnimation { if notice == words { notice = nil } }
+                }
+            }
+        }
     }
 
     /// A queued message goes back into the box, ahead of anything typed since.

@@ -77,6 +77,12 @@ final class Library: ObservableObject {
         if let cached = conversations[session.id] { return cached }
         conversation.bookmark = { [weak self] entry in self?.bookmark(entry, in: session.id) }
         conversation.copyLink = { [weak self] entry in self?.copyLink(entry, in: session.id) }
+        conversation.draft = drafts[session.id] ?? ""
+        conversation.saveDraft = { [weak self] text in
+            guard let self else { return }
+            drafts[session.id] = text.isEmpty ? nil : text
+            UserDefaults.standard.set(drafts, forKey: "drafts")
+        }
         if let folder = session.body.path {
             Task { [weak conversation] in
                 let remote = await machine.run("git -C \(quote(folder)) remote get-url origin")
@@ -177,8 +183,18 @@ final class Library: ObservableObject {
         unfiled = found
         live = states
         markSeen()
+        sendQueued()
         // Every poll: a mark that waits for a slower one shows a turn already over or begun.
         await refreshBackground()
+    }
+
+    /// A queued message waits for the Agent's turn to end, which only an open Conversation
+    /// watches; one closed by a switch of Task is sent from here.
+    private func sendQueued() {
+        for (id, conversation) in conversations where !conversation.queued.isEmpty {
+            guard let session = vault(of: id)?.records[id], let state = live[key(session)] else { continue }
+            if state.status != "working" || turnOver.contains(key(session)) { Task { await conversation.sendQueued() } }
+        }
     }
 
     // MARK: Marks
@@ -388,6 +404,8 @@ final class Library: ObservableObject {
     }
 
     // MARK: Bookmarks and links
+
+    private var drafts = UserDefaults.standard.dictionary(forKey: "drafts") as? [String: String] ?? [:]
 
     /// Items a link asked for in Conversations not open yet.
     private var pendingFocus: [String: String] = [:]

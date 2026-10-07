@@ -135,8 +135,12 @@ final class Machine: Runner, Identifiable, Hashable {
                 do {
                     try process.run()
                     running.insert(process)
+                    if Task.isCancelled { process.terminate() }
                     if let feed, let input {
-                        feed.fileHandleForWriting.write(input)
+                        // The throwing write: the old one raises an Objective-C exception when the
+                        // command has already gone, and one escaping a Task breaks Swift's executor
+                        // bookkeeping until the next click crashes.
+                        try? feed.fileHandleForWriting.write(contentsOf: input)
                         try? feed.fileHandleForWriting.close()
                     }
                     if let feed, input == nil { tethers[ObjectIdentifier(process)] = feed }
@@ -145,7 +149,8 @@ final class Machine: Runner, Identifiable, Hashable {
                 }
             }
         } onCancel: {
-            process.terminate()
+            // Terminating a process not yet launched raises; one cancelled first ends after launch.
+            if process.isRunning { process.terminate() }
         }
     }
 }
