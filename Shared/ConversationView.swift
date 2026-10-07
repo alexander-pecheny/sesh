@@ -28,9 +28,13 @@ struct ConversationView: View {
     /// Grows whenever something lands at the bottom.
     private var changes: Int {
         conversation.items.count + conversation.permissions.count + conversation.queued.count + (working ? 1 : 0)
-            + conversation.live.text.count
+            + conversation.live.reduce(0) { $0 + ($1.text ?? $1.summary).count }
     }
     private static let nearTop = 200.0
+    private static let rowSpacing: CGFloat = 14
+    private static let focusTint = 0.15
+    private static let shadow: CGFloat = 3
+    private static let jumpWidth: CGFloat = 320
 
     /// Pages back while the reader stays near the top and herdr has more.
     private func loadEarlier() async {
@@ -43,7 +47,7 @@ struct ConversationView: View {
 
     var body: some View {
         ScrollView {
-            LazyVStack(alignment: .leading, spacing: 14) {
+            LazyVStack(alignment: .leading, spacing: Self.rowSpacing) {
                 if conversation.earlier { ProgressView().frame(maxWidth: .infinity) }
                 if conversation.loaded, conversation.items.isEmpty, conversation.pane != nil {
                     Text("\(conversation.agent?.title ?? "The Agent") is ready. Its Conversation starts with your first message.")
@@ -51,22 +55,24 @@ struct ConversationView: View {
                         .frame(maxWidth: .infinity)
                         .padding(.top, Metric.wide)
                 }
-                ForEach(Row.rows(conversation.items)) { row in
+                ForEach(Row.rows(conversation.shown, key: conversation.rowKey)) { row in
                     RowView(row: row, conversation: conversation)
                         .padding(Metric.tiny)
                         .background(
-                            conversation.focus.map(row.contains) == true ? flavour(.yellow).opacity(0.15) : .clear,
+                            conversation.focus.map(row.contains) == true ? flavour(.yellow).opacity(Self.focusTint) : .clear,
                             in: .rect(cornerRadius: Metric.corner))
-                        .bookmarkable(row.entry, keep: confirmed(conversation.bookmark, "Bookmarked in the Journal"),
+                        .bookmarkable(row.entry, live: row.live, keep: confirmed(conversation.bookmark, "Bookmarked in the Journal"),
                                   copy: confirmed(conversation.copyLink, "Link copied"), column: row.prose ? Metric.proseColumn : nil)
                 }
                 ForEach(conversation.permissions) { PermissionCard(permission: $0, conversation: conversation) }
                 ForEach(conversation.queued) { QueuedBubble(message: $0, conversation: conversation, edit: takeBack) }
-                if !conversation.live.text.isEmpty { LiveTail(text: conversation.live.text) }
-                if working { WorkingRow(status: conversation.live.status) }
+                // Waiting on background work, Claude's own status line says on what.
+                if working || conversation.state == "background" && !conversation.status.isEmpty {
+                    WorkingRow(status: conversation.status)
+                }
             }
             .scrollTargetLayout()
-            .padding(16)
+            .padding(Metric.wide)
             // An opening card with an unbroken path asks for more than the screen; never give it.
             .fitWidth()
         }
@@ -117,7 +123,7 @@ struct ConversationView: View {
                     .padding(.horizontal, Metric.pad)
                     .padding(.vertical, Metric.gap)
                     .background(flavour(.surface1), in: .capsule)
-                    .shadow(radius: 3)
+                    .shadow(radius: Self.shadow)
                     .padding(Metric.pad)
                     .transition(.opacity)
                     .allowsHitTesting(false)
@@ -129,10 +135,10 @@ struct ConversationView: View {
                     Text("Move to bottom ↓")
                         .font(.ui(Metric.note).weight(.medium))
                         .foregroundStyle(flavour(.text))
-                        .frame(maxWidth: 320)
+                        .frame(maxWidth: Self.jumpWidth)
                         .padding(.vertical, Metric.gap)
                         .background(flavour(.surface1), in: .capsule)
-                        .shadow(radius: 3)
+                        .shadow(radius: Self.shadow)
                 }
                 .buttonStyle(.plain)
                 .padding(Metric.pad)
@@ -180,6 +186,8 @@ struct ConversationView: View {
         }
         .task { await conversation.follow() }
         .environment(\.openURL, OpenURLAction { url in
+            // A link read off the screen, whose address only the Transcript has.
+            if url.absoluteString == "about:blank" { return .handled }
             guard let path = PathLinks.path(from: url), let open = conversation.openPath else { return .systemAction }
             open(path)
             return .handled
@@ -294,7 +302,7 @@ struct ConversationView: View {
     /// Scrolls to the item a link pointed at, set before this view existed or while it shows.
     private func showFocus() {
         guard let focus = conversation.focus,
-              let row = Row.rows(conversation.items).first(where: { $0.contains(focus) }) else { return }
+              let row = Row.rows(conversation.items, key: conversation.rowKey).first(where: { $0.contains(focus) }) else { return }
         atBottom = false
         // Text above it is still measuring its height; keep the row in place meanwhile.
         pinned = (row.id, .now + 2)
@@ -373,6 +381,8 @@ private struct AgentText: View {
 private struct Bookmarkable: ViewModifier {
     @Environment(\.colorScheme) private var colorScheme
     let entry: Conversation.Entry?
+    /// A live item, which the Transcript will hold soon: it takes the room its icons will need.
+    let live: Bool
     let keep: ((Conversation.Entry) -> Void)?
     let copy: ((Conversation.Entry) -> Void)?
     /// How wide a reply's text column is, so the icon sits at its corner, not the window's.
@@ -415,7 +425,7 @@ private struct Bookmarkable: ViewModifier {
                 .contentShape(.rect)
                 .onHover { hovered = $0 }
         } else {
-            content
+            content.padding(.trailing, live && keep != nil ? Self.gutter : 0)
         }
     }
 
@@ -432,9 +442,9 @@ private struct Bookmarkable: ViewModifier {
 }
 
 extension View {
-    fileprivate func bookmarkable(_ entry: Conversation.Entry?, keep: ((Conversation.Entry) -> Void)?,
+    fileprivate func bookmarkable(_ entry: Conversation.Entry?, live: Bool, keep: ((Conversation.Entry) -> Void)?,
                                   copy: ((Conversation.Entry) -> Void)?, column: CGFloat?) -> some View {
-        modifier(Bookmarkable(entry: entry, keep: keep, copy: copy, column: column))
+        modifier(Bookmarkable(entry: entry, live: live, keep: keep, copy: copy, column: column))
     }
 }
 
@@ -505,19 +515,18 @@ private struct Edge: Equatable {
 }
 
 /// What the list shows: one entry, or a run of reads, searches and fetches as one line.
-private enum Row: Identifiable {
-    case item(Conversation.Item)
-    case lookups([Conversation.Entry])
-
-    var id: String {
-        switch self {
-        case .item(let item): item.id
-        case .lookups(let entries): entries[0].id
-        }
+private struct Row: Identifiable {
+    enum Content {
+        case item(Conversation.Item)
+        case lookups([Conversation.Entry])
     }
 
+    var content: Content
+    /// The first entry's row: an entry that replaced a live item keeps that item's row.
+    let id: String
+
     func contains(_ id: String) -> Bool {
-        switch self {
+        switch content {
         case .item(let item): item.id == id
         case .lookups(let entries): entries.contains { $0.id == id }
         }
@@ -526,31 +535,34 @@ private enum Row: Identifiable {
     /// A reply set in the prose column, rather than a card, a bubble or a table, which takes
     /// the whole width and caps each cell instead.
     var prose: Bool {
-        guard case .item(.entry(let entry)) = self, entry.kind == "text" else { return false }
+        guard case .item(.entry(let entry)) = content, entry.kind == "text" else { return false }
         return !Cmark.hasTable(entry.text ?? "")
     }
 
-    /// The entry a Bookmark of this row keeps.
+    var live: Bool { Conversation.isLive(id) }
+
+    /// The entry a Bookmark of this row keeps; a live item is not in the Transcript yet.
     var entry: Conversation.Entry? {
-        switch self {
+        let entry: Conversation.Entry? = switch content {
         case .item(.entry(let entry)): entry
         case .lookups(let entries): entries.first
         case .item(.switched): nil
         }
+        return entry.flatMap { Conversation.isLive($0.id) ? nil : $0 }
     }
 
-    static func rows(_ items: [Conversation.Item]) -> [Row] {
+    static func rows(_ items: [Conversation.Item], key: (String) -> String) -> [Row] {
         var rows: [Row] = []
         for item in items {
             guard case .entry(let entry) = item, entry.kind == "tool",
                   ["read", "search", "fetch"].contains(entry.tool) else {
-                rows.append(.item(item))
+                rows.append(Row(content: .item(item), id: key(item.id)))
                 continue
             }
-            if case .lookups(let run)? = rows.last {
-                rows[rows.count - 1] = .lookups(run + [entry])
+            if case .lookups(let run)? = rows.last?.content {
+                rows[rows.count - 1].content = .lookups(run + [entry])
             } else {
-                rows.append(.lookups([entry]))
+                rows.append(Row(content: .lookups([entry]), id: key(entry.id)))
             }
         }
         return rows
@@ -565,7 +577,7 @@ private struct RowView: View {
     private var flavour: Catppuccin.Flavour { colorScheme == .dark ? .mocha : .latte }
 
     var body: some View {
-        switch row {
+        switch row.content {
         case .lookups(let entries): Lookups(entries: entries)
         case .item(.switched(_, let reason)): SwitchDivider(reason: reason)
         case .item(.entry(let entry)):

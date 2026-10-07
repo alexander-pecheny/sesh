@@ -1,0 +1,40 @@
+  
+  [0m[38;2;153;153;153mRan [0m[1m[38;2;153;153;153m1[0m[38;2;153;153;153m shell command [0m
+
+[0m[38;2;255;255;255m⏺ [0mFloating point sacrifices exactness for huge range (0.1 isn't stored exactly), but IEEE 754 hardware support makes it
+  fast—decimal types are worth the tradeoff mainly for money calculations.[0m[38;2;80;80;80m · summary[0m
+
+[0m[38;2;78;186;101m⏺[0m [0m[1mWrite[0m(notes2.txt) 
+[0m[38;2;153;153;153m  ⎿  [0mWrote [0m[1m10[0m lines to [0m[1mnotes2.txt[0m
+     [0m[2m[38;2;248;248;242m  1 [0m[38;2;248;248;242mRounding replaces a number with a nearby one that is easier to store.[0m
+     [0m[2m[38;2;248;248;242m  2 [0m[38;2;248;248;242mEvery finite format must round, because most real numbers need infinite digits.[0m
+     [0m[2m[38;2;248;248;242m  3 [0m[38;2;248;248;242mThe common rule is round half to even, also called banker's rounding.[0m
+     [0m[2m[38;2;248;248;242m  4 [0m[38;2;248;248;242mIt sends 2.5 to 2 and 3.5 to 4, so errors cancel instead of piling up.[0m
+     [0m[2m[38;2;248;248;242m  5 [0m[38;2;248;248;242mRound half up, taught in schools, drifts upward over many sums.[0m
+     [0m[2m[38;2;248;248;242m  6 [0m[38;2;248;248;242mIEEE 754 uses round to nearest even as its default mode.[0m
+     [0m[2m[38;2;248;248;242m  7 [0m[38;2;248;248;242mEach operation can add an error of at most half a unit in the last place.[0m
+     [0m[2m[38;2;248;248;242m  8 [0m[38;2;248;248;242mSmall errors compound when thousands of operations run in sequence.[0m
+     [0m[2m[38;2;248;248;242m  9 [0m[38;2;248;248;242mSubtracting two near-equal numbers can wipe out most of the correct digits.[0m
+     [0m[2m[38;2;248;248;242m 10 [0m[38;2;248;248;242mCareful code orders its sums to limit this loss, or rounds only once at the end.[0m
+
+[0m[38;2;255;255;255m⏺ [0mThe shell command printed [0m[38;2;177;185;249mok[0m, and notes2.txt now holds ten lines on rounding. Floating point stays the default
+  because speed and range matter more than exact decimals in most work, and the rare cases that need exactness have a
+  dedicated tool.
+
+[0m[38;2;153;153;153m✻ Cogitated for 16s · done 12:03 AM[0m
+
+[0m[38;2;153;153;153m[48;2;55;55;55m❯ [0m[38;2;255;255;255m[48;2;55;55;55mWrite four long paragraphs (about 90 words each, no line breaks inside them) about the history of slide rules, with [0m[48;2;55;55;55m [0m
+[0m[48;2;55;55;55m  [0m[38;2;255;255;255m[48;2;55;55;55ma few [0m[1m[38;2;255;255;255m[48;2;55;55;55mbold[0m[38;2;255;255;255m[48;2;55;55;55m phrases, [0m[38;2;177;185;249m[48;2;55;55;55mcode[0m[38;2;255;255;255m[48;2;55;55;55m and a [link](https://en.wikipedia.org/wiki/Slide_rule). Then a numbered list of three long [0m[48;2;55;55;55m [0m
+[0m[48;2;55;55;55m  [0m[38;2;255;255;255m[48;2;55;55;55mitems (about 40 words each). Then run [0m[38;2;177;185;249m[48;2;55;55;55msleep 2; echo done[0m[38;2;255;255;255m[48;2;55;55;55m. Then a closing paragraph.[0m[48;2;55;55;55m                                  [0m
+
+[0m[38;2;255;255;255m⏺ [0mThe slide rule rests on a single idea: logarithms turn multiplication into addition. John Napier published his tables
+  of logarithms in 1614, and within a decade Edmund Gunter had marked a logarithmic scale on a wooden rod, which users
+  read by stepping off lengths with a pair of dividers. Around 1622 the English clergyman [0m[1mWilliam Oughtred[0m set two
+  such scales side by side so that one could slide against the other, which removed the dividers altogether. The result
+
+[0m[38;2;215;119;87m✳ Roosting… [0m[38;2;153;153;153m(14s · ↓ 1.4k tokens · thought for 12s)[0m
+
+[0m[38;2;136;136;136m───────────────────────────────────────────────────────────────────────────────────────────────────────────────────────[0m
+[0m[38;2;153;153;153m❯ [0m
+[0m[38;2;136;136;136m───────────────────────────────────────────────────────────────────────────────────────────────────────────────────────[0m
+  [0m[38;2;255;107;128m⏵⏵ bypass permissions on[0m[38;2;153;153;153m (shift+tab to cycle) · esc to interrupt · ← for agents[0m

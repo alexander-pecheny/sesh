@@ -580,6 +580,33 @@ fn claude_background_work_stays_listed_until_its_notification() {
 }
 
 #[test]
+fn an_agent_claude_sent_to_the_background_unasked_counts_until_its_notification() {
+    let at = "2026-10-07T20:02:41.903Z";
+    let launched = |id: &str, description: &str| {
+        [
+            json!({"type":"assistant","timestamp":at,"message":{"content":[{"type":"tool_use","id":id,"name":"Agent",
+                "input":{"subagent_type":"fork","description":description,"prompt":"..."}}]}}),
+            json!({"type":"user","timestamp":at,"message":{"role":"user","content":[{"type":"tool_result","tool_use_id":id,
+                "content":[{"type":"text","text":"Async agent launched successfully."}]}]},
+                "toolUseResult":{"isAsync":true,"status":"async_launched","agentId":"a1a8","description":description}}),
+        ]
+    };
+    let notified = json!({"type":"user","timestamp":at,"origin":{"kind":"task-notification"},"message":{"role":"user",
+        "content":"<task-notification>\n<tool-use-id>toolu_p</tool-use-id>\n<status>completed</status>\n</task-notification>"}});
+    let [python, python_result] = launched("toolu_p", "Build Python chgksuite side");
+    let [go, go_result] = launched("toolu_g", "Build Go dopesuite side");
+    let transcript = parse("claude", &[python, python_result, go, go_result.clone(), notified]);
+    assert_eq!(transcript.background(), [Background { call: "toolu_g".into(), label: "Build Go dopesuite side".into(), agent: true }]);
+    let dir = std::env::temp_dir().join(format!("sesh-async-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    std::fs::write(dir.join("t.jsonl"), format!("{go_result}\n")).unwrap();
+    let mut scanned = Transcript::new("claude", dir.join("t.jsonl")).unwrap();
+    scanned.scan_background().unwrap();
+    std::fs::remove_dir_all(&dir).unwrap();
+    assert_eq!(scanned.background().len(), 1);
+}
+
+#[test]
 fn claude_turn_is_over_after_end_turn_until_the_user_speaks() {
     let at = "2026-10-05T14:54:42.186Z";
     let reply = |reason: &str| json!({"type":"assistant","timestamp":at,"message":{"stop_reason":reason,"content":[{"type":"text","text":"ok"}]}});
@@ -641,41 +668,4 @@ fn narration_sent_as_thinking_reads_as_text() {
     ]);
     assert_eq!(kinds(&transcript), ["text", "thinking"]);
     assert_eq!(transcript.entries[0].text.as_deref(), Some("The runtime theory is ruled out."));
-}
-
-fn claude_screen(body: &str) -> String {
-    let rule = "─".repeat(60);
-    let notice = format!("{:>90}", "✔ Update installed · Restart to update");
-    format!("{body}\n\n✳ Ebbing… (9m 36s · ↓ 33.4k tokens)\n  ⎿  Tip: Use /btw to ask a quick side question\n{notice}\n{rule}\n❯ \n{rule}\n  ⏵⏵ bypass permissions on · esc to interrupt\n\n  ⏺ main")
-}
-
-fn said(kind: &'static str, text: &str) -> Entry {
-    Entry { kind, text: Some(text.into()), ..Entry::default() }
-}
-
-#[test]
-fn the_live_tail_is_what_the_screen_shows_past_the_transcript() {
-    let body = "⏺ Config file access isn't the culprit, so I'll build the Dev app with Address\n  Sanitizer and rerun the steps.\n\n  Building the Dev app with Address Sanitizer\n  ⎿  $ xcodebuild -project Sesh.xcodeproj\n     -enableAddressSanitizer YES build\n\n⏺ The build passed. Next I run it through the\n  switches:\n  - open a session\n  - send";
-    let mut entries = vec![
-        said("text", "Config file access isn't the **culprit**, so I'll build the Dev app with Address Sanitizer and rerun the steps."),
-        Entry { kind: "tool", command: Some("xcodebuild -project Sesh.xcodeproj -enableAddressSanitizer YES build".into()), description: Some("Building the Dev app with Address Sanitizer".into()), ..Entry::default() },
-    ];
-    let live = live::live(&claude_screen(body), &entries);
-    assert_eq!(live.status, "Ebbing… (9m 36s · ↓ 33.4k tokens)");
-    assert_eq!(live.text, "The build passed. Next I run it through the switches:\n- open a session\n- send");
-    entries.push(said("text", "The build passed. Next I run it through the switches:\n\n- open a session\n- send"));
-    assert_eq!(live::live(&claude_screen(body), &entries).text, "");
-}
-
-#[test]
-fn tool_chrome_after_the_transcript_is_not_live() {
-    let body = "⏺ No nested run loops in our code.\n\n  Searched for 1 pattern, ran 1 shell command\n\n⏺ Press Copy Link and look for the notices · 3s\n  ⎿  $ ax press \"Copy Link\"\n\n⏺ Reading /home/u/notes.txt";
-    let entries = vec![
-        said("text", "No nested run loops in our code."),
-        Entry { kind: "tool", description: Some("Press Copy Link and look for the notices".into()), ..Entry::default() },
-        Entry { kind: "tool", file: Some("/home/u/notes.txt".into()), ..Entry::default() },
-    ];
-    let status = "Ebbing… (9m 36s · ↓ 33.4k tokens)".to_string();
-    assert_eq!(live::live(&claude_screen(body), &entries), live::Live { text: String::new(), status });
-    assert_eq!(live::live("no prompt box here", &entries), live::Live::default());
 }

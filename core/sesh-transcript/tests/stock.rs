@@ -117,7 +117,7 @@ fn follows_a_claude_session_found_by_its_id_and_its_switch_after_clear() {
     let first = burst(&lines);
     assert_eq!(
         kinds(&first),
-        ["hello", "entry:user", "entry:text", "state", "cursor"]
+        ["hello", "entry:user", "entry:text", "state", "live", "cursor"]
     );
     assert_eq!(first[0]["protocol"], 2);
     assert_eq!(

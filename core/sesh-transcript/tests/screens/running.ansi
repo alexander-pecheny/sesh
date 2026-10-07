@@ -1,0 +1,40 @@
+[0m[48;2;55;55;55m  [0m[38;2;255;255;255m[48;2;55;55;55mline, "### Heading three", blank line, "[0m[1m[38;2;255;255;255m[48;2;55;55;55mA whole bold line[0m[38;2;255;255;255m[48;2;55;55;55m", blank line, "#### Heading four", blank line, "Plain [0m[48;2;55;55;55m     [0m
+[0m[48;2;55;55;55m  [0m[3m[38;2;255;255;255m[48;2;55;55;55mitalic[0m[38;2;255;255;255m[48;2;55;55;55m end."[0m[48;2;55;55;55m                                                                                                         [0m
+
+[0m[38;2;255;255;255m⏺[0m [0m[1m[3m[4mHeading one[0m
+
+  [0m[1mHeading two[0m
+
+  [0m[1mHeading three[0m
+
+  [0m[1mA whole bold line[0m
+
+  [0m[1mHeading four[0m
+
+  Plain [0m[3mitalic[0m end.
+
+[0m[38;2;153;153;153m✻ Sautéed for 1s · done 10:15 PM[0m
+
+[0m[38;2;153;153;153m[48;2;55;55;55m❯ [0m[38;2;255;255;255m[48;2;55;55;55mDo these one at a time, each as its own step, with one short sentence of narration before each: 1) make a todo list [0m[48;2;55;55;55m [0m
+[0m[48;2;55;55;55m  [0m[38;2;255;255;255m[48;2;55;55;55mof the steps with TodoWrite; 2) run [0m[38;2;177;185;249m[48;2;55;55;55msleep 4; ls[0m[38;2;255;255;255m[48;2;55;55;55m with the description "List the project after a pause"; 3) grep for [0m[48;2;55;55;55m  [0m
+[0m[48;2;55;55;55m  [0m[38;2;255;255;255m[48;2;55;55;55m"def" in the project; 4) create notes.txt with Write containing two lines; 5) Edit calc.py to add a docstring to [0m[48;2;55;55;55m    [0m
+[0m[48;2;55;55;55m  [0m[38;2;255;255;255m[48;2;55;55;55madd(); 6) launch a general-purpose subagent (Agent tool, not in background) with the description "Count lines in [0m[48;2;55;55;55m    [0m
+[0m[48;2;55;55;55m  [0m[38;2;255;255;255m[48;2;55;55;55mcalc.py" that runs wc -l calc.py and reports; 7) finish with a two-sentence summary.[0m[48;2;55;55;55m                                 [0m
+
+[0m[38;2;255;255;255m⏺ [0mStep 1: I will check whether TodoWrite is available, since it is not in my tool list.
+
+[0m[38;2;255;255;255m⏺ [0mTodoWrite does not exist in this session, so I skip step 1 and move to step 2.
+
+[0m[38;2;153;153;153m⏺ [0mRunning [0m[1m1 [0mshell command[0m[38;2;153;153;153m · 2s[0m…
+[0m[38;2;153;153;153m  ⎿  $ sleep 4; ls (3s)[0m
+     [0m[38;2;153;153;153m(ctrl+b to run in background)[0m
+
+[0m[38;2;153;153;153m[48;2;55;55;55m❯ Also, mid-turn note: make the summary mention notes.txt.[0m[48;2;55;55;55m                                                             [0m
+  [0m[38;2;153;153;153mctrl+enter to send now[0m
+
+[0m[38;2;215;119;87m✻ [0m[38;2;218;124;92mBoogieing…[0m[38;2;215;119;87m [0m[38;2;153;153;153m(7s · ↓ 326 tokens)[0m
+
+[0m[38;2;136;136;136m───────────────────────────────────────────────────────────────────────────────────────────────────────────────────────[0m
+[0m[38;2;153;153;153m❯ [0m[2mPress up to edit queued messages[0m
+[0m[38;2;136;136;136m───────────────────────────────────────────────────────────────────────────────────────────────────────────────────────[0m
+  [0m[38;2;255;107;128m⏵⏵ bypass permissions on[0m[38;2;153;153;153m (shift+tab to cycle) · esc to interrupt · ← for agents[0m

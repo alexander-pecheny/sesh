@@ -352,14 +352,44 @@ JSON object per line, flushed per line, until killed. N defaults to 50 entries.
 {"t":"permission","id":"<id>","tool":"<raw name>","summary":"<one line>","command":"<shell, if any>","file":"<path, if any>","reason":"<text, if any>"}
 {"t":"permission_done","id":"<id>"}
 {"t":"cursor","cursor":"<opaque>"}
-{"t":"live","text":"<screen text past the Transcript>","status":"<the Agent's status line>"}
+{"t":"live","items":[...entry],"status":"<the Agent's status line>"}
 ```
 
-`live` comes only for Claude, while it works, and again empty once it stops. The helper
-reads the pane's screen twice a second and sends the paragraphs below the last one the
-Transcript already holds, starting at Claude's own text or the user's, and the spinner
-line. Claude writes a reply to its Transcript only once the tool call after it is
-complete, seconds after the screen shows it.
+**Live items.** Claude writes a message to its Transcript only once the whole message has
+streamed, so a reply's text shows on the screen half a second to several seconds before the
+Transcript has it, and minutes before after a compaction mid-turn. While Claude works, the
+helper reads the pane's screen with its styles (`herdr pane read --format ansi`) every
+100 ms and sends what the screen shows beyond the Transcript as provisional entries,
+`items`. They are ordinary entries whose ids start with `live.`:
+
+- a `text` entry for each reply (`⏺`), whose Markdown is rebuilt from the styles: bold,
+  italic, strikethrough, inline code and links by their colours, the first heading level by
+  its underline, lists, quotes, fenced code, and tables from their box drawing. A wrapped
+  line is joined to the next unless the next word would have fitted, which marks a line
+  break in the reply.
+- a `tool` entry for a shell command that has run half a second without the Transcript
+  holding it, from its `$ command` line and the line above.
+
+Claude Code draws its own viewport, so herdr keeps no scrollback. A reply whose top has
+scrolled away is extended from what earlier reads saw; one never seen from its start is
+not sent. A read can land in the middle of a redraw, so a changed screen is read again and
+used only when two reads agree. A screen without the prompt box, such as a permission or
+question menu, changes nothing. Notices, tool summaries, the footer and anything at the
+right edge are never items.
+
+`live` is sent whenever the items or the status change. When the Transcript delivers an
+entry that covers an item (text by its visible words, a command by its words), the entry's
+line carries `"replaces":"live.N"`, and that item and any before it leave the next `live`.
+Sesh shows the items after the entries with the usual rows, and the entry that replaces an
+item takes over its row, so nothing moves. Items go once Claude has stopped working for
+three seconds. The status is the spinner line above the prompt box, with or without an
+ellipsis, and never a finished turn's line such as "Churned for 6s". Older Sesh ignores
+`items` and `replaces`.
+
+The screen cannot tell a few things apart, so these can change when the Transcript's entry
+replaces an item: a heading of level 2 to 4 looks like a bold line and is sent as one, a
+link's address is not on the screen, a code block's language is guessed, and a command's
+description is the screen's rewording of it, or missing while other tools run beside it.
 
 Every entry has `id` (stable across reconnects, opaque to Sesh), `kind`, `summary` (one
 plain line, used for kinds Sesh does not know) and `at` (RFC 3339). A `tool` entry's id
