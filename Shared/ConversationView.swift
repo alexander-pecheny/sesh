@@ -78,9 +78,13 @@ struct ConversationView: View {
             .onScrollGeometryChange(for: Edge.self) { geometry in
                 Edge(height: geometry.contentSize.height, bottom: geometry.visibleRect.maxY)
             } action: { old, new in
-                // New content moves the end away without the reader moving; only a change at the
-                // same height, a scroll or a resize, says whether the end is in view.
-                guard new.height == old.height else { return }
+                // New content, or text that has only now measured its height, moves the end away
+                // without the reader moving: follow it if the end was in view. Only a change at
+                // the same height, a scroll or a resize, says whether the end is in view.
+                guard new.height == old.height else {
+                    if atBottom { reader.scrollTo(Self.end, anchor: .bottom) }
+                    return
+                }
                 atBottom = new.bottom >= new.height - Metric.control
             }
             .onChange(of: conversation.focus) {
@@ -96,10 +100,7 @@ struct ConversationView: View {
             .onChange(of: changes) {
                 // A Conversation shorter than the screen never scrolls to the top to ask.
                 if nearTop { Task { await loadEarlier() } }
-                guard atBottom else { return }
-                reader.scrollTo(Self.end, anchor: .bottom)
-                // Text measured by AppKit settles its height a moment later; follow it there.
-                DispatchQueue.main.asyncAfter(deadline: .now() + 0.15) { if atBottom { reader.scrollTo(Self.end, anchor: .bottom) } }
+                if atBottom { reader.scrollTo(Self.end, anchor: .bottom) }
             }
         }
         .scrollDismissesKeyboard(.interactively)
