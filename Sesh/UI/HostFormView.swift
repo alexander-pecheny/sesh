@@ -18,9 +18,6 @@ struct HostFormView: View {
                     LabeledField("User", NSUserName(), text: $host.user)
                 }
                 Section {
-                    Picker("Opens", selection: Binding(get: { host.opens }, set: { host.uiMode = $0 })) {
-                        ForEach(Host.UIMode.allCases) { Text($0.label).tag($0) }
-                    }
                     Picker("Transport", selection: $host.transport) {
                         ForEach(Host.Transport.allCases) { transport in
                             Text(transport.label).tag(transport)

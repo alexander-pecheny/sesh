@@ -7,12 +7,6 @@ struct Host: Codable, Identifiable, Equatable {
         var label: String { self == .ssh ? "SSH" : "mosh" }
     }
 
-    enum UIMode: String, Codable, CaseIterable, Identifiable {
-        case terminal, projects
-        var id: String { rawValue }
-        var label: String { self == .terminal ? "Terminal" : "Projects" }
-    }
-
     var id = UUID()
     var name = ""
     var address = ""
@@ -24,10 +18,6 @@ struct Host: Codable, Identifiable, Equatable {
     var sshFlags = ""
     var moshFlags = ""
     var remoteCommand = ""
-    /// Optional so Hosts saved before UI modes existed still decode.
-    var uiMode: UIMode?
-
-    var opens: UIMode { uiMode ?? .terminal }
 
     var title: String { name.isEmpty ? "\(user)@\(address)" : name }
     var subtitle: String { "\(user)@\(address):\(port)" }

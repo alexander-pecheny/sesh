@@ -53,7 +53,7 @@ struct NewTaskSheet: View {
             repo = UserDefaults.standard.string(forKey: recentKey) ?? ""
         }
         .onChange(of: alias) { repo = UserDefaults.standard.string(forKey: recentKey) ?? repo }
-        .onChange(of: title) { if !branchEdited { branch = TaskActions.branch(for: title) } }
+        .onChange(of: title) { if !branchEdited { branch = TaskActions.branch(for: title, user: NSUserName()) } }
     }
 
     private func create() async {

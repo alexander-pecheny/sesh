@@ -557,9 +557,22 @@ release builds. Transcripts are copied only while the Mac app runs. Until `just
 helpers-release` publishes a helper that speaks the Vault protocol, launch the app with
 `-helpers $PWD/build/helpers` to install the local build.
 
+**The phone (7 October 2026).** The iOS app's main screen is now the Tasks, and the
+Terminal and Projects UI modes are gone. The Vault, Library, Task actions, Copier, search
+and Document text live in `Shared/` and run on a `Machine` each platform provides: on the
+Mac an ssh alias over system ssh, on the phone a Host from the app's list reached through
+one Link per Host, matched to the Vault's alias. Adding a Vault on the phone takes its
+name, the Host and the alias the Mac uses for that Host, so a Vault made on the Mac opens
+on both. A Task opens its Journal, Agent sessions, Documents, subagents and Terminals in
+a strip of Tabs; a Terminal, and an Agent's own terminal, is an ordinary Session whose
+remote command is `herdr terminal attach`, with the keys row, Editor and Uploads. Hosts
+and Keys moved to Settings, where a Host still opens a plain shell. The phone cannot reach
+the Mac, so a Task's Tabs on the Mac stay closed there, and it copies Transcripts only
+while it is open. `scripts/e2e.py` still drives the old Hosts screen and needs rewriting.
+
 **Later.** State marks on Tasks and a Waiting list, ⌘K to jump by name, a better view of
 Conflict copies, archiving with Worktree removal, several Vaults in the UI, the fork on a
-public mirror with release builds, distribution, and Tasks on the phone.
+public mirror with release builds, and distribution.
 
 ## Follow-ups after phase 5
 

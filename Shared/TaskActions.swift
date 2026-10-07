@@ -9,11 +9,11 @@ enum TaskActions {
     /// The machines a Task can start Tabs on: its Worktree's alone, or the Vault's and the Mac.
     static func machines(for task: Record, in vault: Vault) -> [Machine] {
         if task.body.path != nil { return [machine(task.body.machine)] }
-        return vault.place.alias == nil ? [.mac] : [vault.machine, .mac]
+        return vault.place.alias == nil ? Machine.here : [vault.machine] + Machine.here
     }
 
     /// The branch a title suggests, under the user's name as herdr's own branches are.
-    static func branch(for title: String) -> String { "\(NSUserName())/\(Names.slug(title))" }
+    static func branch(for title: String, user: String) -> String { "\(user)/\(Names.slug(title))" }
 
     /// Makes the Worktree a new Task asked for and records it on the Task.
     static func makeWorktree(for task: Record, repo: String, branch: String, on machine: Machine, in vault: Vault) async -> String? {

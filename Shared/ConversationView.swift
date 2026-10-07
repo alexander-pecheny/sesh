@@ -197,8 +197,8 @@ struct ConversationView: View {
     private var input: some View {
         HStack(alignment: .bottom, spacing: Metric.gap) {
             #if os(iOS)
-            if let projects = conversation.runner as? Projects {
-                UploadButton(projects: projects) { picking = true }
+            if let link = (conversation.runner as? Machine)?.link {
+                UploadButton(link: link) { picking = true }
             } else {
                 Image.lucide("image-up", size: 20).foregroundStyle(flavour(.overlay0))
                     .frame(width: Metric.control, height: Metric.control)
@@ -239,7 +239,7 @@ struct ConversationView: View {
         .sheet(isPresented: $picking) {
             PhotoPicker { results in
                 picking = false
-                (conversation.runner as? Projects)?.upload(results) { field.insertPaths($0) }
+                (conversation.runner as? Machine)?.link?.upload(results) { field.insertPaths($0) }
             }
             .ignoresSafeArea()
         }
@@ -1336,17 +1336,17 @@ private struct TodoBar: View {
 #if os(iOS)
 private struct UploadButton: View {
     @Environment(\.colorScheme) private var colorScheme
-    @ObservedObject var projects: Projects
+    @ObservedObject var link: HostLink
     let pick: () -> Void
 
     private var flavour: Catppuccin.Flavour { colorScheme == .dark ? .mocha : .latte }
 
     var body: some View {
         Button {
-            if projects.uploading != nil { projects.cancelUpload() } else { pick() }
+            if link.uploading != nil { link.cancelUpload() } else { pick() }
         } label: {
             Group {
-                if let fraction = projects.uploading?.fraction {
+                if let fraction = link.uploading?.fraction {
                     UploadRing(fraction: fraction, colour: flavour(.mauve))
                 } else {
                     Image.lucide("image-up", size: 20)
@@ -1355,9 +1355,9 @@ private struct UploadButton: View {
             .foregroundStyle(flavour(.subtext0))
             .frame(width: 38, height: 38)
         }
-        .disabled(projects.uploading == nil && !projects.canUpload)
+        .disabled(link.uploading == nil && !link.canUpload)
         .accessibilityLabel("upload")
-        .uploadFailure($projects.uploadError)
+        .uploadFailure($link.uploadError)
     }
 }
 #endif

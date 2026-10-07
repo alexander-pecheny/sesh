@@ -24,6 +24,8 @@ final class Machine: Runner, Identifiable, Hashable {
         try? FileManager.default.createDirectory(atPath: folder, withIntermediateDirectories: true)
         return folder + "/%C"
     }()
+    /// The machines on this device itself, which serve every Vault.
+    static let here = [mac]
     private static var known: [String: Machine] = [:]
 
     /// One object per Host for the app's life: Conversations hold their machine weakly.

@@ -2,6 +2,8 @@ import Foundation
 
 @MainActor
 final class Store: ObservableObject {
+    static let shared = Store()
+
     @Published var hosts: [Host] = [] { didSet { write(hosts, to: "hosts.json") } }
     @Published var keys: [Key] = [] { didSet { write(keys, to: "keys.json") } }
     @Published var drafts: [Draft] = [] { didSet { write(drafts, to: "drafts.json") } }
@@ -14,7 +16,7 @@ final class Store: ObservableObject {
 
     private let directory: URL
 
-    init() {
+    private init() {
         let support = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
         directory = support.appendingPathComponent("Sesh", isDirectory: true)
         try? FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)

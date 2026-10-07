@@ -5,46 +5,38 @@ import SwiftUI
 struct DocumentTab: View {
     @Environment(\.colorScheme) private var colorScheme
     @EnvironmentObject private var library: Library
-    @ObservedObject var vault: Vault
-    let id: String
-    @State private var text = ""
-    /// The file's text when last read or written; what a save expects to find there.
-    @State private var base: String?
+    @StateObject private var document: DocumentText
     @State private var editing = false
-    @State private var loaded = false
-    @State private var unreachable: String?
-    @State private var clash: String?
-    @State private var saving = false
     @StateObject private var field = PlainField()
 
+    init(vault: Vault, id: String) {
+        _document = StateObject(wrappedValue: DocumentText(vault: vault, id: id))
+    }
+
     private var flavour: Catppuccin.Flavour { colorScheme == .dark ? .mocha : .latte }
-    private var record: Record? { vault.records[id] }
-    private var path: String? { record?.body.path }
-    private var machine: Machine { TaskActions.machine(record?.body.machine) }
-    private var dirty: Bool { loaded && text != (path == nil ? record?.body.text ?? "" : base ?? record?.body.text ?? "") }
-    private var markdown: Bool { path.map { ["md", "markdown"].contains(($0 as NSString).pathExtension.lowercased()) } ?? true }
+    private var path: String? { document.path }
 
     var body: some View {
         VStack(spacing: 0) {
             bar
             Divider()
-            if let unreachable {
+            if let unreachable = document.unreachable {
                 Label(unreachable, systemImage: "wifi.slash")
                     .font(.caption).foregroundStyle(.secondary)
                     .frame(maxWidth: .infinity, alignment: .leading)
                     .padding(Metric.gap)
             }
             if editing {
-                PlainText(field: field, text: $text, font: .monospacedSystemFont(ofSize: Metric.label, weight: .regular))
+                PlainText(field: field, text: $document.text, font: .monospacedSystemFont(ofSize: Metric.label, weight: .regular))
                     .padding(Metric.pad)
                     .onAppear { DispatchQueue.main.async { field.focus() } }
             } else {
-                if !markdown {
-                    CodeView(text: text, language: path.map { ($0 as NSString).pathExtension })
+                if !document.markdown {
+                    CodeView(text: document.text, language: path.map { ($0 as NSString).pathExtension })
                 } else {
                 ScrollView {
                     Group {
-                        Prose(text: text)
+                        Prose(text: document.text)
                     }
                     .textSelection(.enabled)
                     .padding(Metric.wide)
@@ -56,12 +48,10 @@ struct DocumentTab: View {
         }
         .background(flavour(.base))
         .environment(\.openURL, OpenURLAction { url in library.follow(url) ? .handled : .systemAction })
-        .task { await load() }
-        .alert("The file changed since Sesh read it", isPresented: Binding(get: { clash != nil }, set: { if !$0 { clash = nil } })) {
-            Button("Keep my text", role: .destructive) { Task { await write(force: true) } }
-            Button("Take the file's text") {
-                if let clash { text = clash; base = clash; remember(clash) }
-            }
+        .task { await document.load() }
+        .alert("The file changed since Sesh read it", isPresented: Binding(get: { document.clash != nil }, set: { if !$0 { document.clash = nil } })) {
+            Button("Keep my text", role: .destructive) { Task { await document.write(force: true) } }
+            Button("Take the file's text") { document.takeClash() }
             Button("Cancel", role: .cancel) {}
         } message: {
             Text("Someone, probably an Agent, rewrote \(path ?? "it") while you were editing. Keeping your text overwrites theirs.")
@@ -72,69 +62,21 @@ struct DocumentTab: View {
         HStack(spacing: Metric.gap) {
             Text(path ?? "In the Vault").font(.caption).foregroundStyle(.secondary).lineLimit(1).truncationMode(.head)
             Spacer()
-            if saving { ProgressView().controlSize(.small) }
-            if dirty { Text("Edited").font(.caption).foregroundStyle(.secondary) }
+            if document.saving { ProgressView().controlSize(.small) }
+            if document.dirty { Text("Edited").font(.caption).foregroundStyle(.secondary) }
             Picker("", selection: $editing) {
                 Text("Read").tag(false)
                 Text("Edit").tag(true)
             }
             .pickerStyle(.segmented)
             .fixedSize()
-            .disabled(!editable)
-            Button("Save") { Task { await write(force: false) } }
+            .disabled(!document.editable)
+            Button("Save") { Task { await document.write(force: false) } }
                 .keyboardShortcut("s")
-                .disabled(!dirty || saving)
+                .disabled(!document.dirty || document.saving)
         }
         .padding(.horizontal, Metric.pad)
         .frame(height: 32)
-    }
-
-    /// A file is read-only while its machine cannot be reached, and every non-Markdown file is.
-    private var editable: Bool { markdown && unreachable == nil && loaded }
-
-    private func load() async {
-        guard let record else { return }
-        guard let path else {
-            text = record.body.text ?? ""
-            return loaded = true
-        }
-        let ran = await machine.run("cat -- \(shellPath(path))")
-        if ran.ok {
-            text = ran.out
-            base = ran.out
-            remember(ran.out)
-        } else {
-            text = record.body.text ?? ""
-            unreachable = "Showing the last copy Sesh saw: \(machine.title) could not be read (\(ran.problem))."
-        }
-        loaded = true
-    }
-
-    private func write(force: Bool) async {
-        guard var record else { return }
-        guard let path else {
-            record.body.text = text
-            record.body.edited = Int64(Date().timeIntervalSince1970 * 1000)
-            return vault.write(record)
-        }
-        saving = true
-        defer { saving = false }
-        if !force {
-            let now = await machine.run("cat -- \(shellPath(path))")
-            if now.ok, now.out != base { return clash = now.out }
-        }
-        let put = await machine.put(Data(text.utf8), to: path)
-        guard put.ok else { return unreachable = "Not saved: \(put.problem)" }
-        base = text
-        remember(text)
-    }
-
-    /// The Vault keeps the file's last text, for reading it when the machine is off.
-    private func remember(_ seen: String) {
-        guard var record, record.body.text != seen else { return }
-        record.body.text = seen
-        record.body.edited = Int64(Date().timeIntervalSince1970 * 1000)
-        vault.write(record)
     }
 }
 
