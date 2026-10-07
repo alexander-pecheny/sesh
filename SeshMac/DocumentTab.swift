@@ -44,7 +44,7 @@ struct DocumentTab: View {
                 } else {
                 ScrollView {
                     Group {
-                        Markdown(text: text)
+                        Prose(text: text)
                     }
                     .textSelection(.enabled)
                     .padding(Metric.wide)
@@ -151,6 +151,8 @@ private struct CodeView: NSViewRepresentable {
         guard let view = scroll.documentView as? NSTextView else { return scroll }
         view.isEditable = false
         view.drawsBackground = false
+        view.usesFindBar = true
+        view.isIncrementalSearchingEnabled = true
         view.textContainerInset = NSSize(width: Metric.wide, height: Metric.pad)
         view.isHorizontallyResizable = true
         view.maxSize = NSSize(width: CGFloat.greatestFiniteMagnitude, height: .greatestFiniteMagnitude)

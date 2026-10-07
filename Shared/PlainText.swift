@@ -85,6 +85,8 @@ final class PlainField: NSTextView, ObservableObject {
         isAutomaticQuoteSubstitutionEnabled = false
         isAutomaticDashSubstitutionEnabled = false
         isAutomaticTextReplacementEnabled = false
+        usesFindBar = true
+        isIncrementalSearchingEnabled = true
         smartInsertDeleteEnabled = false
         drawsBackground = false
         isVerticallyResizable = true

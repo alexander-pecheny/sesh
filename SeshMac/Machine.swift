@@ -7,6 +7,7 @@ final class Machine: Runner, Identifiable, Hashable {
     /// The ssh alias, or nil for the Mac itself.
     let alias: String?
     private var running: Set<Process> = []
+    private var tethers: [ObjectIdentifier: Pipe] = [:]
 
     nonisolated static func == (a: Machine, b: Machine) -> Bool { a.alias == b.alias }
     nonisolated func hash(into hasher: inout Hasher) { hasher.combine(alias) }
@@ -20,6 +21,11 @@ final class Machine: Runner, Identifiable, Hashable {
     private static var known: [String: Machine] = [:]
 
     /// One object per Host for the app's life: Conversations hold their machine weakly.
+    /// A normal quit stops every command at once instead of leaving it to notice.
+    static func stopAll() {
+        ([mac] + known.values).forEach { $0.running.forEach { $0.terminate() } }
+    }
+
     static func named(_ alias: String?) -> Machine {
         guard let alias else { return mac }
         if let machine = known[alias] { return machine }
@@ -29,6 +35,12 @@ final class Machine: Runner, Identifiable, Hashable {
     }
     /// An interactive shell may greet first; everything before this line is its greeting.
     nonisolated static let mark = "--sesh-output--"
+
+    /// A stream runs until the app's end of its stdin closes, which happens however the app
+    /// ends, so no command outlives the app that reads it.
+    private static func tethered(_ command: String) -> String {
+        "{ \(command)\n} & child=$!; { cat >/dev/null; kill $child 2>/dev/null; } >/dev/null 2>&1 & wait $child"
+    }
 
     private func process(_ command: String) -> Process {
         let process = Process()
@@ -63,11 +75,12 @@ final class Machine: Runner, Identifiable, Hashable {
     }
 
     private func stream(_ command: String, line: ((String) -> Void)?, input: Data? = nil) async -> Ran {
-        let process = process(command)
+        let process = process(line == nil ? command : Self.tethered(command))
         let out = Pipe(), err = Pipe()
         process.standardOutput = out
         process.standardError = err
-        let feed = input.map { _ in Pipe() }
+        // Data to write, or, for a stream, an input the app never writes and only closes.
+        let feed = input != nil || line != nil ? Pipe() : nil
         if let feed { process.standardInput = feed }
         let lines = LineSplitter(line)
         let collected = Collector()
@@ -87,6 +100,7 @@ final class Machine: Runner, Identifiable, Hashable {
                     let errRest = err.fileHandleForReading.readDataToEndOfFile()
                     DispatchQueue.main.async { MainActor.assumeIsolated {
                         self.running.remove(process)
+                        try? self.tethers.removeValue(forKey: ObjectIdentifier(process))?.fileHandleForWriting.close()
                         if line == nil { collected.out.append(rest) } else { lines.feed(rest); lines.flush() }
                         collected.err.append(errRest)
                         let out = String(decoding: collected.out.data, as: UTF8.self)
@@ -103,6 +117,7 @@ final class Machine: Runner, Identifiable, Hashable {
                         feed.fileHandleForWriting.write(input)
                         try? feed.fileHandleForWriting.close()
                     }
+                    if let feed, input == nil { tethers[ObjectIdentifier(process)] = feed }
                 } catch {
                     done.resume(returning: Ran(status: -1, out: "", err: error.localizedDescription))
                 }

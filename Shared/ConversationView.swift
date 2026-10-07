@@ -291,6 +291,8 @@ private struct Bookmarkable: ViewModifier {
                         .offset(x: Metric.wide)
                     }
                 }
+                // The whole row, not just its ink, so the pointer can travel to the icon.
+                .contentShape(.rect)
                 .onHover { hovered = $0 }
         } else {
             content

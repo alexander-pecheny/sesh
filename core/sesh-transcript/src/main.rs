@@ -16,6 +16,9 @@ const RETRY: u32 = 8;
 const KEY_PAUSE: Duration = Duration::from_millis(200);
 const MENU_TIMEOUT: Duration = Duration::from_secs(3);
 const AGENT_GONE_AFTER: Duration = Duration::from_secs(2);
+/// A quiet stream still writes this often, since only a failed write shows that sshd's end
+/// of the socket has gone; polling the socket does not.
+const PING: Duration = Duration::from_secs(30);
 const DEFAULT_LAST: usize = 50;
 const USAGE: &str = "usage: sesh-transcript --version | follow --protocol | follow <pane> [--since CURSOR] [--last N]
        | history <pane> --before ID [--last N] | entry <pane> ID
@@ -244,10 +247,15 @@ fn follow(args: &[String]) -> Exit {
     };
     follower.start(&pane, options.get("since").copied())?;
     let mut agent_seen = Instant::now();
+    let mut pinged = Instant::now();
     loop {
         std::thread::sleep(POLL);
         if stdout_closed() {
             return Ok(0);
+        }
+        if pinged.elapsed() > PING {
+            follower.emit(json!({"t": "ping"}))?;
+            pinged = Instant::now();
         }
         match target.pane() {
             Ok(pane) if pane["agent"].is_string() => {
@@ -594,7 +602,12 @@ fn print_lines(lines: &[Value]) -> Exit {
 fn vault_follow(dir: &str, mut since: i64, follow: bool) -> Exit {
     let vault = Vault::open(dir, false)?;
     let mut version = None;
+    let mut pinged = Instant::now();
     loop {
+        if follow && pinged.elapsed() > PING {
+            print_lines(&[json!({"t": "ping"})])?;
+            pinged = Instant::now();
+        }
         let now = Some(vault.data_version()?);
         if version != now {
             let (records, head) = vault.pull(since)?;

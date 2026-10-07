@@ -7,10 +7,27 @@ struct SeshMacApp: App {
     var body: some Scene {
         WindowGroup {
             RootView().environmentObject(library)
+                .onReceive(NotificationCenter.default.publisher(for: NSApplication.willTerminateNotification)) { _ in
+                    Machine.stopAll()
+                }
                 #if DEBUG
                 .background(Offscreen())
                 #endif
         }
+        .commands {
+            // Find in whatever text has the focus: a file, a Document, an editor.
+            CommandGroup(after: .textEditing) {
+                Button("Find…") { find(.showFindInterface) }.keyboardShortcut("f")
+                Button("Find Next") { find(.nextMatch) }.keyboardShortcut("g")
+                Button("Find Previous") { find(.previousMatch) }.keyboardShortcut("g", modifiers: [.command, .shift])
+            }
+        }
+    }
+
+    private func find(_ action: NSTextFinder.Action) {
+        let sender = NSMenuItem()
+        sender.tag = action.rawValue
+        NSApp.sendAction(#selector(NSResponder.performTextFinderAction(_:)), to: nil, from: sender)
     }
 }
 

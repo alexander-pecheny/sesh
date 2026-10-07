@@ -15,6 +15,7 @@ struct Prose: NSViewRepresentable {
         let view = LinkTextView()
         view.isEditable = false
         view.isSelectable = true
+        view.usesFindBar = true
         view.drawsBackground = false
         view.textContainerInset = .zero
         view.textContainer?.lineFragmentPadding = 0
@@ -34,13 +35,17 @@ struct Prose: NSViewRepresentable {
     }
 
     func sizeThatFits(_ proposal: ProposedViewSize, nsView view: NSTextView, context: Context) -> CGSize? {
-        guard let width = proposal.width, width > 0, let container = view.textContainer, let layout = view.layoutManager
-        else { return nil }
+        guard let container = view.textContainer, let layout = view.layoutManager else { return nil }
+        // Asked for its ideal size, the text is as wide as its longest line, up to the measure.
+        let width = proposal.width.flatMap { $0.isFinite && $0 > 0 ? $0 : nil } ?? Metric.measure
         container.containerSize = NSSize(width: width, height: .greatestFiniteMagnitude)
         layout.ensureLayout(for: container)
         let used = layout.usedRect(for: container)
-        // As wide as the longest line, so a short message makes a small bubble.
-        return CGSize(width: min(width, ceil(used.width)), height: ceil(used.height))
+        // As wide as the longest line, so a short message makes a small bubble; the layout
+        // manager reports the container's width here, the string its own.
+        let lines = view.textStorage?.boundingRect(
+            with: NSSize(width: width, height: .greatestFiniteMagnitude), options: [.usesLineFragmentOrigin, .usesFontLeading])
+        return CGSize(width: min(width, ceil(lines?.width ?? width)), height: ceil(used.height))
     }
 
     func makeCoordinator() -> Coordinator { Coordinator() }
