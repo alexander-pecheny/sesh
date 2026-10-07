@@ -6,8 +6,9 @@ phone nothing runs locally; on the Mac a Tab may also run on the Mac itself.
 ## Language
 
 **Host**:
-A saved way to reach one remote machine: address, user, transport, key, flags. The
-main screen lists Hosts.
+A saved way to reach one remote machine: address, user, transport, key, flags. On the
+phone Hosts live in Settings, where any of them also opens a plain shell outside every
+Task; the Mac names a Host by its ssh alias instead.
 _Avoid_: server, connection, profile
 
 **Key**:
@@ -42,24 +43,13 @@ One thing open at a time in Sesh. Inside a Task a Tab is the Journal, a Document
 Terminal or an Agent session, and every Tab but the Journal can move to another Task. A
 Terminal is a shell in a herdr pane of the Task's Workspace: it outlives the app, and
 closing its Tab ends it. An Agent session Tab shows the Conversation or the Agent's own
-terminal.
-Outside any Task, as on the phone today, a Tab shows one Host in one UI mode. Several Tabs
-may be open at once; one is active.
+terminal. The phone has the same Tabs; its Terminal is an ordinary Session whose remote
+command attaches the herdr pane.
 _Avoid_: pane, page
 
-**UI mode**:
-What a Tab shows for its Host: Terminal or Projects. A Host carries a default UI mode,
-and a long press opens it in the other one. A Tab never changes UI mode; switching means
-opening another Tab.
-_Avoid_: view, app mode
-
-**Terminal**:
-The UI mode that shows one Session.
-
-**Projects**:
-The UI mode for someone who does not use a terminal: browse and create folders on the
-Host and start an Agent session in one.
-_Avoid_: file browser
+**UI mode**, **Projects**:
+Retired. The phone once opened a Host in a Terminal or a Projects Tab; its main screen
+is now the Tasks, as on the Mac.
 
 **Agent**:
 The coding agent behind an Agent session: Claude, Codex or pi. Other coding agents running
@@ -68,19 +58,16 @@ _Avoid_: model, tool, kind
 
 **Agent session**:
 One conversation with one Agent, running on the Host in one folder, optionally on its own
-branch. It outlives every Session and Tab. Projects lists all of them on the Host,
-including those started outside Sesh, and can start one of any Agent. When the Agent
+branch. It outlives every Session and Tab. When the Agent
 clears or resumes, it moves to another Transcript but stays the same Agent session.
 Always "Agent session" in full; a bare Session is the SSH or mosh connection.
-On the Mac, every Agent session belongs to one Task once adopted, and keeps belonging after
+Every Agent session belongs to one Task once adopted, and keeps belonging after
 its Tab closes and its Agent exits. It can move to another Task but never back to Unfiled.
 _Avoid_: Claude session, thread, agent pane
 
 **Workspace**:
-herdr's group of Agent sessions, usually one per folder or branch copy. At Home, Projects
-lists every Workspace under one collapsible heading and nests a repo's branch copies
-under its main checkout, as herdr's sidebar does. Those with Agent sessions come first,
-the most recently changed leading; the rest follow by name.
+herdr's group of Agent sessions, usually one per folder or branch copy. Each Task is one
+Workspace named after its title.
 _Avoid_: project, group
 
 **Transcript**:
@@ -91,10 +78,9 @@ be read when its Host is off and survives the Agent deleting old Transcripts.
 _Avoid_: log, history
 
 **Conversation**:
-The screen that shows one Agent session as chat and takes the user's messages. On the
-phone it opens from Projects, never from a Terminal Tab. On the Mac it is one face of an
-Agent session Tab; the other face is the Agent's own terminal, and one shortcut switches
-between them.
+The screen that shows one Agent session as chat and takes the user's messages. It is one
+face of an Agent session Tab; the other face is the Agent's own terminal, switched by one
+shortcut on the Mac and one button on the phone.
 _Avoid_: chat view, thread
 
 **Session restore**:
@@ -138,7 +124,9 @@ _Avoid_: delete, archive, done
 A store of Tasks, folders and notes, kept on one Host, with a copy on each Mac and phone
 that opens it. The user keeps separate Vaults for separate lives, such as work and hobby.
 A Vault lists the Hosts its Agent sessions run on, starting with its own; a Host is in at
-most one Vault. The Mac is in none, and serves every Vault.
+most one Vault. The Mac is in none, and serves every Vault. The phone opens a Vault by its
+name and the Host from its own list that answers to the Mac's ssh alias for it; the phone
+cannot reach the Mac, so Tabs on the Mac stay closed there.
 _Avoid_: workspace, library, database
 
 **Unfiled**:
