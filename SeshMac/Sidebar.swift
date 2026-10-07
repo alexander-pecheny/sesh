@@ -32,6 +32,10 @@ struct Sidebar: View {
             UnfiledSection(title: "On this Mac", items: library.unfiled[""] ?? [])
         }
         .listStyle(.sidebar)
+        #if DEBUG
+        // A hidden window draws no translucent material, so a snapshot needs a solid one.
+        .scrollContentBackground(UserDefaults.standard.string(forKey: "snapshot") == nil ? .automatic : .hidden)
+        #endif
         .safeAreaInset(edge: .bottom) {
             HStack {
                 Button { adding = true } label: { Label("Add Vault", systemImage: "plus") }
@@ -133,8 +137,11 @@ private struct TaskRow: View {
     @Binding var naming: Sidebar.Naming?
 
     var body: some View {
-        Text(task.body.title ?? "Untitled")
-            .lineLimit(2)
+        HStack(spacing: Metric.gap) {
+            Text(task.body.title ?? "Untitled").lineLimit(2)
+            Spacer(minLength: 0)
+            MarkView(mark: library.mark(ofTask: task.id))
+        }
             .frame(maxWidth: .infinity, alignment: .leading)
             .contentShape(.rect)
             .draggable(task.id)
@@ -342,6 +349,24 @@ private struct UnfiledRow: View {
                     }
                 }
             }
+        }
+    }
+}
+
+/// A Task's Agents at a glance: working, finished unseen, or waiting on the user.
+struct MarkView: View {
+    let mark: Library.Mark?
+
+    var body: some View {
+        switch mark {
+        case .working?:
+            ProgressView().controlSize(.mini).help("An Agent is working")
+        case .finished?:
+            Circle().fill(.green).frame(width: 7, height: 7).help("An Agent finished; not seen yet")
+        case .waiting?:
+            Circle().fill(.orange).frame(width: 7, height: 7).help("An Agent is waiting for you")
+        case nil:
+            EmptyView()
         }
     }
 }

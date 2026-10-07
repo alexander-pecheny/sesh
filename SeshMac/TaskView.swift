@@ -80,6 +80,7 @@ private struct TabButton: View {
             }
             .buttonStyle(.plain)
             .keyboardShortcut(shortcut)
+            if case .session(let id) = tab, let session = vault.records[id] { MarkView(mark: library.mark(of: session)) }
             if tab != .journal {
                 Button { library.close(tab, in: task) } label: { Image(systemName: "xmark").imageScale(.small) }
                     .buttonStyle(.borderless)

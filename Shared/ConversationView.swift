@@ -56,7 +56,7 @@ struct ConversationView: View {
                             .background(
                                 conversation.focus.map(row.contains) == true ? flavour(.yellow).opacity(0.15) : .clear,
                                 in: .rect(cornerRadius: Metric.corner))
-                            .bookmarkable(row.entry, keep: conversation.bookmark)
+                            .bookmarkable(row.entry, keep: conversation.bookmark, column: row.prose ? Metric.proseColumn : nil)
                     }
                     ForEach(conversation.permissions) { PermissionCard(permission: $0, conversation: conversation) }
                     ForEach(conversation.queued) { QueuedBubble(message: $0, conversation: conversation, edit: takeBack) }
@@ -91,7 +91,13 @@ struct ConversationView: View {
                     }
                     return
                 }
-                atBottom = new.bottom >= new.height - Metric.control
+                // Only a move up means the reader left the end; layout settling can leave the
+                // view short of the end without anyone scrolling.
+                if new.bottom >= new.height - Metric.control {
+                    atBottom = true
+                } else if new.bottom < old.bottom - 1 {
+                    atBottom = false
+                }
             }
             .onChange(of: conversation.focus) {
                 guard let focus = conversation.focus,
@@ -280,24 +286,37 @@ private struct Bookmarkable: ViewModifier {
     @Environment(\.colorScheme) private var colorScheme
     let entry: Conversation.Entry?
     let keep: ((Conversation.Entry) -> Void)?
+    /// How wide a reply's text column is, so the icon sits at its corner, not the window's.
+    let column: CGFloat?
     @State private var hovered = false
+    private static let gutter: CGFloat = 26
+    #if DEBUG
+    /// `-bookmarks YES` shows every icon, for a snapshot of a window no pointer reaches.
+    private static let always = UserDefaults.standard.bool(forKey: "bookmarks")
+    #else
+    private static let always = false
+    #endif
 
     func body(content: Content) -> some View {
         if let entry, let keep {
             content
+                .padding(.trailing, Self.gutter)
                 .contextMenu { Button("Bookmark in the Journal") { keep(entry) } }
-                .overlay(alignment: .topTrailing) {
-                    if hovered {
-                        Button { keep(entry) } label: {
-                            Image(systemName: "bookmark")
-                                .foregroundStyle((colorScheme == .dark ? Catppuccin.Flavour.mocha : .latte)(.overlay1))
-                                .padding(Metric.tiny)
+                .overlay(alignment: .topLeading) {
+                    HStack(spacing: 0) {
+                        Spacer(minLength: 0)
+                        if hovered || Self.always {
+                            Button { keep(entry) } label: {
+                                Image(systemName: "bookmark")
+                                    .foregroundStyle((colorScheme == .dark ? Catppuccin.Flavour.mocha : .latte)(.overlay1))
+                                    .padding(Metric.tiny)
+                            }
+                            .buttonStyle(.plain)
+                            .help("Bookmark in the Journal")
+                            .accessibilityLabel("Bookmark")
                         }
-                        .buttonStyle(.plain)
-                        .help("Bookmark in the Journal")
-                        .accessibilityLabel("Bookmark")
-                        .offset(x: Metric.wide)
                     }
+                    .frame(maxWidth: column.map { $0 + Self.gutter } ?? .infinity)
                 }
                 // The whole row, not just its ink, so the pointer can travel to the icon.
                 .contentShape(.rect)
@@ -309,8 +328,8 @@ private struct Bookmarkable: ViewModifier {
 }
 
 extension View {
-    fileprivate func bookmarkable(_ entry: Conversation.Entry?, keep: ((Conversation.Entry) -> Void)?) -> some View {
-        modifier(Bookmarkable(entry: entry, keep: keep))
+    fileprivate func bookmarkable(_ entry: Conversation.Entry?, keep: ((Conversation.Entry) -> Void)?, column: CGFloat?) -> some View {
+        modifier(Bookmarkable(entry: entry, keep: keep, column: column))
     }
 }
 
@@ -337,6 +356,12 @@ private enum Row: Identifiable {
         case .item(let item): item.id == id
         case .lookups(let entries): entries.contains { $0.id == id }
         }
+    }
+
+    /// A reply set in the prose column, rather than a card, a bubble or a wide table.
+    var prose: Bool {
+        guard case .item(.entry(let entry)) = self, entry.kind == "text" else { return false }
+        return !Cmark.hasTable(entry.text ?? "")
     }
 
     /// The entry a Bookmark of this row keeps.
@@ -382,7 +407,7 @@ private struct RowView: View {
             case "user": UserBubble(entry: entry, conversation: conversation)
             case "text": AgentText(text: conversation.openPath == nil && conversation.repo == nil
                 ? entry.text ?? entry.summary : PathLinks.link(entry.text ?? entry.summary, repo: conversation.repo))
-                .readable()
+                .readable(wide: Cmark.hasTable(entry.text ?? ""))
             case "thinking": Thinking(entry: entry)
             case "tool": ToolCard(entry: entry, result: conversation.results[entry.id], conversation: conversation)
             case "question": QuestionCard(entry: entry, result: conversation.results[entry.id], conversation: conversation)

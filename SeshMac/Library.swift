@@ -4,10 +4,10 @@ import Foundation
 @MainActor
 final class Library: ObservableObject {
     @Published private(set) var vaults: [Vault] = []
-    @Published var selection: String? { didSet { keep() } }
+    @Published var selection: String? { didSet { keep(); markSeen() } }
     /// The open Tabs of each Task by its id; the Journal is never in here, as it never closes.
     @Published var tabs: [String: [TabItem]] = [:] { didSet { keep() } }
-    @Published var current: [String: TabItem] = [:] { didSet { keep() } }
+    @Published var current: [String: TabItem] = [:] { didSet { keep(); markSeen() } }
     /// Agent sessions being started, by Task, shown as Tabs until their Agent is ready.
     @Published var starting: [String: [Starting]] = [:]
 
@@ -126,7 +126,7 @@ final class Library: ObservableObject {
         watching = Task { [weak self] in
             while !Task.isCancelled, let self {
                 await self.refreshUnfiled()
-                try? await Task.sleep(for: .seconds(15))
+                try? await Task.sleep(for: .seconds(5))
             }
         }
     }
@@ -139,6 +139,8 @@ final class Library: ObservableObject {
                     let cwd: String
                     let name: String?
                     let pane_id: String
+                    let agent_status: String
+                    let completion_seq: UInt64?
                 }
                 let agents: [Agent]
             }
@@ -147,9 +149,13 @@ final class Library: ObservableObject {
         let machines = [Machine.mac] + vaults.compactMap { $0.place.alias == nil ? nil : $0.machine }
         let adopted = Set(vaults.flatMap { $0.all(.session) }.map { "\($0.body.machine ?? ""):\($0.body.pane ?? "")" })
         var found: [String: [Unfiled]] = [:]
+        var states: [String: Live] = [:]
         for machine in Set(machines) {
             let ran = await machine.run("herdr agent list")
             guard let list = try? JSONDecoder().decode(List.self, from: Data(ran.out.utf8)) else { continue }
+            for agent in list.result.agents {
+                states["\(machine.alias ?? ""):\(agent.pane_id)"] = Live(status: agent.agent_status, done: agent.completion_seq ?? 0)
+            }
             found[machine.id] = list.result.agents.compactMap { agent in
                 guard let kind = Agent(rawValue: agent.agent) else { return nil }
                 let item = Unfiled(machine: machine.alias, pane: agent.pane_id, agent: kind, cwd: agent.cwd,
@@ -158,6 +164,57 @@ final class Library: ObservableObject {
             }
         }
         unfiled = found
+        live = states
+        markSeen()
+    }
+
+    // MARK: Marks
+
+    /// What herdr last said of a pane: its status, and how many turns its Agent has finished.
+    struct Live: Equatable {
+        let status: String
+        let done: UInt64
+    }
+
+    enum Mark: Int, Comparable {
+        case finished, working, waiting
+        static func < (a: Mark, b: Mark) -> Bool { a.rawValue < b.rawValue }
+    }
+
+    @Published private(set) var live: [String: Live] = [:]
+    /// The finished-turn count the user has seen, by `machine:pane`, so a turn finished while
+    /// they looked elsewhere, or while the app was closed, still shows.
+    private var seen: [String: UInt64] = UserDefaults.standard.dictionary(forKey: "seen") as? [String: UInt64] ?? [:]
+
+    private func key(_ session: Record) -> String { "\(session.body.machine ?? ""):\(session.body.pane ?? "")" }
+
+    /// An Agent waiting on the user outranks one working, which outranks one finished unseen.
+    func mark(of session: Record) -> Mark? {
+        guard let state = live[key(session)] else { return nil }
+        if state.status == "blocked" { return .waiting }
+        if state.status == "working" { return .working }
+        return state.done > seen[key(session), default: state.done] ? .finished : nil
+    }
+
+    func mark(ofTask task: String) -> Mark? {
+        vault(of: task)?.children(.session, task: task).compactMap(mark(of:)).max()
+    }
+
+    /// The open Agent session counts as seen, and so does every pane met for the first time.
+    func markSeen() {
+        var changed = false
+        for (key, state) in live where seen[key] == nil {
+            seen[key] = state.done
+            changed = true
+        }
+        if let task = selection, case .session(let id)? = current[task], let session = vault(of: id)?.records[id],
+           let state = live[key(session)], seen[key(session)] != state.done {
+            seen[key(session)] = state.done
+            changed = true
+        }
+        guard changed else { return }
+        UserDefaults.standard.set(seen.mapValues { NSNumber(value: $0) }, forKey: "seen")
+        objectWillChange.send()
     }
 
     /// Makes an Unfiled Agent session part of `task`; it never goes back.
@@ -292,6 +349,12 @@ final class Library: ObservableObject {
         if tab != .journal, !(tabs[task] ?? []).contains(tab) { tabs[task, default: []].append(tab) }
         current[task] = tab
         selection = task
+    }
+
+    /// The selected Task's current Tab, unless it is the Journal, which never closes.
+    func closeCurrent() {
+        guard let task = selection, let tab = current[task], tab != .journal else { return }
+        close(tab, in: task)
     }
 
     func close(_ tab: TabItem, in task: String) {

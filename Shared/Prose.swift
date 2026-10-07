@@ -209,7 +209,10 @@ private struct Renderer {
             let line = row.enumerated().map { $0.element.padding(toLength: widths[$0.offset], withPad: " ", startingAt: 0) }
                 .joined(separator: "   ")
             let font = index == 0 ? NSFont.monospacedSystemFont(ofSize: Metric.note, weight: .semibold) : mono
-            out.append(NSAttributedString(string: line + "\n", attributes: attributes(font: font, style: paragraph(indent: indent, after: 2))))
+            let style = paragraph(indent: indent, after: 2).mutableCopy() as! NSMutableParagraphStyle
+            // A row that wrapped would no longer line up with the others; cut it at the edge.
+            style.lineBreakMode = .byClipping
+            out.append(NSAttributedString(string: line + "\n", attributes: attributes(font: font, style: style)))
         }
         return out
     }

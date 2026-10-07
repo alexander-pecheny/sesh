@@ -15,6 +15,10 @@ struct SeshMacApp: App {
                 #endif
         }
         .commands {
+            // Command-W closes a Tab, as in a browser, never the window.
+            CommandGroup(replacing: .saveItem) {
+                Button("Close Tab") { library.closeCurrent() }.keyboardShortcut("w")
+            }
             // Find in whatever text has the focus: a file, a Document, an editor.
             CommandGroup(after: .textEditing) {
                 Button("Find…") { find(.showFindInterface) }.keyboardShortcut("f")

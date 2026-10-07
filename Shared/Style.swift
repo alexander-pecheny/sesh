@@ -12,7 +12,7 @@ extension View {
 
     func fitWidth() -> some View { containerRelativeFrame(.horizontal) }
 
-    func readable(alignment: Alignment = .leading) -> some View { frame(maxWidth: .infinity, alignment: alignment) }
+    func readable(alignment: Alignment = .leading, wide: Bool = false) -> some View { frame(maxWidth: .infinity, alignment: alignment) }
 
     /// The whole screen on the phone; a sheet on the Mac, where nothing covers the window.
     func cover<Content: View>(isPresented: Binding<Bool>, @ViewBuilder content: @escaping () -> Content) -> some View {
@@ -34,8 +34,9 @@ extension View {
 
     /// Prose no wider than `Metric.measure`, which is hard to read beyond that on a wide
     /// window: the Agent's on the left, the user's on the right, as in a chat.
-    func readable(alignment: Alignment = .leading) -> some View {
-        frame(maxWidth: Metric.measure, alignment: alignment).frame(maxWidth: .infinity, alignment: alignment)
+    /// A table keeps the whole width: its rows cannot wrap.
+    func readable(alignment: Alignment = .leading, wide: Bool = false) -> some View {
+        frame(maxWidth: wide ? .infinity : Metric.measure, alignment: alignment).frame(maxWidth: .infinity, alignment: alignment)
     }
 
     func cover<Content: View>(isPresented: Binding<Bool>, @ViewBuilder content: @escaping () -> Content) -> some View {
@@ -69,7 +70,11 @@ enum Metric {
     static let label: CGFloat = 14
     static let body: CGFloat = 15
     static let title: CGFloat = 16
+    #if os(iOS)
+    static let proseColumn: CGFloat? = nil
+    #endif
     #if os(macOS)
+    static let proseColumn: CGFloat? = measure
     /// Room for 99 characters of ordinary prose, measured on a sentence rather than on "0",
     /// which is wider than the average letter.
     static let measure: CGFloat = {

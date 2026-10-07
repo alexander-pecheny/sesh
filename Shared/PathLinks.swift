@@ -108,6 +108,17 @@ enum PathLinks {
 
 /// GitHub-flavoured Markdown as cmark's tree; the caller frees the root.
 enum Cmark {
+    static func hasTable(_ markdown: String) -> Bool {
+        guard markdown.contains("|"), let root = parse(markdown) else { return false }
+        defer { cmark_node_free(root) }
+        var child = cmark_node_first_child(root)
+        while let node = child {
+            if String(cString: cmark_node_get_type_string(node)) == "table" { return true }
+            child = cmark_node_next(node)
+        }
+        return false
+    }
+
     static func parse(_ markdown: String) -> UnsafeMutablePointer<cmark_node>? {
         cmark_gfm_core_extensions_ensure_registered()
         guard let parser = cmark_parser_new(CMARK_OPT_DEFAULT) else { return nil }
