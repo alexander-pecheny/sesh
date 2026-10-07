@@ -5,7 +5,7 @@ struct SeshMacApp: App {
     @StateObject private var library = Library()
 
     var body: some Scene {
-        WindowGroup {
+        WindowGroup(id: "main") {
             RootView().environmentObject(library)
                 .onOpenURL { _ = library.follow($0) }
                 // A link opens in the window that is already there, not a new one.
@@ -16,6 +16,10 @@ struct SeshMacApp: App {
                 #if DEBUG
                 .background(Offscreen())
                 #endif
+        }
+        // A first window fills the screen; after that macOS restores the size it was left at.
+        .defaultWindowPlacement { _, context in
+            WindowPlacement(context.defaultDisplay.visibleRect.origin, size: context.defaultDisplay.visibleRect.size)
         }
         .commands {
             // Command-W closes a Tab, as in a browser, never the window.
