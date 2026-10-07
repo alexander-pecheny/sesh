@@ -6,17 +6,17 @@ use std::time::{Duration, Instant};
 
 use serde_json::{json, Value};
 use sesh_transcript::vault::{self, Vault};
-use sesh_transcript::{live, permission, Entry, Transcript, AGENTS, PROTOCOL};
+use sesh_transcript::screen::{Live, View};
+use sesh_transcript::{permission, Entry, Transcript, AGENTS, PROTOCOL};
 
 const VERSION: &str = concat!(env!("CARGO_PKG_VERSION"), "+", env!("SOURCE_HASH"));
-const POLL: Duration = Duration::from_millis(250);
+/// Short enough that the chat keeps up with what Claude's screen shows.
+const POLL: Duration = Duration::from_millis(100);
 const VAULT_POLL: Duration = Duration::from_millis(500);
 /// While a session's Transcript cannot be found, look again every this many polls.
 const RETRY: u32 = 8;
 const KEY_PAUSE: Duration = Duration::from_millis(200);
 const MENU_TIMEOUT: Duration = Duration::from_secs(3);
-/// While the Agent works, its screen is read every this many polls for the Live tail.
-const LIVE_EVERY: u32 = 2;
 const AGENT_GONE_AFTER: Duration = Duration::from_secs(2);
 /// A quiet stream still writes this often, since only a failed write shows that sshd's end
 /// of the socket has gone; polling the socket does not.
@@ -266,8 +266,8 @@ fn follow(args: &[String]) -> Exit {
         wrote: false,
         background: json!([]),
         reported: None,
-        live: no_live(),
-        polls: 0,
+        live: Live::default(),
+        sent: Value::Null,
     };
     follower.start(&pane, options.get("since").copied())?;
     let mut agent_seen = Instant::now();
@@ -308,9 +308,10 @@ struct Follower {
     background: Value,
     /// What herdr last said the Agent was doing.
     reported: Option<String>,
+    /// What Claude's screen shows beyond the Transcript.
+    live: Live,
     /// The `live` line last sent.
-    live: Value,
-    polls: u32,
+    sent: Value,
 }
 
 impl Follower {
@@ -355,6 +356,7 @@ impl Follower {
             }
         }
         self.update_status(pane)?;
+        self.update_live(pane)?;
         self.emit_cursor()
     }
 
@@ -416,10 +418,10 @@ impl Follower {
             .read_tail(None, |entries| entries.len() >= self.last)
             .map_err(|err| err.to_string())?;
         transcript.scan_background().map_err(|err| err.to_string())?;
-        let start = transcript.entries.len().saturating_sub(self.last);
-        let lines: Vec<Value> = transcript.entries[start..].iter().map(entry_line).collect();
+        let entries = transcript.entries.clone();
         self.transcript = Some(transcript);
-        lines.into_iter().try_for_each(|line| self.emit(line))
+        let start = entries.len().saturating_sub(self.last);
+        self.send(&entries[..start], &entries[start..])
     }
 
     fn read_new(&mut self) -> Result<(), String> {
@@ -430,43 +432,52 @@ impl Follower {
         if transcript.read(None).map_err(|err| err.to_string())? {
             let path = transcript.path.to_string_lossy().into_owned();
             self.emit(json!({"t": "switch", "reason": "fork", "transcript": path}))?;
-            let start = transcript.entries.len().saturating_sub(self.last);
-            let lines: Vec<Value> = transcript.entries[start..].iter().map(entry_line).collect();
+            let entries = transcript.entries.clone();
             self.transcript = Some(transcript);
-            return lines.into_iter().try_for_each(|line| self.emit(line));
+            let start = entries.len().saturating_sub(self.last);
+            return self.send(&entries[..start], &entries[start..]);
         }
-        let lines: Vec<Value> = transcript.entries[mark..].iter().map(entry_line).collect();
+        let entries = transcript.entries[mark..].to_vec();
         self.transcript = Some(transcript);
-        lines.into_iter().try_for_each(|line| self.emit(line))
+        self.send(&[], &entries)
     }
 
-    /// What the screen shows beyond the Transcript, read while the Agent works: at once when
-    /// entries arrived, which may cover some of it, else every few polls.
-    fn update_live(&mut self, pane: &Value) -> Result<(), String> {
-        self.polls = self.polls.wrapping_add(1);
-        // Only Claude's screen is understood.
-        let working = self.reported.as_deref() == Some("working") && self.agent == "claude";
-        if working && !self.wrote && !self.polls.is_multiple_of(LIVE_EVERY) {
-            return Ok(());
+    /// Sends `entries`, each naming the live item it replaces; `known` only tells the live
+    /// items what the Transcript holds.
+    fn send(&mut self, known: &[Entry], entries: &[Entry]) -> Result<(), String> {
+        let now = Instant::now();
+        for entry in known {
+            self.live.deliver(entry, now);
         }
-        let live = match (working, pane["pane_id"].as_str()) {
-            (true, Some(pane_id)) => {
-                let screen = read_screen(pane_id).unwrap_or_default();
-                let entries = self
-                    .transcript
-                    .as_ref()
-                    .map_or(&[][..], |transcript| &transcript.entries);
-                let live = live::live(&screen, entries);
-                json!({"t": "live", "text": live.text, "status": live.status})
+        for entry in entries {
+            let mut line = entry_line(entry);
+            if let Some(id) = self.live.deliver(entry, now) {
+                line["replaces"] = id.into();
             }
-            _ => no_live(),
-        };
-        if live == self.live {
+            self.emit(line)?;
+        }
+        Ok(())
+    }
+
+    /// What Claude's screen shows beyond the Transcript, read at every poll while it works
+    /// and a little after, since only Claude's screen is understood.
+    fn update_live(&mut self, pane: &Value) -> Result<(), String> {
+        let now = Instant::now();
+        let claude = self.agent == "claude";
+        let working = claude && matches!(self.reported.as_deref(), Some("working" | "blocked"));
+        self.live.working(working, now);
+        if let (true, true, Some(pane_id)) = (claude, self.live.watching(now), pane["pane_id"].as_str()) {
+            if let Some(view) = settled(pane_id, &self.live) {
+                self.live.see(view, now);
+            }
+        }
+        let line = self.live.line(now);
+        if line == self.sent {
             return Ok(());
         }
-        self.live = live.clone();
+        self.sent = line.clone();
         let wrote = self.wrote;
-        self.emit(live)?;
+        self.emit(line)?;
         self.wrote = wrote;
         Ok(())
     }
@@ -546,8 +557,21 @@ impl Follower {
     }
 }
 
-fn no_live() -> Value {
-    json!({"t": "live", "text": "", "status": ""})
+/// The screen, once two reads agree: a read can land in the middle of Claude's redraw.
+fn settled(pane_id: &str, live: &Live) -> Option<View> {
+    let read = || View::read(&herdr(&["pane", "read", pane_id, "--source", "visible", "--format", "ansi"]).ok()?);
+    let mut view = read()?;
+    if !live.changed(&view) {
+        return Some(view);
+    }
+    for _ in 0..2 {
+        let again = read()?;
+        if again.agrees(&view) {
+            return Some(again);
+        }
+        view = again;
+    }
+    None
 }
 
 fn entry_line(entry: &Entry) -> Value {

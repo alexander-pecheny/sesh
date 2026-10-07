@@ -3,7 +3,7 @@
 mod claude;
 pub use claude::Background;
 mod codex;
-pub mod live;
+pub mod screen;
 mod pi;
 pub mod vault;
 
@@ -493,7 +493,7 @@ impl Transcript {
         let mut line = Vec::new();
         while reader.read_until(b'\n', &mut line)? > 0 {
             let text = std::str::from_utf8(&line).unwrap_or_default();
-            if text.contains("run_in_background") || text.contains("task-notification") {
+            if ["run_in_background", "task-notification", "async_launched"].iter().any(|word| text.contains(word)) {
                 if let Ok(value) = serde_json::from_str::<Value>(text) {
                     scan.line(&value, &mut ids, &mut out);
                     out.clear();

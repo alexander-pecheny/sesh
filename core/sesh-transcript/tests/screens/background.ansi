@@ -1,0 +1,36 @@
+  - [0m[1mShared paths. [0mBoth tools use [0m[38;2;177;185;249m~/.chgksuite/resolve.db [0mand a new, permanent [0m[38;2;177;185;249m~/.chgksuite/telegram.db[0m. Go stops
+    using [0m[38;2;177;185;249mtg-resolve.json [0mand ignores any existing copy.
+  - [0m[1m[38;2;177;185;249mtelegram.db[0m[1m contents. [0mIt has four tables. [0m[38;2;177;185;249mmessages [0mand [0m[38;2;177;185;249mbot_status [0mare Python's bot inbox, and rows older than
+    seven days are pruned at startup. [0m[38;2;177;185;249mexports [0mand [0m[38;2;177;185;249mposts [0mare written by both tools. Each post is recorded as soon
+    as it is sent, dry runs are not recorded, and each export stores the bot account used.
+  - [0m[1mGo's bot [0mkeeps its in-memory inbox and creates the inbox tables empty.
+  - [0m[1mStats check. [0mA new [0m[38;2;177;185;249mcompose has_stats [0mcommand in both CLIs prints JSON. All three GUIs call it before a
+    Telegram export, ask whether to publish without stats (default No), and on Yes pass [0m[38;2;177;185;249m--allow_no_stats[0m.
+  - [0m[1mCLI behaviour. [0mOn the command line, [0m[38;2;177;185;249mstop_if_no_stats [0mstill stops the export. Python keeps honouring the old
+    environment variable.
+  - [0m[1mDocumentation and shipping. [0mA schema note goes in both repos so agents can find posts to edit. No edit
+    command for now. One draft pull request per repo, each from its own worktree, and I won't merge either.
+
+  Shall I go ahead?
+
+[0m[38;2;153;153;153m✻ Churned for 6s · done 7:53 PM[0m
+
+[0m[38;2;153;153;153m[48;2;55;55;55m❯ [0m[38;2;255;255;255m[48;2;55;55;55myes go build[0m[48;2;55;55;55m                                                                                                   [0m
+
+[0m[38;2;78;186;101m● [0m[1m2 [0mbackground agents launched [0m[38;2;153;153;153m(↓ to manage)[0m
+   [0m[38;2;153;153;153m├ [0m[1mBuild Python chgksuite side[0m
+   [0m[38;2;153;153;153m└ [0m[1mBuild Go dopesuite side[0m
+
+[0m[38;2;255;255;255m● [0mBuilding has started on both: one agent on [0m[38;2;177;185;249mchgksuite [0mand one on [0m[38;2;177;185;249mdopesuite[0m, working in parallel against the same
+  database schema. I'll report when both pull requests are open.
+
+[0m[38;2;153;153;153m✻ Waiting for [0m[1m[38;2;153;153;153m2[0m[38;2;153;153;153m background agents to finish[0m
+                                                                         [0m[38;2;78;186;101m✔ Update installed · Restart to update[0m
+[0m[38;2;136;136;136m─────────────────────────────────────────────────────────────────────────────────────────────────────────────────[0m
+❯ 
+[0m[38;2;136;136;136m─────────────────────────────────────────────────────────────────────────────────────────────────────────────────[0m
+  [0m[38;2;255;107;128m⏵⏵ bypass permissions on[0m[38;2;153;153;153m (shift+tab to cycle) · ← for agents · ↓ to manage[0m
+
+[0m[1m  ● main[0m
+[0m[38;2;153;153;153m  ◯ fork  Comparing test failures against origin/main[0m                                   [0m[38;2;153;153;153m8m 8s · ↓ 195.4k tokens[0m
+[0m[38;2;153;153;153m  ◯ fork  Reading chgksuite-gui spec_test.go[0m                                           [0m[38;2;153;153;153m7m 51s · ↓ 193.6k tokens[0m

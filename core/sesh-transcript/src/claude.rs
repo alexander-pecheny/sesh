@@ -231,6 +231,14 @@ impl Parser {
         if self.hidden_results.contains(call) || todo_result(result) {
             return;
         }
+        // Claude may run an Agent in the background unasked; only its result says so.
+        if result["status"] == "async_launched" && !self.background.iter().any(|work| work.call == call) {
+            self.background.push(Background {
+                call: call.to_string(),
+                label: result["description"].as_str().unwrap_or("Agent").to_string(),
+                agent: true,
+            });
+        }
         let at = &line["timestamp"];
         let call_id = match (self.questions.get(call), answers(result)) {
             (Some(id), _) => id.clone(),
