@@ -337,7 +337,7 @@ impl Follower {
             {
                 Some((offset, cursor_path)) if cursor_path == path => {
                     transcript
-                        .read_tail(Some(offset), |entries| entries.len() >= self.last)
+                        .read_tail(Some(offset), |entries| entries.len() >= self.last.max(BACKGROUND_WINDOW))
                         .map_err(|err| err.to_string())?;
                     self.transcript = Some(transcript);
                     self.read_new()?;
@@ -404,10 +404,11 @@ impl Follower {
         (current.as_deref() != Some(path.as_str())).then_some(path)
     }
 
-    /// Takes over `transcript` and sends its last entries.
+    /// Takes over `transcript` and sends its last entries; it reads as far back as the
+    /// `background` command does, so both see the same work still running.
     fn show(&mut self, mut transcript: Transcript) -> Result<(), String> {
         transcript
-            .read_tail(None, |entries| entries.len() >= self.last)
+            .read_tail(None, |entries| entries.len() >= self.last.max(BACKGROUND_WINDOW))
             .map_err(|err| err.to_string())?;
         let start = transcript.entries.len().saturating_sub(self.last);
         let lines: Vec<Value> = transcript.entries[start..].iter().map(entry_line).collect();
