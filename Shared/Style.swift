@@ -27,8 +27,11 @@ extension Image {
 extension View {
     func inlineTitle() -> some View { self }
 
-    /// The window is the container on the Mac, wider than a split view's column.
-    func fitWidth() -> some View { frame(maxWidth: .infinity) }
+    /// A column of 66 characters of body text, centred: lines longer than that are hard to
+    /// read on a wide window. The window, not the split view's column, is the container here.
+    func fitWidth() -> some View {
+        frame(maxWidth: Metric.measure + 2 * Metric.wide).frame(maxWidth: .infinity)
+    }
 
     func cover<Content: View>(isPresented: Binding<Bool>, @ViewBuilder content: @escaping () -> Content) -> some View {
         sheet(isPresented: isPresented, content: content)
@@ -61,6 +64,15 @@ enum Metric {
     static let label: CGFloat = 14
     static let body: CGFloat = 15
     static let title: CGFloat = 16
+    #if os(macOS)
+    /// Room for 66 characters of ordinary prose, measured on a sentence rather than on "0",
+    /// which is wider than the average letter.
+    static let measure: CGFloat = {
+        let sample = "The quick brown fox jumps over the lazy dog, then naps by the river."
+        let width = (sample as NSString).size(withAttributes: [.font: NSFont.systemFont(ofSize: body)]).width
+        return (66 * width / CGFloat(sample.count)).rounded(.up)
+    }()
+    #endif
 }
 
 extension Array {

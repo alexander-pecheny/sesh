@@ -100,7 +100,7 @@ final class Vault: ObservableObject, Identifiable {
 
     private var file: URL {
         let support = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
-        return support.appending(path: "Sesh/vaults/\(place.name).json")
+        return support.appending(path: "\(Bundle.main.object(forInfoDictionaryKey: "CFBundleName") as? String ?? "Sesh")/vaults/\(place.name).json")
     }
 
     private func load() {

@@ -20,6 +20,7 @@ ROOT = pathlib.Path(__file__).resolve().parent.parent
 CLOUDS = ROOT / "Resources" / "icon-clouds"
 FONTS = ROOT / "Resources" / "Fonts"
 APPICON = ROOT / "Resources" / "Icons.xcassets" / "AppIcon.appiconset"
+MACICON = ROOT / "Resources" / "Icons.xcassets" / "MacIcon.appiconset"
 OUT = ROOT / "build" / "icons"
 
 SS, FINAL = 2048, 1024
@@ -154,13 +155,35 @@ def install(name):
         "info": {"author": "xcode", "version": 1},
     }, indent=2) + "\n")
     print(f"installed {name} -> {APPICON.relative_to(ROOT)}")
+    install_mac(Image.open(APPICON / "icon.png").convert("RGBA"))
+
+
+def install_mac(art):
+    """The same art on Apple's macOS grid: an 824-pixel rounded square centred on 1024."""
+    body, radius = 824, 185
+    mask = Image.new("L", (body, body), 0)
+    ImageDraw.Draw(mask).rounded_rectangle((0, 0, body - 1, body - 1), radius=radius, fill=255)
+    full = Image.new("RGBA", (FINAL, FINAL), (0, 0, 0, 0))
+    full.paste(art.resize((body, body), Image.LANCZOS), ((FINAL - body) // 2,) * 2, mask)
+    MACICON.mkdir(parents=True, exist_ok=True)
+    images = []
+    for size in (16, 32, 128, 256, 512):
+        for scale in (1, 2):
+            name = f"icon_{size}x{size}{'@2x' if scale == 2 else ''}.png"
+            full.resize((size * scale,) * 2, Image.LANCZOS).save(MACICON / name)
+            images.append({"filename": name, "idiom": "mac", "scale": f"{scale}x", "size": f"{size}x{size}"})
+    (MACICON / "Contents.json").write_text(json.dumps({"images": images, "info": {"author": "xcode", "version": 1}}, indent=2) + "\n")
+    print(f"installed the Mac icon -> {MACICON.relative_to(ROOT)}")
 
 
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--install", metavar="NAME")
     ap.add_argument("--sheet", action="store_true")
+    ap.add_argument("--mac", action="store_true", help="redo only the Mac icon from the installed one")
     args = ap.parse_args()
+    if args.mac:
+        return install_mac(Image.open(APPICON / "icon.png").convert("RGBA"))
     if args.install:
         return install(args.install)
 
