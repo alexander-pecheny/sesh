@@ -702,9 +702,25 @@ private struct ImageViewer: View {
                         .background(.white.opacity(0.2), in: .circle)
                 }
                 .padding(Metric.wide)
+                .keyboardShortcut(.cancelAction)
                 .accessibilityLabel("Close")
             }
+            #if os(macOS)
+            .frame(width: fitted.width, height: fitted.height)
+            #endif
     }
+
+    #if os(macOS)
+    /// A sheet takes its content's size: the image's own, up to most of the screen.
+    private var fitted: CGSize {
+        let room = (NSScreen.main?.visibleFrame.size ?? CGSize(width: 1200, height: 800))
+        let most = CGSize(width: room.width * 0.9, height: room.height * 0.9)
+        let size = image.size
+        guard size.width > 0, size.height > 0 else { return most }
+        let scale = min(most.width / size.width, most.height / size.height, max(1, 600 / max(size.width, size.height)))
+        return CGSize(width: size.width * scale, height: size.height * scale)
+    }
+    #endif
 }
 
 private struct RemoteImage: View {
