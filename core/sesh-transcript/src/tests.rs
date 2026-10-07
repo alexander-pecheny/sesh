@@ -611,3 +611,34 @@ fn a_notice_queued_mid_turn_ends_background_work() {
         assert!(parse("claude", &lines).background().is_empty());
     }
 }
+
+#[test]
+fn a_message_sent_mid_turn_shows_where_claude_read_it() {
+    let at = "2026-10-07T15:54:38.457Z";
+    let queued = |prompt: Value, origin: Value| {
+        json!({"type":"attachment","timestamp":at,"attachment":{"type":"queued_command","prompt":prompt,"commandMode":"prompt","origin":origin}})
+    };
+    let transcript = parse("claude", &[
+        json!({"type":"queue-operation","operation":"enqueue","timestamp":at,"content":"also it crashed"}),
+        queued(json!("also it crashed"), json!({"kind":"human"})),
+        queued(json!([{"type":"text","text":"[Image #1] and this"}]), Value::Null),
+        json!({"type":"attachment","timestamp":at,"attachment":{"type":"queued_command","commandMode":"task-notification","prompt":"<task-notification>x</task-notification>"}}),
+    ]);
+    let texts: Vec<_> = transcript.entries.iter().map(|entry| (entry.kind, entry.text.as_deref().unwrap_or_default())).collect();
+    assert_eq!(texts, [("user", "also it crashed"), ("user", "[Image #1] and this")]);
+}
+
+#[test]
+fn narration_sent_as_thinking_reads_as_text() {
+    let at = "2026-10-07T15:56:17.433Z";
+    let thinking = |text: &str, signature: &str| {
+        json!({"type":"assistant","timestamp":at,"message":{"content":[{"type":"thinking","thinking":text,"signature":signature}]}})
+    };
+    let transcript = parse("claude", &[
+        thinking("", "CAQSkQ8KEAgSGAI4AUIIdGhpbmtpbmcSDG2jqnFU"),
+        thinking("The runtime theory is ruled out.\n\n", "CAQSsAgKEQgSGAI4AUIJbmFycmF0aW9uEgyquZYm"),
+        thinking("Weighing it up.", "CAQSnQYKEAgSGAI4AUIIdGhpbmtpbmcSDNlmFW"),
+    ]);
+    assert_eq!(kinds(&transcript), ["text", "thinking"]);
+    assert_eq!(transcript.entries[0].text.as_deref(), Some("The runtime theory is ruled out."));
+}

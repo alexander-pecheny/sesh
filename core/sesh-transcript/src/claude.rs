@@ -5,6 +5,10 @@ use serde_json::Value;
 use super::{block_text, creation_diff, Entry, Ids};
 
 /// Lines Claude writes as the user that the user did not type.
+/// "narration" in base64, at each of the three offsets it can start at.
+const NARRATION: [&str; 3] = ["bmFycmF0aW9u", "5hcnJhdGlvb", "uYXJyYXRpb2"];
+const SIGNATURE_HEAD: usize = 64;
+
 const NOT_TYPED: [&str; 6] = [
     "<local-command-",
     "<bash-",
@@ -58,8 +62,19 @@ impl Parser {
         match line["type"].as_str() {
             // A notice that arrives mid-turn is recorded as queued, never as a user message.
             Some("queue-operation") => self.finished(line["content"].as_str().unwrap_or_default()),
+            // A message the user sent while Claude worked, which it read at its next step.
             Some("attachment") if line["attachment"]["type"] == "queued_command" => {
-                self.finished(line["attachment"]["prompt"].as_str().unwrap_or_default());
+                let queued = &line["attachment"];
+                let prompt = block_text(&queued["prompt"]);
+                self.finished(&prompt);
+                let human = queued["origin"]["kind"]
+                    .as_str()
+                    .is_none_or(|kind| kind == "human");
+                if queued["commandMode"] == "prompt" && human {
+                    if let Some(text) = typed_text(&prompt) {
+                        out.push(Entry::user(ids.next(), at, text, Vec::new()));
+                    }
+                }
             }
             Some("user") => {
                 if line["origin"]["kind"] == "task-notification" {
@@ -113,8 +128,13 @@ impl Parser {
                 }
             }
             Some("thinking") => {
+                let kind = if narration(block["signature"].as_str().unwrap_or_default()) {
+                    "text"
+                } else {
+                    "thinking"
+                };
                 if let Some(text) = text("thinking") {
-                    out.push(Entry::text_like(ids.next(), "thinking", at, text));
+                    out.push(Entry::text_like(ids.next(), kind, at, text));
                 }
             }
             Some("tool_use") => {
@@ -224,6 +244,13 @@ impl Parser {
         entry.answers = answers(result);
         out.push(entry);
     }
+}
+
+/// Newer models send the prose shown between tool calls as a thinking block whose
+/// signature, base64 at its head, names it narration; Claude Code prints it as text.
+fn narration(signature: &str) -> bool {
+    let head = signature.get(..SIGNATURE_HEAD).unwrap_or(signature);
+    NARRATION.iter().any(|word| head.contains(word))
 }
 
 /// What TodoWrite, TaskCreate and TaskUpdate return, which shows as their todo entry.
