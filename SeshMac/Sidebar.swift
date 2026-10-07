@@ -323,6 +323,7 @@ private struct UnfiledGroup: View {
 private struct UnfiledRow: View {
     @EnvironmentObject private var library: Library
     let item: Library.Unfiled
+    @State private var stopping = false
 
     var body: some View {
         VStack(alignment: .leading, spacing: 1) {
@@ -349,6 +350,13 @@ private struct UnfiledRow: View {
                     }
                 }
             }
+            Divider()
+            Button("Stop and Close…", role: .destructive) { stopping = true }
+        }
+        .confirmationDialog("Stop \(item.agent.title) in \(item.cwd)?", isPresented: $stopping) {
+            Button("Stop and Close", role: .destructive) { Task { await library.stop(item) } }
+        } message: {
+            Text("The Agent is interrupted and its herdr pane closed. Nothing of it is kept in a Vault, as it was never adopted.")
         }
     }
 }

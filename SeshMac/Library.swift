@@ -271,6 +271,13 @@ final class Library: ObservableObject {
         objectWillChange.send()
     }
 
+    /// Interrupts an Unfiled Agent and closes its pane.
+    func stop(_ item: Unfiled) async {
+        let machine = TaskActions.machine(item.machine)
+        _ = await machine.run("herdr agent send-keys \(quote(item.pane)) ctrl+c ctrl+c; sleep 1; herdr pane close \(quote(item.pane))")
+        unfiled[item.machine ?? ""]?.removeAll { $0 == item }
+    }
+
     /// Makes an Unfiled Agent session part of `task`; it never goes back.
     func adopt(_ item: Unfiled, into task: String) {
         guard let vault = vault(of: task) else { return }
