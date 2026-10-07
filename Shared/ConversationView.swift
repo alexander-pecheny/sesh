@@ -601,8 +601,8 @@ private struct QueuedBubble: View {
                 Button("Edit") { edit(conversation.unqueue(message)) }
                 Button("Interrupt") { Task { await conversation.interrupt() } }
                 if conversation.agent == .claude {
-                    Button("Background the tool") { Task { await conversation.background() } }
-                        .help("Claude's running command keeps going in the background and Claude reads this now")
+                    Button("Send now") { Task { await conversation.sendNow() } }
+                        .help("Claude takes it without stopping and reads it at its next step")
                 }
             }
             .font(.ui(Metric.caption))
