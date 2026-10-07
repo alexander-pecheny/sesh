@@ -36,22 +36,8 @@ struct TaskView: View {
             .frame(height: 34)
             .background(.bar)
             Divider()
-            Group {
-                switch current {
-                case .journal: JournalView(vault: vault, task: id)
-                case .session(let session): SessionTab(vault: vault, id: session).id(session)
-                case .document(let document): DocumentTab(vault: vault, id: document).id(document)
-                case .subagent(let session, let path, let title):
-                    if let record = vault.records[session] {
-                        ConversationView(conversation: library.subagentConversation(path: path, of: record), title: title, fresh: false)
-                            .frame(minWidth: 420, maxWidth: .infinity, minHeight: 300, maxHeight: .infinity)
-                            .id(path)
-                    }
-                case .terminal(let terminal):
-                    if let surface = library.terminal(terminal) { Ghostty.Terminal(view: surface).id(terminal) }
-                }
-            }
-            .frame(maxWidth: .infinity, maxHeight: .infinity)
+            TabContent(vault: vault, task: id, tab: current)
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
         }
         .navigationTitle(vault.records[id]?.body.title ?? "Task")
         #if DEBUG
@@ -61,6 +47,12 @@ struct TaskView: View {
                 for _ in 0..<40 where vault.records[id] == nil || !vault.online { try? await Task.sleep(for: .milliseconds(500)) }
                 if let task = vault.records[id], let problem = await TaskActions.close(task, in: vault, library: library, discard: false) {
                     Ghostty.logger.error("close failed: \(problem, privacy: .public)")
+                }
+            }
+            if UserDefaults.standard.string(forKey: "start") == "terminal" {
+                for _ in 0..<40 where vault.records[id] == nil || !vault.online { try? await Task.sleep(for: .milliseconds(500)) }
+                if let task = vault.records[id], let problem = await library.openTerminal(in: task, on: TaskActions.machines(for: task, in: vault)[0]) {
+                    Ghostty.logger.error("terminal failed: \(problem, privacy: .public)")
                 }
             }
             guard let agent = UserDefaults.standard.string(forKey: "start").flatMap(Agent.init) else { return }
@@ -118,7 +110,8 @@ private struct TabButton: View {
     private var recordID: String {
         switch tab {
         case .session(let id), .document(let id): id
-        case .journal, .terminal, .subagent: ""
+        case .terminal(let id): id
+        case .journal, .subagent: ""
         }
     }
 
@@ -159,7 +152,9 @@ private struct AddMenu: View {
                     ForEach(Agent.allCases) { agent in
                         Button("New \(agent.title) session") { start(agent, on: machine) }
                     }
-                    Button("New Terminal") { library.openTerminal(in: task, on: machine) }
+                    Button("New Terminal") {
+                        Task { problem = await library.openTerminal(in: task, on: machine) }
+                    }
                 }
             }
             Section {
@@ -194,22 +189,99 @@ private struct AddMenu: View {
     }
 }
 
-/// An Agent session of the Task, as its Conversation.
+/// What the current Tab shows, apart so the Task view stays simple to type-check.
+private struct TabContent: View {
+    @EnvironmentObject private var library: Library
+    @ObservedObject var vault: Vault
+    let task: String
+    let tab: TabItem
+
+    var body: some View {
+        switch tab {
+        case .journal: JournalView(vault: vault, task: task)
+        case .session(let session): SessionTab(vault: vault, id: session).id(session)
+        case .document(let document): DocumentTab(vault: vault, id: document).id(document)
+        case .subagent(let session, let path, let title):
+            if let record = vault.records[session] {
+                ConversationView(conversation: library.subagentConversation(path: path, of: record), title: title, fresh: false)
+                    .frame(minWidth: 420, maxWidth: .infinity, minHeight: 300, maxHeight: .infinity)
+                    .id(path)
+            }
+        case .terminal(let terminal):
+            if let record = vault.records[terminal], let pane = record.body.pane {
+                PaneView(key: terminal, pane: pane, machine: TaskActions.machine(record.body.machine)) {
+                    library.close(.terminal(terminal), in: task)
+                }
+                .id(terminal)
+            }
+        }
+    }
+}
+
+/// A herdr pane's own screen, attached; it attaches again after its connection drops.
+private struct PaneView: View {
+    @EnvironmentObject private var library: Library
+    let key: String
+    let pane: String
+    let machine: Machine
+    let gone: () -> Void
+    @State private var surface: Ghostty.TerminalSurface?
+    @State private var attempt = 0
+
+    var body: some View {
+        Group {
+            if let surface { Ghostty.Terminal(view: surface).id(ObjectIdentifier(surface)) } else { ProgressView() }
+        }
+        .task(id: attempt) {
+            surface = await library.surface(for: key, pane: pane, on: machine, gone: gone)
+        }
+        .onReceive(library.objectWillChange) { _ in
+            // The cached view went when its attach ended; fetch a new one.
+            DispatchQueue.main.async { if surface != nil, !library.attached(key) { surface = nil; attempt += 1 } }
+        }
+    }
+}
+
+/// An Agent session of the Task: its Conversation, or its own terminal for menus and
+/// pickers the chat cannot show.
 private struct SessionTab: View {
     @EnvironmentObject private var library: Library
     @ObservedObject var vault: Vault
     let id: String
     @State private var conversation: Conversation?
 
+    private var terminal: Bool { library.terminalFace.contains(id) }
+
     var body: some View {
         Group {
-            if let conversation, let session = vault.records[id] {
+            if terminal, let session = vault.records[id], let pane = session.body.pane {
+                PaneView(key: "session:" + id, pane: pane, machine: TaskActions.machine(session.body.machine)) {
+                    library.terminalFace.remove(id)
+                }
+            } else if let conversation, let session = vault.records[id] {
                 ConversationView(conversation: conversation, title: session.body.title ?? "Agent session", fresh: false)
             } else {
                 ProgressView()
             }
         }
         .frame(minWidth: 420, maxWidth: .infinity, minHeight: 300, maxHeight: .infinity)
+        .overlay(alignment: .topTrailing) {
+            Picker("", selection: Binding(
+                get: { terminal },
+                set: { if $0 { library.terminalFace.insert(id) } else { library.terminalFace.remove(id) } }
+            )) {
+                Text("Chat").tag(false)
+                Text("Terminal").tag(true)
+            }
+            .pickerStyle(.segmented)
+            .fixedSize()
+            .padding(Metric.gap)
+            .background {
+                Button("") { if terminal { library.terminalFace.remove(id) } else { library.terminalFace.insert(id) } }
+                    .keyboardShortcut("t", modifiers: [.command, .shift])
+                    .hidden()
+            }
+        }
         .task {
             guard let session = vault.records[id] else { return }
             conversation = await library.conversation(for: session)

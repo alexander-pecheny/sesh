@@ -33,7 +33,7 @@ enum TaskActions {
     }
 
     /// The Task's Workspace on `machine`, made if herdr has none, and a fresh pane in it.
-    private static func pane(for task: Record, on machine: Machine, label: String) async -> Result<(Herdr.Opened, String), Herdr.Failure> {
+    static func pane(for task: Record, on machine: Machine, label: String) async -> Result<(Herdr.Opened, String), Herdr.Failure> {
         let title = task.body.title ?? "Task"
         let open = await Herdr.workspaces(on: machine)
         let known = task.body.workspace.flatMap { open[$0] != nil && machine.alias == task.body.machine ? $0 : nil }

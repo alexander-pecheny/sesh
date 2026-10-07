@@ -39,10 +39,8 @@ final class Library: ObservableObject {
         var current: [String: TabItem]
     }
 
-    /// What was open survives a restart; Terminals do not, as their shells ended with the app.
+    /// What was open survives a restart, Terminals included: their shells run in herdr.
     private func keep() {
-        let tabs = tabs.mapValues { $0.filter { if case .terminal = $0 { false } else { true } } }
-        let current = current.filter { if case .terminal = $0.value { false } else { true } }
         UserDefaults.standard.set(try? JSONEncoder().encode(Kept(selection: selection, tabs: tabs, current: current)), forKey: "tabs")
     }
 
@@ -172,6 +170,8 @@ final class Library: ObservableObject {
         unfiled = found
         live = states
         markSeen()
+        polls += 1
+        if polls % 3 == 1 { await refreshBackground() }
     }
 
     // MARK: Marks
@@ -183,11 +183,38 @@ final class Library: ObservableObject {
     }
 
     enum Mark: Int, Comparable {
-        case seen, finished, working, waiting
+        case seen, finished, background, working, waiting
         static func < (a: Mark, b: Mark) -> Bool { a.rawValue < b.rawValue }
     }
 
     @Published private(set) var live: [String: Live] = [:]
+    /// How much each idle Claude pane left running in the background, by `machine:pane`.
+    @Published private(set) var busy: [String: Int] = [:]
+    private var polls = 0
+
+    /// Idle Claude sessions may still have commands or subagents running; one helper call per
+    /// machine asks for all of them.
+    private func refreshBackground() async {
+        let sessions = vaults.flatMap { $0.all(.session) }.filter {
+            $0.body.agent == Agent.claude.rawValue && $0.body.pane != nil && live[key($0)].map { $0.status != "working" } == true
+        }
+        var found: [String: Int] = [:]
+        for (alias, group) in Dictionary(grouping: sessions, by: { $0.body.machine ?? "" }) {
+            let machine = TaskActions.machine(alias.isEmpty ? nil : alias)
+            let panes = group.compactMap(\.body.pane).map(quote).joined(separator: " ")
+            let ran = await machine.run("\(Helper.path) background \(panes)")
+            struct Line: Decodable {
+                struct Work: Decodable { let call: String }
+                let pane: String
+                let tasks: [Work]
+            }
+            for text in ran.out.split(separator: "\n") {
+                guard let line = try? JSONDecoder().decode(Line.self, from: Data(text.utf8)) else { continue }
+                found["\(alias):\(line.pane)"] = line.tasks.count
+            }
+        }
+        busy = found
+    }
     /// When each pane's Agent last worked or finished a turn, in milliseconds since 1970.
     @Published private(set) var active: [String: Double] = UserDefaults.standard.dictionary(forKey: "active") as? [String: Double] ?? [:] {
         didSet { UserDefaults.standard.set(active, forKey: "active") }
@@ -219,6 +246,7 @@ final class Library: ObservableObject {
         guard let state = live[key(session)] else { return nil }
         if state.status == "blocked" { return .waiting }
         if state.status == "working" { return .working }
+        if busy[key(session), default: 0] > 0 { return .background }
         return state.done > seen[key(session), default: state.done] ? .finished : .seen
     }
 
@@ -296,28 +324,89 @@ final class Library: ObservableObject {
 
     // MARK: Terminals
 
-    /// Open Terminals by Tab; a Terminal's shell ends when its Tab closes.
-    private var terminals: [UUID: Ghostty.TerminalSurface] = [:]
+    /// Attached views of herdr panes, by Terminal record or by Agent session; an attach is a
+    /// view only, and the pane keeps running in herdr when it goes.
+    private var surfaces: [String: Ghostty.TerminalSurface] = [:]
+    /// Which Agent sessions show their own terminal rather than their Conversation.
+    @Published var terminalFace: Set<String> = []
+    private static var mosh: String??
 
-    /// A plain shell for the Task: in its Worktree when the machine has it, else at home.
-    func openTerminal(in task: Record, on machine: Machine) {
-        let folder = machine.alias == task.body.machine ? task.body.path : nil
-        let command: String?
-        if let alias = machine.alias {
-            let start = folder.map { "cd \(quote($0)) && exec \"$SHELL\" -l" } ?? "exec \"$SHELL\" -l"
-            // Its own connection: the shared one may already carry as many channels as sshd allows.
-            command = "/usr/bin/ssh -t -o ControlPath=none \(alias) \(quote(start))"
-        } else {
-            command = nil
+    /// A shell in a new herdr pane of the Task's Workspace, recorded so it reopens after a
+    /// restart: in the Worktree when the machine has it, else at home.
+    func openTerminal(in task: Record, on machine: Machine) async -> String? {
+        guard let vault = vault(of: task.id) else { return nil }
+        if let problem = await machine.prepare() { return problem }
+        switch await TaskActions.pane(for: task, on: machine, label: "Terminal") {
+        case .failure(let failure): return failure.message
+        case .success(let (opened, folder)):
+            let terminal = vault.create(.tab, .init(
+                title: "Terminal", task: task.id, position: Date().timeIntervalSince1970,
+                machine: machine.alias, path: folder, pane: opened.pane, kind: "terminal"))
+            open(.terminal(terminal.id), in: task.id)
+            return nil
         }
-        let id = UUID()
-        let surface = Ghostty.TerminalSurface(command: command, folder: machine.alias == nil ? folder : nil)
-        surface.onClose = { [weak self] in self?.close(.terminal(id), in: task.id) }
-        terminals[id] = surface
-        open(.terminal(id), in: task.id)
     }
 
-    func terminal(_ id: UUID) -> Ghostty.TerminalSurface? { terminals[id] }
+    /// The live view of a pane: `herdr terminal attach` over mosh, or ssh where there is no
+    /// mosh, so it survives sleep and a changing network as the phone's Sessions do.
+    func surface(for key: String, pane: String, on machine: Machine, gone: @escaping () -> Void) async -> Ghostty.TerminalSurface? {
+        if let known = surfaces[key] { return known }
+        struct Pane: Decodable {
+            struct Result: Decodable {
+                struct Info: Decodable { let terminal_id: String }
+                let pane: Info
+            }
+            let result: Result
+        }
+        let ran = await machine.run("herdr pane get \(quote(pane))")
+        guard let terminal = (try? JSONDecoder().decode(Pane.self, from: Data(ran.out.utf8)))?.result.pane.terminal_id else {
+            gone()
+            return nil
+        }
+        let attach = "herdr terminal attach \(quote(terminal)) --takeover"
+        let command: String
+        if let alias = machine.alias {
+            let remote = quote("exec \"$SHELL\" -lic \(quote(attach))")
+            if Self.mosh == nil {
+                let found = (await Machine.mac.run("command -v mosh")).out.trimmingCharacters(in: .whitespacesAndNewlines)
+                Self.mosh = .some(found.isEmpty ? nil : found)
+            }
+            if let mosh = Self.mosh ?? nil {
+                // mosh-client looks the terminal type up locally, and knows no xterm-ghostty.
+                command = "/usr/bin/env TERM=xterm-256color \(quote(mosh)) \(alias) -- sh -c \(remote)"
+            } else {
+                command = "/usr/bin/ssh -t -o ControlPath=none \(alias) \(remote)"
+            }
+        } else {
+            command = "/bin/zsh -lic \(quote(attach))"
+        }
+        if let known = surfaces[key] { return known }
+        let surface = Ghostty.TerminalSurface(command: command, folder: nil)
+        // The attach ended: the pane is gone, or only the connection, and the next look attaches again.
+        surface.onClose = { [weak self] in
+            self?.surfaces[key] = nil
+            Task {
+                let still = await machine.run("herdr pane get \(quote(pane))")
+                if !still.ok { gone() }
+                self?.objectWillChange.send()
+            }
+        }
+        surfaces[key] = surface
+        return surface
+    }
+
+    func attached(_ key: String) -> Bool { surfaces[key] != nil }
+
+    /// Closing a Terminal Tab ends its shell; the record goes with it.
+    private func closeTerminal(_ id: String) {
+        surfaces[id] = nil
+        guard let vault = vault(of: id), let record = vault.records[id] else { return }
+        if let pane = record.body.pane {
+            let machine = TaskActions.machine(record.body.machine)
+            Task { _ = await machine.run("herdr pane close \(quote(pane))") }
+        }
+        vault.delete(record)
+    }
 
     // MARK: Bookmarks and links
 
@@ -387,7 +476,7 @@ final class Library: ObservableObject {
     }
 
     func close(_ tab: TabItem, in task: String) {
-        if case .terminal(let id) = tab { terminals[id] = nil }
+        if case .terminal(let id) = tab { closeTerminal(id) }
         tabs[task]?.removeAll { $0 == tab }
         if current[task] == tab { current[task] = tabs[task]?.last ?? .journal }
     }
@@ -398,7 +487,8 @@ enum TabItem: Hashable, Identifiable, Codable {
     case journal
     case session(String)
     case document(String)
-    case terminal(UUID)
+    /// A shell in a herdr pane, recorded in the Vault so it reopens after a restart.
+    case terminal(String)
     /// A Claude subagent's own Transcript, read-only, opened from its parent's Conversation.
     case subagent(session: String, path: String, title: String)
 

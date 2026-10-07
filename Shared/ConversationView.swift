@@ -107,29 +107,22 @@ struct ConversationView: View {
                 pinned = (row.id, .now + 2)
                 reader.scrollTo(row.id, anchor: .top)
             }
-            .overlay(alignment: .bottomTrailing) {
+            .overlay(alignment: .bottom) {
                 if !atBottom {
-                    Button {
-                        atBottom = true
-                        reader.scrollTo(Self.end, anchor: .bottom)
-                    } label: {
-                        Image(systemName: "arrow.down")
-                            .font(.system(size: Metric.label, weight: .semibold))
+                    Button { jump(reader) } label: {
+                        Text("Move to bottom ↓")
+                            .font(.ui(Metric.note).weight(.medium))
                             .foregroundStyle(flavour(.text))
-                            .frame(width: Metric.control, height: Metric.control)
-                            .background(flavour(.surface1), in: .circle)
+                            .frame(maxWidth: 320)
+                            .padding(.vertical, Metric.gap)
+                            .background(flavour(.surface1), in: .capsule)
                             .shadow(radius: 3)
                     }
                     .buttonStyle(.plain)
-                    .padding(Metric.wide)
-                    .help("Jump to the end")
-                    .accessibilityLabel("Jump to the end")
+                    .padding(Metric.pad)
                 }
             }
-            .onChange(of: sent) {
-                atBottom = true
-                reader.scrollTo(Self.end, anchor: .bottom)
-            }
+            .onChange(of: sent) { jump(reader) }
             .onChange(of: changes) {
                 // A Conversation shorter than the screen never scrolls to the top to ask.
                 if nearTop { Task { await loadEarlier() } }
@@ -257,6 +250,20 @@ struct ConversationView: View {
         }
         .cover(isPresented: $composing) {
             Composer(text: $draft, canSend: canSend) { Task { await send() } }
+        }
+    }
+
+    /// One jump lands short while the rows on the way still guess their heights, so it is
+    /// repeated as they measure, unless the reader scrolls away meanwhile.
+    private func jump(_ reader: ScrollViewProxy) {
+        atBottom = true
+        reader.scrollTo(Self.end, anchor: .bottom)
+        Task {
+            for delay in [50, 150, 400] {
+                try? await Task.sleep(for: .milliseconds(delay))
+                guard atBottom else { return }
+                reader.scrollTo(Self.end, anchor: .bottom)
+            }
         }
     }
 

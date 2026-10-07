@@ -38,8 +38,11 @@ user closes it.
 _Avoid_: terminal, connection
 
 **Tab**:
-One thing open at a time in Sesh. Inside a Task a Tab is the Journal, a Markdown note, a
-Terminal or an Agent session, and every Tab but the Journal can move to another Task.
+One thing open at a time in Sesh. Inside a Task a Tab is the Journal, a Document, a
+Terminal or an Agent session, and every Tab but the Journal can move to another Task. A
+Terminal is a shell in a herdr pane of the Task's Workspace: it outlives the app, and
+closing its Tab ends it. An Agent session Tab shows the Conversation or the Agent's own
+terminal.
 Outside any Task, as on the phone today, a Tab shows one Host in one UI mode. Several Tabs
 may be open at once; one is active.
 _Avoid_: pane, page

@@ -20,9 +20,12 @@ const AGENT_GONE_AFTER: Duration = Duration::from_secs(2);
 /// of the socket has gone; polling the socket does not.
 const PING: Duration = Duration::from_secs(30);
 const DEFAULT_LAST: usize = 50;
+/// Entries read back to find background work still running; one started earlier than this
+/// is missed.
+const BACKGROUND_WINDOW: usize = 400;
 const USAGE: &str = "usage: sesh-transcript --version | follow --protocol | follow <pane> [--since CURSOR] [--last N]
        | history <pane> --before ID [--last N] | entry <pane> ID
-       | answer <pane> --json ANSWERS | permit <pane> allow|deny
+       | answer <pane> --json ANSWERS | permit <pane> allow|deny | background <pane>...
        | vault init DIR | vault pull|follow DIR [--since SEQ] | vault push DIR FILE
        | vault size DIR SESSION FILE | vault append DIR SESSION FILE --offset N BYTES_FILE
        | vault copy DIR SESSION --from PATH | vault search DIR QUERY [--limit N]
@@ -41,6 +44,7 @@ fn main() {
         }
         Some("follow") => follow(rest),
         Some("history") => history(rest),
+        Some("background") => background(rest),
         Some("entry") => entry(rest),
         Some("answer") => answer(rest),
         Some("permit") => permit(rest),
@@ -557,6 +561,32 @@ fn history(args: &[String]) -> Exit {
         writeln!(out, "{}", entry_line(entry)).map_err(|err| err.to_string())?;
     }
     writeln!(out, "{}", json!({"t": "history", "more": more})).map_err(|err| err.to_string())?;
+    Ok(0)
+}
+
+/// What each pane's Agent left running in the background, one JSON line per pane, read from
+/// the end of its Transcript, so Projects can mark an idle Agent that is not yet done.
+fn background(panes: &[String]) -> Exit {
+    if panes.is_empty() {
+        return usage();
+    }
+    let mut out = std::io::stdout().lock();
+    for pane in panes {
+        let tasks: Vec<Value> = match pane_transcript(&Target::Pane(pane)) {
+            Ok((mut transcript, _, _)) => {
+                transcript
+                    .read_tail(None, |entries| entries.len() >= BACKGROUND_WINDOW)
+                    .map_err(|err| err.to_string())?;
+                transcript
+                    .background()
+                    .iter()
+                    .map(|work| json!({"call": work.call, "label": work.label, "agent": work.agent}))
+                    .collect()
+            }
+            Err(_) => Vec::new(),
+        };
+        writeln!(out, "{}", json!({"pane": pane, "tasks": tasks})).map_err(|err| err.to_string())?;
+    }
     Ok(0)
 }
 
