@@ -69,6 +69,12 @@ final class Library: ObservableObject {
         }
         if let cached = conversations[session.id] { return cached }
         conversation.bookmark = { [weak self] entry in self?.bookmark(entry, in: session.id) }
+        if let folder = session.body.path {
+            Task { [weak conversation] in
+                let remote = await machine.run("git -C \(quote(folder)) remote get-url origin")
+                if remote.ok { conversation?.repo = Repo(remote: remote.out) }
+            }
+        }
         conversation.openSubagent = { [weak self, weak conversation] call, title in
             guard let self, let transcript = conversation?.transcript else { return }
             Task { await self.openSubagent(call, title: title, of: session, transcript: transcript) }

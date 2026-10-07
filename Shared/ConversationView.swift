@@ -18,6 +18,8 @@ struct ConversationView: View {
     @State private var topRow: String?
     /// Counts the user's sends: whoever sends wants to see the reply, wherever they had scrolled.
     @State private var sent = 0
+    /// A row a link scrolled to, held at the top until the text around it has settled.
+    @State private var pinned: (row: String, until: Date)?
 
     private var flavour: Catppuccin.Flavour { colorScheme == .dark ? .mocha : .latte }
     private var working: Bool { conversation.state == "working" }
@@ -82,7 +84,11 @@ struct ConversationView: View {
                 // without the reader moving: follow it if the end was in view. Only a change at
                 // the same height, a scroll or a resize, says whether the end is in view.
                 guard new.height == old.height else {
-                    if atBottom { reader.scrollTo(Self.end, anchor: .bottom) }
+                    if let pinned, pinned.until > .now {
+                        reader.scrollTo(pinned.row, anchor: .top)
+                    } else if atBottom {
+                        reader.scrollTo(Self.end, anchor: .bottom)
+                    }
                     return
                 }
                 atBottom = new.bottom >= new.height - Metric.control
@@ -91,7 +97,9 @@ struct ConversationView: View {
                 guard let focus = conversation.focus,
                       let row = Row.rows(conversation.items).first(where: { $0.contains(focus) }) else { return }
                 atBottom = false
-                withAnimation { reader.scrollTo(row.id, anchor: .top) }
+                // Text above it is still measuring its height; keep the row in place meanwhile.
+                pinned = (row.id, .now + 2)
+                reader.scrollTo(row.id, anchor: .top)
             }
             .onChange(of: sent) {
                 atBottom = true
@@ -372,7 +380,8 @@ private struct RowView: View {
         case .item(.entry(let entry)):
             switch entry.kind {
             case "user": UserBubble(entry: entry, conversation: conversation)
-            case "text": AgentText(text: conversation.openPath == nil ? entry.text ?? entry.summary : PathLinks.link(entry.text ?? entry.summary))
+            case "text": AgentText(text: conversation.openPath == nil && conversation.repo == nil
+                ? entry.text ?? entry.summary : PathLinks.link(entry.text ?? entry.summary, repo: conversation.repo))
                 .readable()
             case "thinking": Thinking(entry: entry)
             case "tool": ToolCard(entry: entry, result: conversation.results[entry.id], conversation: conversation)

@@ -206,6 +206,10 @@ private struct SessionTab: View {
         .task {
             guard let session = vault.records[id] else { return }
             conversation = await library.conversation(for: session)
+            #if DEBUG
+            // `-reveal ITEM` scrolls to one entry, for tests with no clicking.
+            if let item = UserDefaults.standard.string(forKey: "reveal") { await conversation?.reveal(item) }
+            #endif
         }
     }
 }

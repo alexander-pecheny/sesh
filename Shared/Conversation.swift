@@ -104,6 +104,8 @@ final class Conversation: ObservableObject {
     /// Opens a file the Agent named, relative paths taken from the Agent's folder; nil where
     /// there is nowhere to open it.
     var openPath: ((String) -> Void)?
+    /// The repository the Agent works in, for linking `#213` to its pull request.
+    @Published var repo: Repo?
     /// Keeps one entry as a Bookmark; nil where there is no Journal to keep it in.
     var bookmark: ((Entry) -> Void)?
     /// The entry a link or a search result asked to see, scrolled to and marked.
@@ -182,8 +184,9 @@ final class Conversation: ObservableObject {
         case "permission_done": permissions.removeAll { $0.id == line.id }
         case "cursor":
             cursor = line.cursor
-            // A new Agent session has no Transcript until its first message, so nothing is older.
-            if !loaded, items.isEmpty { earlier = false }
+            // A new Agent session has no Transcript until its first message, so nothing is older;
+            // every reconnect says hello again, so this is checked each time.
+            if items.isEmpty { earlier = false }
             loaded = true
         default: break
         }
