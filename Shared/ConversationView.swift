@@ -16,7 +16,7 @@ struct ConversationView: View {
     @State private var composing = false
     @State private var atBottom = true
     @State private var nearTop = false
-    @State private var topRow: String?
+    @State private var position = ScrollPosition(idType: String.self)
     /// Counts the user's sends: whoever sends wants to see the reply, wherever they had scrolled.
     @State private var sent = 0
     /// A row a link scrolled to, held at the top until the text around it has settled.
@@ -28,7 +28,6 @@ struct ConversationView: View {
     private var changes: Int {
         conversation.items.count + conversation.permissions.count + conversation.queued.count + (working ? 1 : 0)
     }
-    private static let end = "end"
     private static let nearTop = 200.0
 
     /// Pages back while the reader stays near the top and herdr has more.
@@ -41,94 +40,93 @@ struct ConversationView: View {
     }
 
     var body: some View {
-        ScrollViewReader { reader in
-            ScrollView {
-                LazyVStack(alignment: .leading, spacing: 14) {
-                    if conversation.earlier { ProgressView().frame(maxWidth: .infinity) }
-                    if conversation.loaded, conversation.items.isEmpty, conversation.pane != nil {
-                        Text("\(conversation.agent?.title ?? "The Agent") is ready. Its Conversation starts with your first message.")
-                            .font(.ui(Metric.label)).foregroundStyle(flavour(.overlay1))
-                            .frame(maxWidth: .infinity)
-                            .padding(.top, Metric.wide)
-                    }
-                    ForEach(Row.rows(conversation.items)) { row in
-                        RowView(row: row, conversation: conversation)
-                            .padding(Metric.tiny)
-                            .background(
-                                conversation.focus.map(row.contains) == true ? flavour(.yellow).opacity(0.15) : .clear,
-                                in: .rect(cornerRadius: Metric.corner))
-                            .bookmarkable(row.entry, keep: conversation.bookmark, column: row.prose ? Metric.proseColumn : nil)
-                    }
-                    ForEach(conversation.permissions) { PermissionCard(permission: $0, conversation: conversation) }
-                    ForEach(conversation.queued) { QueuedBubble(message: $0, conversation: conversation, edit: takeBack) }
-                    if working { WorkingRow() }
-                    Color.clear.frame(height: 1).id(Self.end)
+        ScrollView {
+            LazyVStack(alignment: .leading, spacing: 14) {
+                if conversation.earlier { ProgressView().frame(maxWidth: .infinity) }
+                if conversation.loaded, conversation.items.isEmpty, conversation.pane != nil {
+                    Text("\(conversation.agent?.title ?? "The Agent") is ready. Its Conversation starts with your first message.")
+                        .font(.ui(Metric.label)).foregroundStyle(flavour(.overlay1))
+                        .frame(maxWidth: .infinity)
+                        .padding(.top, Metric.wide)
                 }
-                .scrollTargetLayout()
-                .padding(16)
-                // An opening card with an unbroken path asks for more than the screen; never give it.
-                .fitWidth()
-            }
-            // Tracking the top row keeps it in place while a page lands above it.
-            .scrollPosition(id: $topRow, anchor: .top)
-            .defaultScrollAnchor(.bottom)
-            .onScrollGeometryChange(for: Bool.self) { geometry in
-                geometry.contentOffset.y + geometry.contentInsets.top < Self.nearTop
-            } action: { _, top in
-                nearTop = top
-                if top { Task { await loadEarlier() } }
-            }
-            .onScrollGeometryChange(for: Edge.self) { geometry in
-                Edge(height: geometry.contentSize.height, bottom: geometry.visibleRect.maxY)
-            } action: { old, new in
-                // New content, or text that has only now measured its height, moves the end away
-                // without the reader moving: follow it if the end was in view. Only a change at
-                // the same height, a scroll or a resize, says whether the end is in view.
-                guard new.height == old.height else {
-                    if let pinned, pinned.until > .now {
-                        reader.scrollTo(pinned.row, anchor: .top)
-                    } else if atBottom {
-                        reader.scrollTo(Self.end, anchor: .bottom)
-                    }
-                    return
+                ForEach(Row.rows(conversation.items)) { row in
+                    RowView(row: row, conversation: conversation)
+                        .padding(Metric.tiny)
+                        .background(
+                            conversation.focus.map(row.contains) == true ? flavour(.yellow).opacity(0.15) : .clear,
+                            in: .rect(cornerRadius: Metric.corner))
+                        .bookmarkable(row.entry, keep: conversation.bookmark, column: row.prose ? Metric.proseColumn : nil)
                 }
-                // Only a move up means the reader left the end; layout settling can leave the
-                // view short of the end without anyone scrolling.
-                if new.bottom >= new.height - Metric.control {
-                    atBottom = true
-                } else if new.bottom < old.bottom - 1 {
-                    atBottom = false
-                }
+                ForEach(conversation.permissions) { PermissionCard(permission: $0, conversation: conversation) }
+                ForEach(conversation.queued) { QueuedBubble(message: $0, conversation: conversation, edit: takeBack) }
+                if working { WorkingRow() }
             }
-            .onChange(of: conversation.focus) {
-                guard let focus = conversation.focus,
-                      let row = Row.rows(conversation.items).first(where: { $0.contains(focus) }) else { return }
+            .scrollTargetLayout()
+            .padding(16)
+            // An opening card with an unbroken path asks for more than the screen; never give it.
+            .fitWidth()
+        }
+        // Tracking the top row keeps it in place while a page lands above it.
+        .scrollPosition($position, anchor: .top)
+        .defaultScrollAnchor(.bottom)
+        .onScrollGeometryChange(for: Bool.self) { geometry in
+            geometry.contentOffset.y + geometry.contentInsets.top < Self.nearTop
+        } action: { _, top in
+            nearTop = top
+            if top { Task { await loadEarlier() } }
+        }
+        .onScrollGeometryChange(for: Edge.self) { geometry in
+            Edge(height: geometry.contentSize.height, bottom: geometry.visibleRect.maxY)
+        } action: { old, new in
+            // The reader left the end when the view moved up by more than the content shrank:
+            // rows above settling move both alike, and new rows below move neither.
+            let moved = new.bottom - old.bottom, shrank = new.height - old.height
+            if moved < -1, moved < shrank - 1, pinned.map({ $0.until < .now }) ?? true {
                 atBottom = false
-                // Text above it is still measuring its height; keep the row in place meanwhile.
-                pinned = (row.id, .now + 2)
-                reader.scrollTo(row.id, anchor: .top)
+                return
             }
-            .overlay(alignment: .bottom) {
-                if !atBottom {
-                    Button { jump(reader) } label: {
-                        Text("Move to bottom ↓")
-                            .font(.ui(Metric.note).weight(.medium))
-                            .foregroundStyle(flavour(.text))
-                            .frame(maxWidth: 320)
-                            .padding(.vertical, Metric.gap)
-                            .background(flavour(.surface1), in: .capsule)
-                            .shadow(radius: 3)
-                    }
-                    .buttonStyle(.plain)
-                    .padding(Metric.pad)
+            // New content, or text that has only now measured its height, moves the end away
+            // without the reader moving: follow it if the end was in view.
+            guard new.height == old.height else {
+                if let pinned, pinned.until > .now {
+                    position.scrollTo(id: pinned.row, anchor: .top)
+                } else if atBottom {
+                    position.scrollTo(edge: .bottom)
                 }
+                return
             }
-            .onChange(of: sent) { jump(reader) }
-            .onChange(of: changes) {
-                // A Conversation shorter than the screen never scrolls to the top to ask.
-                if nearTop { Task { await loadEarlier() } }
-                if atBottom { reader.scrollTo(Self.end, anchor: .bottom) }
+            if new.bottom >= new.height - Metric.control {
+                atBottom = true
             }
+        }
+        .onChange(of: conversation.focus) {
+            guard let focus = conversation.focus,
+                  let row = Row.rows(conversation.items).first(where: { $0.contains(focus) }) else { return }
+            atBottom = false
+            // Text above it is still measuring its height; keep the row in place meanwhile.
+            pinned = (row.id, .now + 2)
+            position.scrollTo(id: row.id, anchor: .top)
+        }
+        .overlay(alignment: .bottom) {
+            if !atBottom {
+                Button { jump() } label: {
+                    Text("Move to bottom ↓")
+                        .font(.ui(Metric.note).weight(.medium))
+                        .foregroundStyle(flavour(.text))
+                        .frame(maxWidth: 320)
+                        .padding(.vertical, Metric.gap)
+                        .background(flavour(.surface1), in: .capsule)
+                        .shadow(radius: 3)
+                }
+                .buttonStyle(.plain)
+                .padding(Metric.pad)
+            }
+        }
+        .onChange(of: sent) { jump() }
+        .onChange(of: changes) {
+            // A Conversation shorter than the screen never scrolls to the top to ask.
+            if nearTop { Task { await loadEarlier() } }
+            if atBottom { position.scrollTo(edge: .bottom) }
         }
         .scrollDismissesKeyboard(.interactively)
         .safeAreaInset(edge: .bottom, spacing: 0) {
@@ -260,14 +258,14 @@ struct ConversationView: View {
 
     /// One jump lands short while the rows on the way still guess their heights, so it is
     /// repeated as they measure, unless the reader scrolls away meanwhile.
-    private func jump(_ reader: ScrollViewProxy) {
+    private func jump() {
         atBottom = true
-        reader.scrollTo(Self.end, anchor: .bottom)
+        position.scrollTo(edge: .bottom)
         Task {
             for delay in [50, 150, 400] {
                 try? await Task.sleep(for: .milliseconds(delay))
                 guard atBottom else { return }
-                reader.scrollTo(Self.end, anchor: .bottom)
+                position.scrollTo(edge: .bottom)
             }
         }
     }
