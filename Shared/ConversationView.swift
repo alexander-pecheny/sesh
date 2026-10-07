@@ -7,6 +7,7 @@ struct ConversationView: View {
     @ObservedObject var conversation: Conversation
     let title: String
     let fresh: Bool
+    var hidden = false
     @State private var draft = ""
     @State private var sending = false
     @State private var picking = false
@@ -169,6 +170,9 @@ struct ConversationView: View {
             return .handled
         })
         .onAppear(perform: appeared)
+        #if os(macOS)
+        .onChange(of: hidden) { field.catchesTyping = !hidden }
+        #endif
         .alert("Open it in the Claude app", isPresented: $lost) {
             Button("OK") {}
         } message: {
@@ -273,6 +277,7 @@ struct ConversationView: View {
         #if os(macOS)
         let conversation = conversation
         field.pasteImage = { [weak conversation] data, ext in await conversation?.upload(data, ext: ext) }
+        field.catchesTyping = !hidden
         #endif
     }
 

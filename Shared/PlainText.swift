@@ -118,6 +118,35 @@ final class PlainField: NSTextView, ObservableObject {
 
     func focus() { window?.makeFirstResponder(self) }
 
+    /// Typing anywhere in the window goes here, as in a chat app, unless something else that
+    /// takes text has the keyboard.
+    var catchesTyping = false
+    private var monitor: Any?
+
+    override func viewDidMoveToWindow() {
+        super.viewDidMoveToWindow()
+        if let monitor { NSEvent.removeMonitor(monitor) }
+        monitor = nil
+        guard window != nil else { return }
+        monitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [weak self] event in
+            if let self, self.catches(event) { self.focus() }
+            return event
+        }
+    }
+
+    private func catches(_ event: NSEvent) -> Bool {
+        guard catchesTyping, let window, event.window === window, !isHiddenOrHasHiddenAncestor,
+              event.modifierFlags.intersection([.command, .control]).isEmpty,
+              let scalar = event.characters?.unicodeScalars.first,
+              scalar.value >= 0x20, scalar.value != 0x7F, !(0xF700...0xF8FF).contains(scalar.value) else { return false }
+        switch window.firstResponder {
+        case self: return false
+        case let text as NSTextView: return !text.isEditable
+        case is NSTextInputClient: return false
+        default: return true
+        }
+    }
+
     var lineHeight: CGFloat { layoutManager?.defaultLineHeight(for: font ?? .systemFont(ofSize: 13)) ?? 17 }
 
     /// Measured from the text, not the layout, so asking never resizes anything mid-layout.

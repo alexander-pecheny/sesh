@@ -270,7 +270,7 @@ private struct SessionTab: View {
         // The Conversation stays laid out under the terminal, so coming back costs no layout.
         ZStack {
             if let conversation, let session = vault.records[id] {
-                ConversationView(conversation: conversation, title: session.body.title ?? "Agent session", fresh: false)
+                ConversationView(conversation: conversation, title: session.body.title ?? "Agent session", fresh: false, hidden: terminal)
                     .opacity(terminal ? 0 : 1)
                     .allowsHitTesting(!terminal)
             } else {

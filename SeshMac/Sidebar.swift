@@ -55,9 +55,10 @@ private struct VaultSection: View {
     @EnvironmentObject private var library: Library
     @ObservedObject var vault: Vault
     @Binding var naming: Sidebar.Naming?
+    @State private var open = true
 
     var body: some View {
-        Section {
+        Section(isExpanded: $open) {
             Children(vault: vault, parent: nil, naming: $naming)
             ArchiveGroup(vault: vault, naming: $naming)
             if let alias = vault.place.alias {
