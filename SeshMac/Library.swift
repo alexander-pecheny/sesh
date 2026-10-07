@@ -373,15 +373,17 @@ final class Library: ObservableObject {
             }
             if let mosh = Self.mosh ?? nil {
                 // mosh-client looks the terminal type up locally, and knows no xterm-ghostty.
-                command = "/usr/bin/env TERM=xterm-256color \(quote(mosh)) \(alias) -- sh -c \(remote)"
+                command = "TERM=xterm-256color \(quote(mosh)) \(alias) -- sh -c \(remote)"
             } else {
                 command = "/usr/bin/ssh -t -o ControlPath=none \(alias) \(remote)"
             }
         } else {
-            command = "/bin/zsh -lic \(quote(attach))"
+            command = attach
         }
         if let known = surfaces[key] { return known }
-        let surface = Ghostty.TerminalSurface(command: command, folder: nil)
+        // Ghostty starts commands with a bare PATH; the login shell has the user's, which mosh
+        // needs to find its client and ssh.
+        let surface = Ghostty.TerminalSurface(command: "/bin/zsh -lic \(quote(command))", folder: nil)
         // The attach ended: the pane is gone, or only the connection, and the next look attaches again.
         surface.onClose = { [weak self] in
             self?.surfaces[key] = nil
