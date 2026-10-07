@@ -366,6 +366,8 @@ final class Conversation: ObservableObject {
         return image
     }
 
+    func upload(_ data: Data, ext: String) async -> String? { await runner?.upload(data, ext: ext) }
+
     #if os(iOS)
     func link() async -> URL? {
         guard let pane else { return nil }

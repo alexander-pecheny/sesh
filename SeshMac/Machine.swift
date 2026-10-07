@@ -18,6 +18,12 @@ final class Machine: Runner, Identifiable, Hashable {
     var title: String { alias ?? "This Mac" }
 
     static let mac = Machine(alias: nil)
+    /// The one ssh connection per Host that commands, streams and mosh's start-up all share.
+    nonisolated static let controlPath: String = {
+        let folder = FileManager.default.homeDirectoryForCurrentUser.appending(path: ".sesh/ssh").path
+        try? FileManager.default.createDirectory(atPath: folder, withIntermediateDirectories: true)
+        return folder + "/%C"
+    }()
     private static var known: [String: Machine] = [:]
 
     /// One object per Host for the app's life: Conversations hold their machine weakly.
@@ -45,11 +51,9 @@ final class Machine: Runner, Identifiable, Hashable {
     private func process(_ command: String) -> Process {
         let process = Process()
         if let alias {
-            let control = FileManager.default.homeDirectoryForCurrentUser.appending(path: ".sesh/ssh").path
-            try? FileManager.default.createDirectory(atPath: control, withIntermediateDirectories: true)
             process.executableURL = URL(filePath: "/usr/bin/ssh")
             process.arguments = [
-                "-o", "BatchMode=yes", "-o", "ControlMaster=auto", "-o", "ControlPath=\(control)/%C",
+                "-o", "BatchMode=yes", "-o", "ControlMaster=auto", "-o", "ControlPath=\(Self.controlPath)",
                 "-o", "ControlPersist=600", "-o", "ServerAliveInterval=15", alias,
                 // A login shell, as the phone's Link uses, so PATH has what the user installed.
                 "exec \"$SHELL\" -lic \(quote("echo \(Self.mark); " + command))",
@@ -66,6 +70,21 @@ final class Machine: Runner, Identifiable, Hashable {
 
     func stream(_ command: String, line: @escaping (String) -> Void) async -> Ran {
         await stream(command, line: Optional(line))
+    }
+
+    private var home: String?
+
+    /// Pasted images land in `~/.sesh/uploads` under the moment they were pasted, as the
+    /// phone's Uploads do, so the Agent can be told where to look.
+    func upload(_ data: Data, ext: String) async -> String? {
+        if home == nil {
+            let ran = await run("printf %s \"$HOME\"")
+            if ran.ok, !ran.out.isEmpty { home = ran.out }
+        }
+        guard let home else { return nil }
+        let stamp = Date().formatted(.iso8601.year().month().day().time(includingFractionalSeconds: false).timeSeparator(.omitted))
+        let path = "\(home)/.sesh/uploads/pasted-\(stamp).\(ext)"
+        return (await put(data, to: path)).ok ? path : nil
     }
 
     /// Writes `data` to `path` on the machine, relative to its home folder unless absolute.

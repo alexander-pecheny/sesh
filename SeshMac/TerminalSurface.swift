@@ -199,9 +199,24 @@ extension Ghostty {
 
         override func keyUp(with event: NSEvent) { _ = send(event, GHOSTTY_ACTION_RELEASE) }
 
-        /// Command keys go to ghostty's own bindings first: copy, paste, font size.
+        /// Uploads a pasted image and returns its path, which is then typed in.
+        var pasteImage: ((Data, String) async -> String?)?
+
+        func type(_ text: String) {
+            guard let surface else { return }
+            ghostty_surface_text(surface, text, UInt(text.utf8.count))
+        }
+
+        /// Command keys go to ghostty's own bindings first: copy, paste, font size. An image
+        /// cannot be pasted into a terminal, so it is uploaded and its path pasted instead.
         override func performKeyEquivalent(with event: NSEvent) -> Bool {
             guard window?.firstResponder === self, event.modifierFlags.contains(.command) else { return false }
+            if event.charactersIgnoringModifiers == "v", let pasteImage, let (data, ext) = PastedImage.read(.general) {
+                Task { @MainActor in
+                    if let path = await pasteImage(data, ext) { self.type(quote(path)) }
+                }
+                return true
+            }
             return send(event, GHOSTTY_ACTION_PRESS)
         }
 

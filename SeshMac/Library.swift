@@ -352,7 +352,6 @@ final class Library: ObservableObject {
     private var surfaces: [String: Ghostty.TerminalSurface] = [:]
     /// Which Agent sessions show their own terminal rather than their Conversation.
     @Published var terminalFace: Set<String> = []
-    private static var mosh: String??
 
     /// A shell in a new herdr pane of the Task's Workspace, recorded so it reopens after a
     /// restart: in the Worktree when the machine has it, else at home.
@@ -370,8 +369,7 @@ final class Library: ObservableObject {
         }
     }
 
-    /// The live view of a pane: `herdr terminal attach` over mosh, or ssh where there is no
-    /// mosh, so it survives sleep and a changing network as the phone's Sessions do.
+    /// The live view of a pane: `herdr terminal attach` over a shared ssh connection.
     func surface(for key: String, pane: String, on machine: Machine, gone: @escaping () -> Void) async -> Ghostty.TerminalSurface? {
         if let known = surfaces[key] { return known }
         struct Pane: Decodable {
@@ -390,23 +388,18 @@ final class Library: ObservableObject {
         let command: String
         if let alias = machine.alias {
             let remote = quote("exec \"$SHELL\" -lic \(quote(attach))")
-            if Self.mosh == nil {
-                let found = (await Machine.mac.run("command -v mosh")).out.trimmingCharacters(in: .whitespacesAndNewlines)
-                Self.mosh = .some(found.isEmpty ? nil : found)
-            }
-            if let mosh = Self.mosh ?? nil {
-                // mosh-client looks the terminal type up locally, and knows no xterm-ghostty.
-                command = "TERM=xterm-256color \(quote(mosh)) \(alias) -- sh -c \(remote)"
-            } else {
-                command = "/usr/bin/ssh -t -o ControlPath=none \(alias) \(remote)"
-            }
+            // mosh carries one screen per session, so each Terminal has its own; it starts its
+            // server through the Host's one shared ssh connection, so no new one opens.
+            let ssh = "ssh -o ControlMaster=auto -o ControlPath=\(Machine.controlPath) -o ControlPersist=600"
+            // mosh-client looks the terminal type up locally, and knows no xterm-ghostty.
+            command = "TERM=xterm-256color mosh --experimental-remote-ip=remote --ssh=\(quote(ssh)) \(alias) -- sh -c \(remote)"
         } else {
             command = attach
         }
         if let known = surfaces[key] { return known }
-        // Ghostty starts commands with a bare PATH; the login shell has the user's, which mosh
-        // needs to find its client and ssh.
+        // Ghostty starts commands with a bare PATH; the login shell has the user's.
         let surface = Ghostty.TerminalSurface(command: "/bin/zsh -lic \(quote(command))", folder: nil)
+        surface.pasteImage = { data, ext in await machine.upload(data, ext: ext) }
         // The attach ended: the pane is gone, or only the connection, and the next look attaches again.
         surface.onClose = { [weak self] in
             self?.surfaces[key] = nil

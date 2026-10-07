@@ -223,6 +223,8 @@ private struct Renderer {
             for (column, cell) in cells.enumerated() {
                 let block = NSTextTableBlock(table: table, startingRow: row, rowSpan: 1, startingColumn: column, columnSpan: 1)
                 block.setValue(100 * Double(longest[column]) / max(total, 1), type: .percentageValueType, for: .width)
+                // A cell, not the table, keeps the prose measure.
+                block.setValue(Metric.measure, type: .absoluteValueType, for: .maximumWidth)
                 block.setBorderColor(border)
                 block.setWidth(1, type: .absoluteValueType, for: .border)
                 block.setWidth(Metric.gap, type: .absoluteValueType, for: .padding)

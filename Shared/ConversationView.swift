@@ -168,7 +168,7 @@ struct ConversationView: View {
             open(path)
             return .handled
         })
-        .onAppear { if fresh { DispatchQueue.main.async { field.focus() } } }
+        .onAppear(perform: appeared)
         .alert("Open it in the Claude app", isPresented: $lost) {
             Button("OK") {}
         } message: {
@@ -266,6 +266,14 @@ struct ConversationView: View {
                 reader.scrollTo(Self.end, anchor: .bottom)
             }
         }
+    }
+
+    private func appeared() {
+        if fresh { DispatchQueue.main.async { field.focus() } }
+        #if os(macOS)
+        let conversation = conversation
+        field.pasteImage = { [weak conversation] data, ext in await conversation?.upload(data, ext: ext) }
+        #endif
     }
 
     /// A queued message goes back into the box, ahead of anything typed since.
@@ -447,7 +455,8 @@ private enum Row: Identifiable {
         }
     }
 
-    /// A reply set in the prose column, rather than a card, a bubble or a wide table.
+    /// A reply set in the prose column, rather than a card, a bubble or a table, which takes
+    /// the whole width and caps each cell instead.
     var prose: Bool {
         guard case .item(.entry(let entry)) = self, entry.kind == "text" else { return false }
         return !Cmark.hasTable(entry.text ?? "")

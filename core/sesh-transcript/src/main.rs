@@ -186,14 +186,21 @@ fn transcript_path(pane: &Value) -> Option<String> {
         return Some(path.to_string());
     }
     let session = &pane["agent_session"];
-    if session["kind"] != "id" {
-        return None;
-    }
-    let id = session["value"].as_str()?;
     let home = std::env::var_os("HOME").map(PathBuf::from)?;
     let dir = |var: &str, default: &str| {
         std::env::var_os(var).map_or_else(|| home.join(default), PathBuf::from)
     };
+    if session["kind"] != "id" {
+        // A herdr that names no session, such as stock 0.9.1: the newest Claude Transcript
+        // written in the pane's folder, which is a guess when two Claudes share one.
+        if pane["agent"] != "claude" || !session["kind"].is_null() {
+            return None;
+        }
+        let cwd = pane["cwd"].as_str()?;
+        let folder: String = cwd.chars().map(|c| if c.is_ascii_alphanumeric() { c } else { '-' }).collect();
+        return newest_jsonl(&dir("CLAUDE_CONFIG_DIR", ".claude").join("projects").join(folder));
+    }
+    let id = session["value"].as_str()?;
     let name = format!("{id}.jsonl");
     let found = match session["agent"].as_str()? {
         "claude" => find_file(
@@ -207,6 +214,16 @@ fn transcript_path(pane: &Value) -> Option<String> {
         _ => None,
     };
     found.map(|path| path.to_string_lossy().into_owned())
+}
+
+fn newest_jsonl(dir: &Path) -> Option<String> {
+    std::fs::read_dir(dir)
+        .ok()?
+        .flatten()
+        .filter(|entry| entry.file_name().to_string_lossy().ends_with(".jsonl"))
+        .filter_map(|entry| Some((entry.metadata().ok()?.modified().ok()?, entry.path())))
+        .max_by_key(|(modified, _)| *modified)
+        .map(|(_, path)| path.to_string_lossy().into_owned())
 }
 
 fn find_file(dir: &Path, depth: usize, matches: &dyn Fn(&str) -> bool) -> Option<PathBuf> {

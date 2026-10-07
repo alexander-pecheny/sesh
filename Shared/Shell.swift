@@ -81,6 +81,12 @@ protocol Runner: AnyObject {
     /// Runs `command` until it exits or the calling task is cancelled, handing each line of
     /// its stdout to `line` as it arrives.
     func stream(_ command: String, line: @escaping (String) -> Void) async -> Ran
+    /// Saves a pasted image on the machine and returns its absolute path there.
+    func upload(_ data: Data, ext: String) async -> String?
+}
+
+extension Runner {
+    func upload(_ data: Data, ext: String) async -> String? { nil }
 }
 
 /// `path` quoted for the shell, with a leading `~/` still meaning the home folder.

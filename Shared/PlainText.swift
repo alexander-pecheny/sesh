@@ -75,6 +75,15 @@ struct PlainText: UIViewRepresentable {
 final class PlainField: NSTextView, ObservableObject {
     private static let returnKey: UInt16 = 36
     var submit: (() -> Void)?
+    /// Takes a pasted image and returns where it now lives, for its path to go in the text.
+    var pasteImage: ((Data, String) async -> String?)?
+
+    override func paste(_ sender: Any?) {
+        guard let pasteImage, let (data, ext) = PastedImage.read(.general) else { return super.paste(sender) }
+        Task { @MainActor in
+            if let path = await pasteImage(data, ext) { insertPaths(quote(path)) }
+        }
+    }
 
     convenience init() {
         self.init(frame: .zero)
@@ -162,6 +171,25 @@ struct PlainText: NSViewRepresentable {
             guard let field = notification.object as? NSTextView else { return }
             text.wrappedValue = field.string
         }
+    }
+}
+#endif
+
+#if os(macOS)
+/// An image on the pasteboard, as PNG, or a copied image file as it is.
+enum PastedImage {
+    static func read(_ board: NSPasteboard) -> (Data, String)? {
+        if let urls = board.readObjects(forClasses: [NSURL.self], options: [.urlReadingFileURLsOnly: true]) as? [URL],
+           let url = urls.first, ["png", "jpg", "jpeg", "gif", "heic", "webp"].contains(url.pathExtension.lowercased()),
+           let data = try? Data(contentsOf: url) {
+            return (data, url.pathExtension.lowercased())
+        }
+        guard board.string(forType: .string) == nil else { return nil }
+        if let png = board.data(forType: .png) { return (png, "png") }
+        if let tiff = board.data(forType: .tiff), let png = NSBitmapImageRep(data: tiff)?.representation(using: .png, properties: [:]) {
+            return (png, "png")
+        }
+        return nil
     }
 }
 #endif
