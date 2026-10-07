@@ -108,15 +108,20 @@ struct NameSheet: View {
     let record: Record?
     let parent: String?
     @State private var name = ""
+    @FocusState private var focused: Bool
 
     private var trimmed: String { name.trimmingCharacters(in: .whitespacesAndNewlines) }
 
     var body: some View {
         SheetForm(title: record == nil ? "New Folder" : "Rename", action: "Save", enabled: !trimmed.isEmpty, working: false, perform: save) {
             TextField(record?.kind == .task ? "What is this Task about, in plain words?" : "Folder name", text: $name)
+                .focused($focused)
                 .onSubmit(save)
         }
-        .onAppear { name = record?.body.title ?? "" }
+        .onAppear {
+            name = record?.body.title ?? ""
+            focused = true
+        }
     }
 
     private func save() {
@@ -147,6 +152,7 @@ struct NewTaskSheet: View {
     @State private var problem: String?
     /// Kept so that a retry after a failed Worktree does not make a second Task.
     @State private var made: Record?
+    @FocusState private var focused: Bool
 
     private var machine: Machine { vault.machine }
     private var trimmed: String { title.trimmingCharacters(in: .whitespacesAndNewlines) }
@@ -157,6 +163,7 @@ struct NewTaskSheet: View {
                   working: working, perform: { Task { await create() } }) {
             Section {
                 TextField("What is this Task about, in plain words?", text: $title, axis: .vertical)
+                    .focused($focused)
             }
             Section {
                 Toggle("Work in a new Worktree", isOn: $worktree)
@@ -172,7 +179,10 @@ struct NewTaskSheet: View {
                 Section { Text(problem).font(.system(size: Metric.caption, design: .monospaced)).foregroundStyle(.red) }
             }
         }
-        .onAppear { repo = UserDefaults.standard.string(forKey: recentKey) ?? "" }
+        .onAppear {
+            repo = UserDefaults.standard.string(forKey: recentKey) ?? ""
+            focused = true
+        }
         .onChange(of: title) { if !branchEdited { branch = TaskActions.branch(for: title, user: machine.host?.user ?? "sesh") } }
     }
 

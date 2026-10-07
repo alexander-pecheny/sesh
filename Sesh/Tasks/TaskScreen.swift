@@ -34,6 +34,7 @@ struct TaskScreen: View {
                         .padding(.horizontal, Metric.gap)
                     }
                     .onChange(of: current) { _, tab in withAnimation { scroller.scrollTo(tab) } }
+                    .onAppear { scroller.scrollTo(current) }
                 }
                 if let task = vault.records[id] { AddMenu(vault: vault, task: task) }
             }

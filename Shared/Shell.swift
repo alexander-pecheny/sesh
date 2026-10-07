@@ -1,6 +1,6 @@
 import Foundation
 
-/// The coding agents Projects can start and show. Anything else herdr finds stays hidden.
+/// The coding agents Sesh can start and show. Anything else herdr finds stays hidden.
 enum Agent: String, CaseIterable, Identifiable {
     case claude, codex, pi
 

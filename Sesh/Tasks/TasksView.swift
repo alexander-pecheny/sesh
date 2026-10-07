@@ -19,7 +19,7 @@ struct TasksView: View {
             } else if library.vaults.isEmpty {
                 empty
             } else {
-                List(selection: $library.selection) {
+                List {
                     ForEach(library.vaults) { VaultSection(vault: $0, sheet: $sheet) }
                 }
             }
@@ -115,7 +115,7 @@ private struct Children: View {
             if record.kind == .folder {
                 FolderRow(vault: vault, folder: record, sheet: $sheet)
             } else {
-                TaskRow(vault: vault, task: record, sheet: $sheet).tag(record.id)
+                TaskRow(vault: vault, task: record, sheet: $sheet)
             }
         }
     }
@@ -174,6 +174,29 @@ private struct TaskRow: View {
     private var flavour: Catppuccin.Flavour { colorScheme == .dark ? .mocha : .latte }
 
     var body: some View {
+        NavigationLink(value: task.id) { label }
+            .contextMenu {
+                Button("Rename") { sheet = .rename(vault, task) }
+                if task.body.archived != true {
+                    Menu("Move to") { MoveTargets(vault: vault, moving: task) }
+                }
+                Divider()
+                if task.body.archived == true {
+                    Button("Reopen") { reopen() }
+                } else {
+                    Button("Close Task…", role: .destructive) { sheet = .close(vault, task) }
+                }
+            }
+            .swipeActions {
+                if task.body.archived == true {
+                    Button("Reopen") { reopen() }
+                } else {
+                    Button("Close") { sheet = .close(vault, task) }.tint(flavour(.peach))
+                }
+            }
+    }
+
+    private var label: some View {
         HStack(spacing: Metric.gap) {
             VStack(alignment: .leading, spacing: 2) {
                 Text(task.body.title ?? "Untitled").font(.ui(Metric.title)).foregroundStyle(flavour(.text)).lineLimit(2)
@@ -183,26 +206,6 @@ private struct TaskRow: View {
             }
             Spacer(minLength: 0)
             MarkView(mark: library.mark(ofTask: task.id))
-        }
-        .contentShape(.rect)
-        .contextMenu {
-            Button("Rename") { sheet = .rename(vault, task) }
-            if task.body.archived != true {
-                Menu("Move to") { MoveTargets(vault: vault, moving: task) }
-            }
-            Divider()
-            if task.body.archived == true {
-                Button("Reopen") { reopen() }
-            } else {
-                Button("Close Task…", role: .destructive) { sheet = .close(vault, task) }
-            }
-        }
-        .swipeActions {
-            if task.body.archived == true {
-                Button("Reopen") { reopen() }
-            } else {
-                Button("Close") { sheet = .close(vault, task) }.tint(flavour(.peach))
-            }
         }
     }
 
@@ -226,7 +229,7 @@ private struct ArchiveGroup: View {
         let archived = vault.all(.task).filter { $0.body.archived == true }.sorted { ($0.body.title ?? "") < ($1.body.title ?? "") }
         if !archived.isEmpty {
             DisclosureGroup(isExpanded: $open) {
-                ForEach(archived) { TaskRow(vault: vault, task: $0, sheet: $sheet).tag($0.id) }
+                ForEach(archived) { TaskRow(vault: vault, task: $0, sheet: $sheet) }
             } label: {
                 Label { Text("Archive (\(archived.count))") } icon: { Image(systemName: "archivebox") }
                     .font(.ui(Metric.body)).foregroundStyle(flavour(.subtext0))

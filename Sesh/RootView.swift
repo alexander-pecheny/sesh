@@ -1,7 +1,6 @@
 import SwiftUI
 
-/// The Vaults and their Tasks, and the chosen Task's Tabs: side by side on an iPad, one
-/// pushed over the other on the phone.
+/// The Vaults and their Tasks, with the chosen Task's Tabs pushed over them.
 struct RootView: View {
     @Environment(\.colorScheme) private var colorScheme
     @Environment(\.scenePhase) private var scenePhase
@@ -36,16 +35,11 @@ struct RootView: View {
 
     @ViewBuilder private var content: some View {
         if ghostty.app != nil {
-            NavigationSplitView {
+            NavigationStack(path: Binding(get: { library.selection.map { [$0] } ?? [] }, set: { library.selection = $0.last })) {
                 TasksView()
-            } detail: {
-                if let id = library.selection, let vault = library.vault(of: id) {
-                    TaskScreen(vault: vault, id: id).id(id)
-                } else {
-                    Text(library.vaults.isEmpty ? "Add a Vault to keep Tasks in." : "Pick a Task")
-                        .font(.ui(Metric.body))
-                        .foregroundStyle(flavour(.subtext0))
-                }
+                    .navigationDestination(for: String.self) { id in
+                        if let vault = library.vault(of: id) { TaskScreen(vault: vault, id: id).id(id) }
+                    }
             }
             .tint(flavour(.mauve))
         } else {

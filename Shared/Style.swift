@@ -56,7 +56,7 @@ extension Font {
     static func ui(_ size: CGFloat) -> Font { .system(size: size) }
 }
 
-/// Sizes the Conversation and Projects share, so their rows and cards line up.
+/// Sizes the Conversation and the Tasks screens share, so their rows and cards line up.
 enum Metric {
     static let tiny: CGFloat = 4
     static let gap: CGFloat = 8
