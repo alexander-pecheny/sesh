@@ -12,7 +12,7 @@ struct Prose: NSViewRepresentable {
     let text: String
 
     func makeNSView(context: Context) -> NSTextView {
-        let view = NSTextView()
+        let view = LinkTextView()
         view.isEditable = false
         view.isSelectable = true
         view.drawsBackground = false
@@ -52,6 +52,40 @@ struct Prose: NSViewRepresentable {
             openURL?(url)
             return true
         }
+    }
+}
+
+/// A read-only text view whose links answer the pointer: a hand and an underline while over one.
+private final class LinkTextView: NSTextView {
+    private var lit: NSRange?
+
+    override func updateTrackingAreas() {
+        trackingAreas.forEach(removeTrackingArea)
+        addTrackingArea(NSTrackingArea(rect: bounds, options: [.mouseMoved, .mouseEnteredAndExited, .activeInActiveApp, .inVisibleRect], owner: self))
+        super.updateTrackingAreas()
+    }
+
+    override func mouseMoved(with event: NSEvent) {
+        super.mouseMoved(with: event)
+        let point = convert(event.locationInWindow, from: nil)
+        var range = NSRange()
+        let index = characterIndexForInsertion(at: point)
+        let link = index < textStorage?.length ?? 0 ? textStorage?.attribute(.link, at: index, effectiveRange: &range) : nil
+        light(link == nil ? nil : range)
+        (link == nil ? NSCursor.iBeam : NSCursor.pointingHand).set()
+    }
+
+    override func mouseExited(with event: NSEvent) {
+        super.mouseExited(with: event)
+        light(nil)
+        NSCursor.arrow.set()
+    }
+
+    private func light(_ range: NSRange?) {
+        guard range != lit, let layout = layoutManager else { return }
+        if let lit { layout.removeTemporaryAttribute(.underlineStyle, forCharacterRange: lit) }
+        if let range { layout.addTemporaryAttribute(.underlineStyle, value: NSUnderlineStyle.single.rawValue, forCharacterRange: range) }
+        lit = range
     }
 }
 
