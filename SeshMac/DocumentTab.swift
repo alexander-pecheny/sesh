@@ -46,7 +46,7 @@ struct DocumentTab: View {
                 }
             }
         }
-        .background(flavour(.base))
+        .background(flavour(.base), ignoresSafeAreaEdges: .vertical)
         .environment(\.openURL, OpenURLAction { url in library.follow(url) ? .handled : .systemAction })
         .task { await document.load() }
         .alert("The file changed since Sesh read it", isPresented: Binding(get: { document.clash != nil }, set: { if !$0 { document.clash = nil } })) {

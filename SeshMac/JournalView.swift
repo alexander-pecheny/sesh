@@ -26,7 +26,7 @@ struct JournalView: View {
             .frame(maxWidth: 820)
             .frame(maxWidth: .infinity)
         }
-        .background(flavour(.base))
+        .background(flavour(.base), ignoresSafeAreaEdges: .vertical)
         .environment(\.openURL, OpenURLAction { url in library.follow(url) ? .handled : .systemAction })
     }
 

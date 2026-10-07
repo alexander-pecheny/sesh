@@ -137,7 +137,8 @@ struct ConversationView: View {
                 }
             }
         }
-        .background(flavour(.base))
+        // Not sideways: under macOS 26's floating sidebar the colour would tint its glass.
+        .background(flavour(.base), ignoresSafeAreaEdges: .vertical)
         .navigationTitle(title)
         .inlineTitle()
         #if os(macOS)
@@ -234,7 +235,7 @@ struct ConversationView: View {
         }
         .padding(.horizontal, Metric.pad)
         .padding(.vertical, Metric.gap)
-        .background(flavour(.mantle))
+        .background(flavour(.mantle), ignoresSafeAreaEdges: .vertical)
         #if os(iOS)
         .sheet(isPresented: $picking) {
             PhotoPicker { results in
