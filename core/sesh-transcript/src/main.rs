@@ -6,7 +6,7 @@ use std::time::{Duration, Instant};
 
 use serde_json::{json, Value};
 use sesh_transcript::vault::{self, Vault};
-use sesh_transcript::{permission, Entry, Transcript, AGENTS, PROTOCOL};
+use sesh_transcript::{live, permission, Entry, Transcript, AGENTS, PROTOCOL};
 
 const VERSION: &str = concat!(env!("CARGO_PKG_VERSION"), "+", env!("SOURCE_HASH"));
 const POLL: Duration = Duration::from_millis(250);
@@ -15,6 +15,8 @@ const VAULT_POLL: Duration = Duration::from_millis(500);
 const RETRY: u32 = 8;
 const KEY_PAUSE: Duration = Duration::from_millis(200);
 const MENU_TIMEOUT: Duration = Duration::from_secs(3);
+/// While the Agent works, its screen is read every this many polls for the Live tail.
+const LIVE_EVERY: u32 = 2;
 const AGENT_GONE_AFTER: Duration = Duration::from_secs(2);
 /// A quiet stream still writes this often, since only a failed write shows that sshd's end
 /// of the socket has gone; polling the socket does not.
@@ -267,6 +269,8 @@ fn follow(args: &[String]) -> Exit {
         wrote: false,
         background: json!([]),
         reported: None,
+        live: no_live(),
+        polls: 0,
     };
     follower.start(&pane, options.get("since").copied())?;
     let mut agent_seen = Instant::now();
@@ -307,6 +311,9 @@ struct Follower {
     background: Value,
     /// What herdr last said the Agent was doing.
     reported: Option<String>,
+    /// The `live` line last sent.
+    live: Value,
+    polls: u32,
 }
 
 impl Follower {
@@ -372,6 +379,7 @@ impl Follower {
             }
             None => self.read_new()?,
         }
+        self.update_live(pane)?;
         if self.wrote {
             self.emit_cursor()?;
         }
@@ -431,6 +439,37 @@ impl Follower {
         let lines: Vec<Value> = transcript.entries[mark..].iter().map(entry_line).collect();
         self.transcript = Some(transcript);
         lines.into_iter().try_for_each(|line| self.emit(line))
+    }
+
+    /// What the screen shows beyond the Transcript, read while the Agent works: at once when
+    /// entries arrived, which may cover some of it, else every few polls.
+    fn update_live(&mut self, pane: &Value) -> Result<(), String> {
+        self.polls = self.polls.wrapping_add(1);
+        // Only Claude's screen is understood.
+        let working = self.reported.as_deref() == Some("working") && self.agent == "claude";
+        if working && !self.wrote && !self.polls.is_multiple_of(LIVE_EVERY) {
+            return Ok(());
+        }
+        let live = match (working, pane["pane_id"].as_str()) {
+            (true, Some(pane_id)) => {
+                let screen = read_screen(pane_id).unwrap_or_default();
+                let entries = self
+                    .transcript
+                    .as_ref()
+                    .map_or(&[][..], |transcript| &transcript.entries);
+                let live = live::live(&screen, entries);
+                json!({"t": "live", "text": live.text, "status": live.status})
+            }
+            _ => no_live(),
+        };
+        if live == self.live {
+            return Ok(());
+        }
+        self.live = live.clone();
+        let wrote = self.wrote;
+        self.emit(live)?;
+        self.wrote = wrote;
+        Ok(())
     }
 
     /// Permission prompts come only from the fork, whose hooks report them on the pane.
@@ -506,6 +545,10 @@ impl Follower {
         };
         self.emit(json!({"t": "cursor", "cursor": cursor}))
     }
+}
+
+fn no_live() -> Value {
+    json!({"t": "live", "text": "", "status": ""})
 }
 
 fn entry_line(entry: &Entry) -> Value {

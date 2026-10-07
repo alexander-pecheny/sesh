@@ -81,12 +81,22 @@ final class Conversation: ObservableObject {
         let cursor: String?
         let id: String?
         let more: Bool?
+        let text: String?
+        let status: String?
     }
 
     @Published private(set) var items: [Item] = []
     @Published private(set) var results: [String: Entry] = [:]
     @Published private(set) var todo: Entry?
     @Published private(set) var permissions: [Permission] = []
+    /// What the Agent's screen shows that its Transcript does not hold yet, and its status line.
+    @Published private(set) var live = Live()
+
+    struct Live: Equatable {
+        var text = ""
+        var status = ""
+    }
+
     /// What the Agent left running in the background, a command or a subagent.
     @Published private(set) var background: [Background] = []
 
@@ -186,6 +196,7 @@ final class Conversation: ObservableObject {
                 problem = "The Host's helper speaks protocol \(number), which this Sesh does not know. Update Sesh."
             }
             earlier = (line.protocol ?? 0) >= Self.paging
+            live = Live()
         case "entry":
             if let entry = try? JSONDecoder().decode(Entry.self, from: data) { add(entry) }
         case "state":
@@ -200,6 +211,7 @@ final class Conversation: ObservableObject {
             permissions.removeAll { $0.id == permission.id }
             permissions.append(permission)
         case "permission_done": permissions.removeAll { $0.id == line.id }
+        case "live": live = Live(text: line.text ?? "", status: line.status ?? "")
         case "background":
             struct Tasks: Decodable { let tasks: [Background] }
             background = (try? JSONDecoder().decode(Tasks.self, from: data))?.tasks ?? []
