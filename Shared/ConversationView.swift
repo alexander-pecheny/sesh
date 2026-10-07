@@ -187,6 +187,7 @@ struct ConversationView: View {
         let agent = conversation.agent?.title ?? "Agent"
         switch conversation.state {
         case "working": return "\(agent) is working"
+        case "background": return "\(agent) is waiting on background work"
         case "blocked": return "\(agent) needs you"
         case "done", "idle": return "\(agent) is ready"
         default: return agent

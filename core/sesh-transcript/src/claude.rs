@@ -30,6 +30,9 @@ pub(super) struct Parser {
     /// Commands and Agents started in the background and not yet reported finished, by the
     /// call that started them, with what to call them.
     pub(super) background: Vec<Background>,
+    /// Whether Claude's last reply ended its turn, so what herdr calls working is only Claude
+    /// waiting on its background work.
+    pub(super) turn_over: bool,
     questions: HashMap<String, String>,
     hidden_results: HashSet<String>,
     tasks: Vec<(String, String)>,
@@ -72,10 +75,16 @@ impl Parser {
                     }
                 }
                 if let Some(text) = typed_text(&block_text(content)) {
+                    self.turn_over = false;
                     out.push(Entry::user(ids.next(), at, text, Vec::new()));
                 }
             }
             Some("assistant") => {
+                match line["message"]["stop_reason"].as_str() {
+                    Some("end_turn") => self.turn_over = true,
+                    Some(_) => self.turn_over = false,
+                    None => {}
+                }
                 for block in content.as_array().into_iter().flatten() {
                     self.assistant_block(block, at, ids, out);
                 }
@@ -109,7 +118,8 @@ impl Parser {
                     return;
                 };
                 let input = &block["input"];
-                if input["run_in_background"] == true {
+                // Claude writes the flag as a string; older versions wrote a boolean.
+                if input["run_in_background"] == true || input["run_in_background"] == "true" {
                     let label = ["description", "command", "prompt"]
                         .iter()
                         .find_map(|key| input[*key].as_str())

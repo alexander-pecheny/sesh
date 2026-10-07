@@ -463,6 +463,11 @@ impl Transcript {
     }
 
     /// Every entry ever parsed, including those on branches pi has left.
+    /// Whether the Agent's last reply ended its turn; only Claude's say so.
+    pub fn turn_over(&self) -> bool {
+        matches!(&self.parser, Parser::Claude(parser) if parser.turn_over)
+    }
+
     /// What the Agent left running in the background: the starting call and its label.
     pub fn background(&self) -> &[claude::Background] {
         match &self.parser {

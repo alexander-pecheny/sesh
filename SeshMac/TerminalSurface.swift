@@ -80,7 +80,7 @@ extension Ghostty {
             config.platform = ghostty_platform_u(macos: ghostty_platform_macos_s(nsview: Unmanaged.passUnretained(self).toOpaque()))
             config.userdata = Unmanaged.passUnretained(self).toOpaque()
             config.scale_factor = Double(NSScreen.main?.backingScaleFactor ?? 2)
-            config.font_size = 13
+            config.font_size = Self.fontSize
             let command = command.flatMap { strdup($0) }, folder = folder.flatMap { strdup($0) }
             defer { free(command); free(folder) }
             config.command = UnsafePointer(command)
@@ -89,6 +89,20 @@ extension Ghostty {
         }
 
         required init?(coder: NSCoder) { fatalError("unsupported") }
+
+        /// The size the owner set for Ghostty itself, so Sesh's terminals read the same.
+        private static let fontSize: Float = {
+            let home = FileManager.default.homeDirectoryForCurrentUser
+            let files = [".config/ghostty/config", "Library/Application Support/com.mitchellh.ghostty/config"]
+            for file in files {
+                guard let text = try? String(contentsOf: home.appending(path: file), encoding: .utf8) else { continue }
+                for line in text.split(separator: "\n") {
+                    let parts = line.split(separator: "=", maxSplits: 1).map { $0.trimmingCharacters(in: .whitespaces) }
+                    if parts.count == 2, parts[0] == "font-size", let size = Float(parts[1]) { return size }
+                }
+            }
+            return 13
+        }()
 
         deinit {
             if let surface { ghostty_surface_free(surface) }

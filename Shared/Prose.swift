@@ -198,22 +198,45 @@ private struct Renderer {
         }
     }
 
-    /// A table as aligned columns of monospaced text, its header in bold.
+    /// A table as AppKit draws one: bordered cells whose text wraps and keeps its marks, the
+    /// header in bold, the whole width shared out by the cells' content.
     private func table(_ node: UnsafeMutablePointer<cmark_node>, indent: CGFloat) -> NSAttributedString {
-        let rows = children(node).map { children($0).map { plain($0) } }
-        let widths = (0..<(rows.map(\.count).max() ?? 0)).map { column in
-            rows.map { column < $0.count ? $0[column].count : 0 }.max() ?? 0
+        let rows = children(node)
+        let table = NSTextTable()
+        table.numberOfColumns = rows.map { children($0).count }.max() ?? 1
+        table.layoutAlgorithm = .automaticLayoutAlgorithm
+        table.collapsesBorders = true
+        table.setContentWidth(100, type: .percentageValueType)
+        let border = NSColor(flavour(.surface2))
+        // Each column gets the share of the width its longest text asks for, so a column of
+        // short labels stays narrow, as in Claude's own tables.
+        let longest = (0..<table.numberOfColumns).map { column in
+            let texts = rows.map { children($0) }.compactMap { $0.count > column ? plain($0[column]) : nil }
+            let text = texts.map(\.count).max() ?? 1
+            // Room for the longest word too, so no cell breaks one in half.
+            let word = texts.flatMap { $0.split(separator: " ") }.map(\.count).max() ?? 1
+            return max(min(text, 120), word * 2)
         }
+        let total = Double(longest.reduce(0, +))
         let out = NSMutableAttributedString()
-        for (index, row) in rows.enumerated() {
-            let line = row.enumerated().map { $0.element.padding(toLength: widths[$0.offset], withPad: " ", startingAt: 0) }
-                .joined(separator: "   ")
-            let font = index == 0 ? NSFont.monospacedSystemFont(ofSize: Metric.note, weight: .semibold) : mono
-            let style = paragraph(indent: indent, after: 2).mutableCopy() as! NSMutableParagraphStyle
-            // A row that wrapped would no longer line up with the others; cut it at the edge.
-            style.lineBreakMode = .byClipping
-            out.append(NSAttributedString(string: line + "\n", attributes: attributes(font: font, style: style)))
+        for (row, cells) in rows.map(children).enumerated() {
+            for (column, cell) in cells.enumerated() {
+                let block = NSTextTableBlock(table: table, startingRow: row, rowSpan: 1, startingColumn: column, columnSpan: 1)
+                block.setValue(100 * Double(longest[column]) / max(total, 1), type: .percentageValueType, for: .width)
+                block.setBorderColor(border)
+                block.setWidth(1, type: .absoluteValueType, for: .border)
+                block.setWidth(Metric.gap, type: .absoluteValueType, for: .padding)
+                if row == 0 { block.backgroundColor = NSColor(flavour(.mantle)) }
+                let style = NSMutableParagraphStyle()
+                style.textBlocks = [block]
+                style.lineSpacing = 2
+                let font: NSFont = row == 0 ? .boldSystemFont(ofSize: Metric.label) : .systemFont(ofSize: Metric.label)
+                let base = attributes(font: font, style: style)
+                out.append(inlines(cell, base))
+                out.append(NSAttributedString(string: "\n", attributes: base))
+            }
         }
+        out.append(NSAttributedString(string: "\n", attributes: attributes(font: .systemFont(ofSize: Metric.tiny), style: paragraph())))
         return out
     }
 

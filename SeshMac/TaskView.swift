@@ -252,29 +252,44 @@ private struct SessionTab: View {
 
     private var terminal: Bool { library.terminalFace.contains(id) }
 
+    /// A quiet switch: the chosen face is only a shade lighter, as the Tabs above are.
+    private func face(_ title: String, selected: Bool, choose: @escaping () -> Void) -> some View {
+        Button(action: choose) {
+            Text(title)
+                .font(.ui(Metric.caption))
+                .foregroundStyle(selected ? .primary : .secondary)
+                .padding(.horizontal, Metric.pad)
+                .padding(.vertical, Metric.tiny)
+                .background(selected ? Color.primary.opacity(0.12) : .clear, in: .capsule)
+                .contentShape(.capsule)
+        }
+        .buttonStyle(.plain)
+    }
+
     var body: some View {
-        Group {
+        // The Conversation stays laid out under the terminal, so coming back costs no layout.
+        ZStack {
+            if let conversation, let session = vault.records[id] {
+                ConversationView(conversation: conversation, title: session.body.title ?? "Agent session", fresh: false)
+                    .opacity(terminal ? 0 : 1)
+                    .allowsHitTesting(!terminal)
+            } else {
+                ProgressView()
+            }
             if terminal, let session = vault.records[id], let pane = session.body.pane {
                 PaneView(key: "session:" + id, pane: pane, machine: TaskActions.machine(session.body.machine)) {
                     library.terminalFace.remove(id)
                 }
-            } else if let conversation, let session = vault.records[id] {
-                ConversationView(conversation: conversation, title: session.body.title ?? "Agent session", fresh: false)
-            } else {
-                ProgressView()
             }
         }
         .frame(minWidth: 420, maxWidth: .infinity, minHeight: 300, maxHeight: .infinity)
         .overlay(alignment: .topTrailing) {
-            Picker("", selection: Binding(
-                get: { terminal },
-                set: { if $0 { library.terminalFace.insert(id) } else { library.terminalFace.remove(id) } }
-            )) {
-                Text("Chat").tag(false)
-                Text("Terminal").tag(true)
+            HStack(spacing: 2) {
+                face("Chat", selected: !terminal) { library.terminalFace.remove(id) }
+                face("Terminal", selected: terminal) { library.terminalFace.insert(id) }
             }
-            .pickerStyle(.segmented)
-            .fixedSize()
+            .padding(2)
+            .background(.regularMaterial, in: .capsule)
             .padding(Metric.gap)
             .background {
                 Button("") { if terminal { library.terminalFace.remove(id) } else { library.terminalFace.insert(id) } }

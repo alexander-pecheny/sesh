@@ -249,6 +249,7 @@ fn follow(args: &[String]) -> Exit {
         lost: None,
         wrote: false,
         background: json!([]),
+        reported: None,
     };
     follower.start(&pane, options.get("since").copied())?;
     let mut agent_seen = Instant::now();
@@ -287,6 +288,8 @@ struct Follower {
     wrote: bool,
     /// The background work last reported, so only a change is sent.
     background: Value,
+    /// What herdr last said the Agent was doing.
+    reported: Option<String>,
 }
 
 impl Follower {
@@ -415,13 +418,13 @@ impl Follower {
 
     /// Permission prompts come only from the fork, whose hooks report them on the pane.
     fn update_status(&mut self, pane: &Value) -> Result<(), String> {
-        let state = pane["agent_status"]
+        let reported = pane["agent_status"]
             .as_str()
             .filter(|state| matches!(*state, "idle" | "working" | "blocked" | "done"));
-        if let Some(state) = state.filter(|state| self.state.as_deref() != Some(state)) {
-            self.state = Some(state.to_string());
-            self.emit(json!({"t": "state", "state": state}))?;
+        if let Some(reported) = reported {
+            self.reported = Some(reported.to_string());
         }
+        self.emit_state()?;
         let pending = &pane["permission"];
         let id = pending["id"].as_str();
         if id == self.permission.as_ref().map(|(id, _)| id.as_str()) {
@@ -446,7 +449,25 @@ impl Follower {
         self.emit(line)
     }
 
+    /// herdr's state, except that Claude with its turn over is only waiting on background
+    /// work, and can take a message, though herdr's screen rules call that working.
+    fn emit_state(&mut self) -> Result<(), String> {
+        let Some(reported) = self.reported.clone() else {
+            return Ok(());
+        };
+        let waiting = self.transcript.as_ref().is_some_and(|transcript| {
+            transcript.turn_over() && !transcript.background().is_empty()
+        });
+        let state = if reported == "working" && waiting { "background".to_string() } else { reported };
+        if self.state.as_deref() != Some(state.as_str()) {
+            self.emit(json!({"t": "state", "state": state}))?;
+            self.state = Some(state);
+        }
+        Ok(())
+    }
+
     fn emit_cursor(&mut self) -> Result<(), String> {
+        self.emit_state()?;
         let background: Value = self
             .transcript
             .as_ref()
@@ -572,7 +593,7 @@ fn background(panes: &[String]) -> Exit {
     }
     let mut out = std::io::stdout().lock();
     for pane in panes {
-        let (tasks, last): (Vec<Value>, Option<String>) = match pane_transcript(&Target::Pane(pane)) {
+        let (tasks, last, turn_over): (Vec<Value>, Option<String>, bool) = match pane_transcript(&Target::Pane(pane)) {
             Ok((mut transcript, _, _)) => {
                 transcript
                     .read_tail(None, |entries| entries.len() >= BACKGROUND_WINDOW)
@@ -583,11 +604,12 @@ fn background(panes: &[String]) -> Exit {
                     .map(|work| json!({"call": work.call, "label": work.label, "agent": work.agent}))
                     .collect();
                 // The last message's time, which orders Tasks by their latest change.
-                (tasks, transcript.entries.last().map(|entry| entry.at.clone()))
+                let last = transcript.entries.last().map(|entry| entry.at.clone());
+                (tasks, last, transcript.turn_over())
             }
-            Err(_) => (Vec::new(), None),
+            Err(_) => (Vec::new(), None, false),
         };
-        writeln!(out, "{}", json!({"pane": pane, "tasks": tasks, "last": last}))
+        writeln!(out, "{}", json!({"pane": pane, "tasks": tasks, "last": last, "turn_over": turn_over}))
             .map_err(|err| err.to_string())?;
     }
     Ok(0)

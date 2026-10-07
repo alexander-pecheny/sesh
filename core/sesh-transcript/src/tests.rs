@@ -567,9 +567,24 @@ fn claude_background_work_stays_listed_until_its_notification() {
         json!({"type":"user","timestamp":at,"origin":{"kind":"task-notification"},"message":{"role":"user",
             "content":format!("<task-notification>\n<tool-use-id>{id}</tool-use-id>\n<status>{status}</status>\n</task-notification>")}})
     };
-    let transcript = parse("claude", &[started("toolu_a", "Watch CI"), started("toolu_b", "Run the suite"), notified("toolu_a", "completed")]);
+    let agent = json!({"type":"assistant","timestamp":at,"message":{"content":[{"type":"tool_use","id":"toolu_c","name":"Agent",
+        "input":{"description":"Read the docs","prompt":"...","run_in_background":"true"}}]}});
+    let transcript = parse("claude", &[started("toolu_a", "Watch CI"), started("toolu_b", "Run the suite"), notified("toolu_a", "completed"), agent]);
     assert_eq!(
         transcript.background(),
-        [Background { call: "toolu_b".into(), label: "Run the suite".into(), agent: false }]
+        [
+            Background { call: "toolu_b".into(), label: "Run the suite".into(), agent: false },
+            Background { call: "toolu_c".into(), label: "Read the docs".into(), agent: true },
+        ]
     );
+}
+
+#[test]
+fn claude_turn_is_over_after_end_turn_until_the_user_speaks() {
+    let at = "2026-10-05T14:54:42.186Z";
+    let reply = |reason: &str| json!({"type":"assistant","timestamp":at,"message":{"stop_reason":reason,"content":[{"type":"text","text":"ok"}]}});
+    let said = json!({"type":"user","timestamp":at,"origin":{"kind":"human"},"message":{"role":"user","content":"go on"}});
+    assert!(!parse("claude", &[reply("tool_use")]).turn_over());
+    assert!(parse("claude", &[reply("tool_use"), reply("end_turn")]).turn_over());
+    assert!(!parse("claude", &[reply("end_turn"), said]).turn_over());
 }

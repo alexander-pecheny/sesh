@@ -190,6 +190,8 @@ final class Library: ObservableObject {
     /// How much each idle Claude pane left running in the background, by `machine:pane`.
     @Published private(set) var busy: [String: Int] = [:]
     private var polls = 0
+    /// Claude panes whose turn is over, so herdr's "working" there is only background work.
+    private var turnOver: Set<String> = []
 
     /// Idle Claude sessions may still have commands or subagents running; one helper call per
     /// machine asks for all of them.
@@ -198,6 +200,7 @@ final class Library: ObservableObject {
         // have background work.
         let sessions = vaults.flatMap { $0.all(.session) }.filter { $0.body.pane != nil && live[key($0)] != nil }
         var found: [String: Int] = [:]
+        var over: Set<String> = []
         for (alias, group) in Dictionary(grouping: sessions, by: { $0.body.machine ?? "" }) {
             let machine = TaskActions.machine(alias.isEmpty ? nil : alias)
             let panes = group.compactMap(\.body.pane).map(quote).joined(separator: " ")
@@ -207,15 +210,18 @@ final class Library: ObservableObject {
                 let pane: String
                 let tasks: [Work]
                 let last: String?
+                let turn_over: Bool?
             }
             for text in ran.out.split(separator: "\n") {
                 guard let line = try? JSONDecoder().decode(Line.self, from: Data(text.utf8)) else { continue }
                 let key = "\(alias):\(line.pane)"
-                if live[key]?.status != "working" { found[key] = line.tasks.count }
+                found[key] = line.tasks.count
+                if line.turn_over == true { over.insert(key) }
                 if let last = line.last.flatMap(Self.time) { active[key] = last }
             }
         }
         busy = found
+        turnOver = over
     }
     /// When each pane's Transcript last had a message, in milliseconds since 1970.
     @Published private(set) var active: [String: Double] = UserDefaults.standard.dictionary(forKey: "active") as? [String: Double] ?? [:] {
@@ -254,8 +260,9 @@ final class Library: ObservableObject {
     func mark(of session: Record) -> Mark? {
         guard let state = live[key(session)] else { return nil }
         if state.status == "blocked" { return .waiting }
-        if state.status == "working" { return .working }
-        if busy[key(session), default: 0] > 0 { return .background }
+        let background = busy[key(session), default: 0] > 0
+        if state.status == "working" { return background && turnOver.contains(key(session)) ? .background : .working }
+        if background { return .background }
         return state.done > seen[key(session), default: state.done] ? .finished : .seen
     }
 
