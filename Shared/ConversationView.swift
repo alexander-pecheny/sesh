@@ -88,6 +88,9 @@ struct ConversationView: View {
             let resized = abs((new.bottom - new.top) - (old.bottom - old.top)) > 1
             // While a revealed row is held in place, the view is where the link put it.
             let holding = pinned.map { $0.until > .now } ?? false
+            // A view left wholly past the content's end, by a jump measured while covered, shows
+            // nothing; it goes back to the end.
+            if new.top > new.height, new.height > 0 { position.scrollTo(edge: .bottom) }
             if holding {
             } else if new.bottom >= new.height - Metric.control {
                 atBottom = true
@@ -266,6 +269,9 @@ struct ConversationView: View {
         )) {
             if let image = conversation.viewing { ImageViewer(image: image) }
         }
+        // A send from the full-screen editor jumps while the chat is covered, by sizes that
+        // change as it closes; the jump is made again once it has.
+        .onChange(of: composing) { if !composing, atBottom { jump() } }
         .cover(isPresented: $composing) {
             Composer(text: $draft, canSend: canSend) { Task { await send() } }
         }
@@ -372,7 +378,12 @@ private struct Bookmarkable: ViewModifier {
     /// How wide a reply's text column is, so the icon sits at its corner, not the window's.
     let column: CGFloat?
     @State private var hovered = false
+    #if os(macOS)
     private static let gutter: CGFloat = 48
+    #else
+    /// No hover on the phone, so no icons to make room for; the context menu has the actions.
+    private static let gutter: CGFloat = 0
+    #endif
     #if DEBUG
     /// `-bookmarks YES` shows every icon, for a snapshot of a window no pointer reaches.
     private static let always = UserDefaults.standard.bool(forKey: "bookmarks")
