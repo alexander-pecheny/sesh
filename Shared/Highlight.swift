@@ -8,7 +8,19 @@ enum Highlight {
     private static let highlighter = Highlightr()
     private static var theme = ""
 
+    /// highlight.js runs in JavaScript; a reply still streaming redraws its code blocks often.
+    private static var done: [String: NSAttributedString] = [:]
+
     static func code(_ text: String, language: String?, dark: Bool, size: CGFloat) -> NSAttributedString? {
+        let key = "\(dark)\(size)\(language ?? "")\n\(text)"
+        if let known = done[key] { return known }
+        let coloured = colour(text, language: language, dark: dark, size: size)
+        if done.count > 200 { done.removeAll() }
+        done[key] = coloured
+        return coloured
+    }
+
+    private static func colour(_ text: String, language: String?, dark: Bool, size: CGFloat) -> NSAttributedString? {
         guard let highlighter, let language = language.flatMap(name) else { return nil }
         let wanted = dark ? "atom-one-dark" : "atom-one-light"
         if theme != wanted {

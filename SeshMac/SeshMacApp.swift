@@ -43,18 +43,21 @@ struct SeshMacApp: App {
 }
 
 #if DEBUG
-/// `-snapshot PATH` draws the window into a PNG every two seconds, so a test can look at an
-/// app launched hidden (`open -j`) without its window ever reaching the screen.
+/// `-snapshot PATH` draws the window into a PNG every two seconds, or every
+/// `-snapshotEvery SECONDS`, so a test can look at an app launched hidden (`open -j`) without
+/// its window ever reaching the screen. A `{t}` in PATH becomes the time in milliseconds.
 private struct Offscreen: NSViewRepresentable {
     func makeNSView(context: Context) -> NSView {
         let view = NSView()
         guard let path = UserDefaults.standard.string(forKey: "snapshot") else { return view }
-        Timer.scheduledTimer(withTimeInterval: 2, repeats: true) { [weak view] _ in
+        let every = UserDefaults.standard.double(forKey: "snapshotEvery")
+        Timer.scheduledTimer(withTimeInterval: every > 0 ? every : 2, repeats: true) { [weak view] _ in
             MainActor.assumeIsolated {
                 guard let content = view?.window?.contentView,
                       let image = content.bitmapImageRepForCachingDisplay(in: content.bounds) else { return }
                 content.cacheDisplay(in: content.bounds, to: image)
-                try? image.representation(using: .png, properties: [:])?.write(to: URL(filePath: path))
+                let file = path.replacingOccurrences(of: "{t}", with: String(Int(Date().timeIntervalSince1970 * 1000)))
+                try? image.representation(using: .png, properties: [:])?.write(to: URL(filePath: file))
             }
         }
         return view

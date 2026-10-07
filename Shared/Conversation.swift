@@ -81,20 +81,57 @@ final class Conversation: ObservableObject {
         let cursor: String?
         let id: String?
         let more: Bool?
-        let text: String?
         let status: String?
+        let items: [Entry]?
+        let replaces: String?
     }
 
     @Published private(set) var items: [Item] = []
     @Published private(set) var results: [String: Entry] = [:]
     @Published private(set) var todo: Entry?
     @Published private(set) var permissions: [Permission] = []
-    /// What the Agent's screen shows that its Transcript does not hold yet, and its status line.
-    @Published private(set) var live = Live()
+    /// What the Agent's screen shows that its Transcript does not hold yet, as entries shown
+    /// after the rest until the Transcript's own take their places.
+    @Published private(set) var live: [Entry] = []
+    /// The status line on the Agent's screen.
+    @Published private(set) var status = ""
+    /// The live item whose row an entry took over, by the entry's id, so the row stays put.
+    private(set) var rowKeys: [String: String] = [:]
+    /// When each live item first showed, since the screen does not date it.
+    private var firstSeen: [String: String] = [:]
+    private static let dates: ISO8601DateFormatter = {
+        let dates = ISO8601DateFormatter()
+        dates.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+        return dates
+    }()
 
-    struct Live: Equatable {
-        var text = ""
-        var status = ""
+    #if DEBUG
+    /// `-liveLog PATH` appends each `live` line as the app takes it, timed, to measure how far
+    /// the chat trails the terminal.
+    private static let liveLog = UserDefaults.standard.string(forKey: "liveLog").flatMap { FileHandle(forWritingAtPath: $0) }
+
+    private static func log(_ line: String) {
+        liveLog?.seekToEndOfFile()
+        liveLog?.write(Data("\(Date().timeIntervalSince1970)\t\(line)\n".utf8))
+    }
+    #endif
+
+    /// The row an entry is drawn in: the live item's it replaced, else its own.
+    func rowKey(_ id: String) -> String { rowKeys[id] ?? id }
+
+    nonisolated static func isLive(_ id: String) -> Bool { id.hasPrefix("live.") }
+
+    /// Everything the chat shows, in order: the Transcript's entries, then the live items.
+    /// Claude saves a question, and the text before it, only once it is answered, so the
+    /// question its hook reported stays last.
+    var shown: [Item] {
+        guard let question = openQuestion else { return items + live.map(Item.entry) }
+        return items.dropLast() + live.map(Item.entry) + [question]
+    }
+
+    private var openQuestion: Item? {
+        guard case .entry(let entry)? = items.last, entry.kind == "question", results[entry.id] == nil else { return nil }
+        return items.last
     }
 
     /// What the Agent left running in the background, a command or a subagent.
@@ -208,9 +245,13 @@ final class Conversation: ObservableObject {
                 problem = "The Host's helper speaks protocol \(number), which this Sesh does not know. Update Sesh."
             }
             earlier = (line.protocol ?? 0) >= Self.paging
-            live = Live()
         case "entry":
-            if let entry = try? JSONDecoder().decode(Entry.self, from: data) { add(entry) }
+            guard let entry = try? JSONDecoder().decode(Entry.self, from: data) else { return }
+            if let replaced = line.replaces, let index = live.firstIndex(where: { $0.id == replaced }) {
+                rowKeys[entry.id] = replaced
+                live.removeFirst(index + 1)
+            }
+            add(entry)
         case "state":
             state = line.state ?? state
             if state != "working", !waiting.isEmpty { Task { await sendQueued() } }
@@ -223,7 +264,18 @@ final class Conversation: ObservableObject {
             permissions.removeAll { $0.id == permission.id }
             permissions.append(permission)
         case "permission_done": permissions.removeAll { $0.id == line.id }
-        case "live": live = Live(text: line.text ?? "", status: line.status ?? "")
+        case "live":
+            #if DEBUG
+            Self.log(text)
+            #endif
+            status = line.status ?? ""
+            let now = Self.dates.string(from: Date())
+            live = (line.items ?? []).map { item in
+                var item = item
+                item.at = firstSeen[item.id] ?? now
+                firstSeen[item.id] = item.at
+                return item
+            }
         case "background":
             struct Tasks: Decodable { let tasks: [Background] }
             background = (try? JSONDecoder().decode(Tasks.self, from: data))?.tasks ?? []
@@ -248,7 +300,7 @@ final class Conversation: ObservableObject {
             if let index = items.firstIndex(where: { $0.id == entry.id }) {
                 items[index] = .entry(entry)
             } else {
-                items.append(.entry(entry))
+                items.insert(.entry(entry), at: items.count - (openQuestion == nil ? 0 : 1))
             }
         }
     }
