@@ -87,14 +87,18 @@ private struct VaultSection: View {
     }
 }
 
-/// The folders and Tasks directly inside `parent`.
+/// The folders and Tasks directly inside `parent`, the most recently changed first.
 private struct Children: View {
+    @EnvironmentObject private var library: Library
     @ObservedObject var vault: Vault
     let parent: String?
     @Binding var naming: Sidebar.Naming?
 
     var body: some View {
         let rows = Tree.children(of: parent, in: vault)
+            .map { ($0, library.changed($0, in: vault)) }
+            .sorted { $0.1 > $1.1 }
+            .map(\.0)
         ForEach(rows) { record in
             if record.kind == .folder {
                 FolderRow(vault: vault, folder: record, naming: $naming)
@@ -102,7 +106,7 @@ private struct Children: View {
                 TaskRow(vault: vault, task: record, naming: $naming).tag(record.id)
             }
         }
-        .onMove { from, to in Tree.reorder(rows, from: from, to: to, in: vault) }
+
     }
 }
 
@@ -168,7 +172,7 @@ private struct TaskRow: View {
     }
 }
 
-/// Positions are fractions, so a move rewrites one record rather than every sibling.
+/// Folders and Tasks: which sit where, and moving them between folders.
 enum Tree {
     @MainActor
     static func children(of parent: String?, in vault: Vault) -> [Record] {
@@ -180,23 +184,6 @@ enum Tree {
     @MainActor
     static func next(in parent: String?, of vault: Vault) -> Double {
         (children(of: parent, in: vault).compactMap(\.body.position).max() ?? 0) + 1
-    }
-
-    @MainActor
-    static func reorder(_ rows: [Record], from: IndexSet, to: Int, in vault: Vault) {
-        var order = rows
-        order.move(fromOffsets: from, toOffset: to)
-        guard let moved = from.first.map({ rows[$0] }), let index = order.firstIndex(of: moved) else { return }
-        let before = index > 0 ? order[index - 1].body.position ?? 0 : nil
-        let after = index + 1 < order.count ? order[index + 1].body.position ?? 0 : nil
-        var record = moved
-        record.body.position = switch (before, after) {
-        case let (before?, after?): (before + after) / 2
-        case let (before?, nil): before + 1
-        case let (nil, after?): after - 1
-        case (nil, nil): 0
-        }
-        vault.write(record)
     }
 
     /// Drops records into a folder, refusing to put a folder inside itself.

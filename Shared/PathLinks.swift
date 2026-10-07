@@ -16,19 +16,27 @@ enum PathLinks {
         var changed = false
         if let repo, numbers { changed = linkNumbers(root, repo: repo) }
 
-        var spans: [UnsafeMutablePointer<cmark_node>] = []
+        // A bare name listed under a folder the message named, as in "Files are in `/a/b/`:",
+        // lives in that folder.
+        var spans: [(node: UnsafeMutablePointer<cmark_node>, path: String)] = []
+        var folder: String?
         let walk = cmark_iter_new(root)
         while cmark_iter_next(walk) != CMARK_EVENT_DONE {
             guard let node = cmark_iter_get_node(walk), cmark_node_get_type(node) == CMARK_NODE_CODE,
                   cmark_node_get_type(cmark_node_parent(node)) != CMARK_NODE_LINK,
-                  let literal = cmark_node_get_literal(node), isPath(String(cString: literal))
-            else { continue }
-            spans.append(node)
+                  let literal = cmark_node_get_literal(node) else { continue }
+            let text = String(cString: literal)
+            if (text.hasPrefix("/") || text.hasPrefix("~/")) && text.hasSuffix("/") && !text.contains(" ") {
+                folder = text
+                continue
+            }
+            guard isPath(text) else { continue }
+            let rooted = text.hasPrefix("/") || text.hasPrefix("~/")
+            spans.append((node, rooted || folder == nil ? text : folder! + text))
         }
         cmark_iter_free(walk)
         guard !spans.isEmpty || changed else { return markdown }
-        for span in spans {
-            let path = String(cString: cmark_node_get_literal(span))
+        for (span, path) in spans {
             guard let link = cmark_node_new(CMARK_NODE_LINK),
                   let url = URL(string: "\(scheme):" + (path.addingPercentEncoding(withAllowedCharacters: CharacterSet.urlPathAllowed) ?? path))
             else { continue }

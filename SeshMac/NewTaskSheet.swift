@@ -59,7 +59,8 @@ struct NewTaskSheet: View {
     private func create() async {
         working = true
         defer { working = false }
-        let task = made ?? vault.create(.task, .init(title: trimmed, parent: parent, position: Tree.next(in: parent, of: vault)))
+        let task = made ?? vault.create(.task, .init(
+            title: trimmed, parent: parent, position: Tree.next(in: parent, of: vault), edited: Int64(Date().timeIntervalSince1970 * 1000)))
         made = task
         library.selection = task.id
         guard worktree else { return dismiss() }

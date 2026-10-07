@@ -62,9 +62,12 @@ final class Library: ObservableObject {
             conversation = Conversation(source: .file(path: copy, agent: agent), agent: agent, runner: vault.machine)
         } else {
             conversation = Conversation(pane: session.body.pane ?? "", agent: agent, runner: machine)
-            conversation.openPath = { [weak self] path in
+            conversation.openPath = { [weak self, weak conversation] path in
                 guard let self, let vault = self.vault(of: session.id), let current = vault.records[session.id] else { return }
-                TaskActions.open(path, from: current, in: vault, library: self)
+                let wrote = (conversation?.items ?? []).compactMap { item -> String? in
+                if case .entry(let entry) = item { entry.file } else { nil }
+            }
+            Task { await TaskActions.open(path, from: current, wrote: wrote, in: vault, library: self) }
             }
         }
         if let cached = conversations[session.id] { return cached }
@@ -154,7 +157,10 @@ final class Library: ObservableObject {
             let ran = await machine.run("herdr agent list")
             guard let list = try? JSONDecoder().decode(List.self, from: Data(ran.out.utf8)) else { continue }
             for agent in list.result.agents {
-                states["\(machine.alias ?? ""):\(agent.pane_id)"] = Live(status: agent.agent_status, done: agent.completion_seq ?? 0)
+                let key = "\(machine.alias ?? ""):\(agent.pane_id)"
+                let state = Live(status: agent.agent_status, done: agent.completion_seq ?? 0)
+                if state.status == "working" || (live[key].map { state.done > $0.done } ?? false) { active[key] = Date().timeIntervalSince1970 * 1000 }
+                states[key] = state
             }
             found[machine.id] = list.result.agents.compactMap { agent in
                 guard let kind = Agent(rawValue: agent.agent) else { return nil }
@@ -182,6 +188,26 @@ final class Library: ObservableObject {
     }
 
     @Published private(set) var live: [String: Live] = [:]
+    /// When each pane's Agent last worked or finished a turn, in milliseconds since 1970.
+    @Published private(set) var active: [String: Double] = UserDefaults.standard.dictionary(forKey: "active") as? [String: Double] ?? [:] {
+        didSet { UserDefaults.standard.set(active, forKey: "active") }
+    }
+
+    /// The latest moment anything happened in a Task, or in any Task inside a folder: an Entry,
+    /// a Document edited, a session started, an Agent working or finishing.
+    func changed(_ record: Record, in vault: Vault) -> Double {
+        if record.kind == .folder {
+            return Tree.children(of: record.id, in: vault).map { changed($0, in: vault) }.max() ?? 0
+        }
+        let own = Double(record.body.edited ?? 0)
+        let parts = vault.records.values.filter { !$0.deleted && $0.body.task == record.id }.map { part -> Double in
+            switch part.kind {
+            case .session: max((part.body.position ?? 0) * 1000, active[key(part)] ?? 0)
+            default: Double(max(part.body.at ?? 0, part.body.edited ?? 0))
+            }
+        }
+        return max(own, parts.max() ?? 0)
+    }
     /// The finished-turn count the user has seen, by `machine:pane`, so a turn finished while
     /// they looked elsewhere, or while the app was closed, still shows.
     private var seen: [String: UInt64] = UserDefaults.standard.dictionary(forKey: "seen") as? [String: UInt64] ?? [:]
@@ -251,9 +277,12 @@ final class Library: ObservableObject {
         if let known = subagents[path] { return known }
         let conversation = Conversation(source: .file(path: path, agent: .claude), agent: .claude,
                                         runner: TaskActions.machine(session.body.machine))
-        conversation.openPath = { [weak self] file in
+        conversation.openPath = { [weak self, weak conversation] file in
             guard let self, let vault = self.vault(of: session.id), let current = vault.records[session.id] else { return }
-            TaskActions.open(file, from: current, in: vault, library: self)
+            let wrote = (conversation?.items ?? []).compactMap { item -> String? in
+                if case .entry(let entry) = item { entry.file } else { nil }
+            }
+            Task { await TaskActions.open(file, from: current, wrote: wrote, in: vault, library: self) }
         }
         conversation.openSubagent = { [weak self, weak conversation] call, title in
             guard let self, let transcript = conversation?.transcript else { return }

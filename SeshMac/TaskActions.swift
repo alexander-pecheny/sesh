@@ -67,11 +67,19 @@ enum TaskActions {
         return .success(session)
     }
 
-    /// Opens a file in the Task as a Document, reusing the Tab if it is open already.
-    static func open(_ path: String, from session: Record, in vault: Vault, library: Library) {
+    /// Opens a file in the Task as a Document, reusing the Tab if it is open already. A bare
+    /// name is looked for among the files the Agent wrote, then in its folder; the first that
+    /// exists on the machine wins.
+    static func open(_ path: String, from session: Record, wrote: [String], in vault: Vault, library: Library) async {
         guard let task = session.body.task else { return }
-        let absolute = path.hasPrefix("/") || path.hasPrefix("~/") ? path
-            : ((session.body.path ?? "~") as NSString).appendingPathComponent(path)
+        let folder = session.body.path ?? "~"
+        var absolute = path
+        if !(path.hasPrefix("/") || path.hasPrefix("~/")) {
+            let candidates = wrote.filter { $0.hasSuffix("/" + path) } + [(folder as NSString).appendingPathComponent(path)]
+            let tests = candidates.map { "[ -f \(shellPath($0)) ] && printf %s \(quote($0)) && exit" }.joined(separator: "; ")
+            let found = await machine(session.body.machine).run(tests).out
+            absolute = found.isEmpty ? candidates.last ?? path : found
+        }
         let known = vault.children(.document, task: task)
             .first { $0.body.path == absolute && $0.body.machine == session.body.machine }
         let document = known ?? vault.create(.document, .init(
