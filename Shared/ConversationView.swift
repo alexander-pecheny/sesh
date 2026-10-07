@@ -142,7 +142,7 @@ struct ConversationView: View {
                 if let todo = conversation.todo?.items, !todo.isEmpty { TodoBar(items: todo) }
                 // A Transcript read from a file, a copy or a subagent's, has no one to send to.
                 if conversation.pane != nil {
-                    StatusLine(conversation: conversation)
+                    BackgroundLine(conversation: conversation)
                     input
                 }
             }
@@ -355,54 +355,29 @@ extension View {
     }
 }
 
-/// Whether the Agent is working, waiting for the user or idle, and what it left running in
-/// the background, so an idle Agent with a command still going does not look finished.
-private struct StatusLine: View {
+/// What the Agent left running in the background, a command or a subagent; shown only while
+/// there is some, since the working row already says when the Agent itself works.
+private struct BackgroundLine: View {
     @Environment(\.colorScheme) private var colorScheme
     @ObservedObject var conversation: Conversation
 
     private var flavour: Catppuccin.Flavour { colorScheme == .dark ? .mocha : .latte }
-    private var agent: String { conversation.agent?.title ?? "The Agent" }
 
     var body: some View {
-        HStack(spacing: Metric.gap) {
-            Circle().fill(flavour(tint)).frame(width: 7, height: 7)
-            Text(state).foregroundStyle(flavour(.subtext0))
-            if !conversation.background.isEmpty {
-                Text("·").foregroundStyle(flavour(.overlay0))
+        if let first = conversation.background.first {
+            HStack(spacing: Metric.gap) {
                 ProgressView().controlSize(.mini)
-                Text(running).foregroundStyle(flavour(.subtext0)).lineLimit(1).truncationMode(.tail)
+                Text("In the background: " + (conversation.background.count == 1 ? first.label : "\(first.label) and \(conversation.background.count - 1) more"))
+                    .foregroundStyle(flavour(.subtext0)).lineLimit(1).truncationMode(.tail)
                     .help(conversation.background.map(\.label).joined(separator: "\n"))
+                Spacer(minLength: 0)
             }
-            Spacer(minLength: 0)
+            .font(.ui(Metric.caption))
+            .padding(.horizontal, Metric.wide)
+            .padding(.vertical, Metric.tiny)
+            .frame(maxWidth: .infinity)
+            .background(flavour(.mantle))
         }
-        .font(.ui(Metric.caption))
-        .padding(.horizontal, Metric.wide)
-        .padding(.vertical, Metric.tiny)
-        .frame(maxWidth: .infinity)
-        .background(flavour(.mantle))
-    }
-
-    private var state: String {
-        switch conversation.state {
-        case "working": "\(agent) is working"
-        case "blocked": "\(agent) is waiting for you"
-        case "done", "idle": conversation.background.isEmpty ? "\(agent) is idle" : "\(agent) is idle, with work in the background"
-        default: agent
-        }
-    }
-
-    private var tint: Catppuccin.Swatch {
-        switch conversation.state {
-        case "working": .mauve
-        case "blocked": .peach
-        default: conversation.background.isEmpty ? .green : .yellow
-        }
-    }
-
-    private var running: String {
-        let first = conversation.background[0].label
-        return conversation.background.count == 1 ? first : "\(first) and \(conversation.background.count - 1) more"
     }
 }
 
