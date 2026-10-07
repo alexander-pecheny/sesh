@@ -611,3 +611,71 @@ fn a_notice_queued_mid_turn_ends_background_work() {
         assert!(parse("claude", &lines).background().is_empty());
     }
 }
+
+#[test]
+fn a_message_sent_mid_turn_shows_where_claude_read_it() {
+    let at = "2026-10-07T15:54:38.457Z";
+    let queued = |prompt: Value, origin: Value| {
+        json!({"type":"attachment","timestamp":at,"attachment":{"type":"queued_command","prompt":prompt,"commandMode":"prompt","origin":origin}})
+    };
+    let transcript = parse("claude", &[
+        json!({"type":"queue-operation","operation":"enqueue","timestamp":at,"content":"also it crashed"}),
+        queued(json!("also it crashed"), json!({"kind":"human"})),
+        queued(json!([{"type":"text","text":"[Image #1] and this"}]), Value::Null),
+        json!({"type":"attachment","timestamp":at,"attachment":{"type":"queued_command","commandMode":"task-notification","prompt":"<task-notification>x</task-notification>"}}),
+    ]);
+    let texts: Vec<_> = transcript.entries.iter().map(|entry| (entry.kind, entry.text.as_deref().unwrap_or_default())).collect();
+    assert_eq!(texts, [("user", "also it crashed"), ("user", "[Image #1] and this")]);
+}
+
+#[test]
+fn narration_sent_as_thinking_reads_as_text() {
+    let at = "2026-10-07T15:56:17.433Z";
+    let thinking = |text: &str, signature: &str| {
+        json!({"type":"assistant","timestamp":at,"message":{"content":[{"type":"thinking","thinking":text,"signature":signature}]}})
+    };
+    let transcript = parse("claude", &[
+        thinking("", "CAQSkQ8KEAgSGAI4AUIIdGhpbmtpbmcSDG2jqnFU"),
+        thinking("The runtime theory is ruled out.\n\n", "CAQSsAgKEQgSGAI4AUIJbmFycmF0aW9uEgyquZYm"),
+        thinking("Weighing it up.", "CAQSnQYKEAgSGAI4AUIIdGhpbmtpbmcSDNlmFW"),
+    ]);
+    assert_eq!(kinds(&transcript), ["text", "thinking"]);
+    assert_eq!(transcript.entries[0].text.as_deref(), Some("The runtime theory is ruled out."));
+}
+
+fn claude_screen(body: &str) -> String {
+    let rule = "─".repeat(60);
+    let notice = format!("{:>90}", "✔ Update installed · Restart to update");
+    format!("{body}\n\n✳ Ebbing… (9m 36s · ↓ 33.4k tokens)\n  ⎿  Tip: Use /btw to ask a quick side question\n{notice}\n{rule}\n❯ \n{rule}\n  ⏵⏵ bypass permissions on · esc to interrupt\n\n  ⏺ main")
+}
+
+fn said(kind: &'static str, text: &str) -> Entry {
+    Entry { kind, text: Some(text.into()), ..Entry::default() }
+}
+
+#[test]
+fn the_live_tail_is_what_the_screen_shows_past_the_transcript() {
+    let body = "⏺ Config file access isn't the culprit, so I'll build the Dev app with Address\n  Sanitizer and rerun the steps.\n\n  Building the Dev app with Address Sanitizer\n  ⎿  $ xcodebuild -project Sesh.xcodeproj\n     -enableAddressSanitizer YES build\n\n⏺ The build passed. Next I run it through the\n  switches:\n  - open a session\n  - send";
+    let mut entries = vec![
+        said("text", "Config file access isn't the **culprit**, so I'll build the Dev app with Address Sanitizer and rerun the steps."),
+        Entry { kind: "tool", command: Some("xcodebuild -project Sesh.xcodeproj -enableAddressSanitizer YES build".into()), description: Some("Building the Dev app with Address Sanitizer".into()), ..Entry::default() },
+    ];
+    let live = live::live(&claude_screen(body), &entries);
+    assert_eq!(live.status, "Ebbing… (9m 36s · ↓ 33.4k tokens)");
+    assert_eq!(live.text, "The build passed. Next I run it through the switches:\n- open a session\n- send");
+    entries.push(said("text", "The build passed. Next I run it through the switches:\n\n- open a session\n- send"));
+    assert_eq!(live::live(&claude_screen(body), &entries).text, "");
+}
+
+#[test]
+fn tool_chrome_after_the_transcript_is_not_live() {
+    let body = "⏺ No nested run loops in our code.\n\n  Searched for 1 pattern, ran 1 shell command\n\n⏺ Press Copy Link and look for the notices · 3s\n  ⎿  $ ax press \"Copy Link\"\n\n⏺ Reading /home/u/notes.txt";
+    let entries = vec![
+        said("text", "No nested run loops in our code."),
+        Entry { kind: "tool", description: Some("Press Copy Link and look for the notices".into()), ..Entry::default() },
+        Entry { kind: "tool", file: Some("/home/u/notes.txt".into()), ..Entry::default() },
+    ];
+    let status = "Ebbing… (9m 36s · ↓ 33.4k tokens)".to_string();
+    assert_eq!(live::live(&claude_screen(body), &entries), live::Live { text: String::new(), status });
+    assert_eq!(live::live("no prompt box here", &entries), live::Live::default());
+}

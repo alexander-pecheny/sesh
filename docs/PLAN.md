@@ -352,7 +352,14 @@ JSON object per line, flushed per line, until killed. N defaults to 50 entries.
 {"t":"permission","id":"<id>","tool":"<raw name>","summary":"<one line>","command":"<shell, if any>","file":"<path, if any>","reason":"<text, if any>"}
 {"t":"permission_done","id":"<id>"}
 {"t":"cursor","cursor":"<opaque>"}
+{"t":"live","text":"<screen text past the Transcript>","status":"<the Agent's status line>"}
 ```
+
+`live` comes only for Claude, while it works, and again empty once it stops. The helper
+reads the pane's screen twice a second and sends the paragraphs below the last one the
+Transcript already holds, starting at Claude's own text or the user's, and the spinner
+line. Claude writes a reply to its Transcript only once the tool call after it is
+complete, seconds after the screen shows it.
 
 Every entry has `id` (stable across reconnects, opaque to Sesh), `kind`, `summary` (one
 plain line, used for kinds Sesh does not know) and `at` (RFC 3339). A `tool` entry's id

@@ -28,6 +28,7 @@ struct ConversationView: View {
     /// Grows whenever something lands at the bottom.
     private var changes: Int {
         conversation.items.count + conversation.permissions.count + conversation.queued.count + (working ? 1 : 0)
+            + conversation.live.text.count
     }
     private static let nearTop = 200.0
 
@@ -61,7 +62,8 @@ struct ConversationView: View {
                 }
                 ForEach(conversation.permissions) { PermissionCard(permission: $0, conversation: conversation) }
                 ForEach(conversation.queued) { QueuedBubble(message: $0, conversation: conversation, edit: takeBack) }
-                if working { WorkingRow() }
+                if !conversation.live.text.isEmpty { LiveTail(text: conversation.live.text) }
+                if working { WorkingRow(status: conversation.live.status) }
             }
             .scrollTargetLayout()
             .padding(16)
@@ -877,6 +879,9 @@ private struct WorkingRow: View {
     @Environment(\.colorScheme) private var colorScheme
     @State private var start = Date()
     @State private var word = Self.words.randomElement() ?? "Working"
+    /// The status line on the Agent's screen, which the row shows when there is one.
+    var status = ""
+    private var label: String { status.isEmpty ? "\(word)…" : status }
 
     private static let words = [
         "Shimmying", "Pondering", "Noodling", "Percolating", "Tinkering", "Conjuring", "Mulling",
@@ -893,7 +898,7 @@ private struct WorkingRow: View {
             let light = elapsed.truncatingRemainder(dividingBy: Self.sweep) / Self.sweep * (1 + 2 * Self.band) - Self.band
             HStack(spacing: Metric.gap) {
                 Sparkles(time: elapsed, colour: flavour(.mauve)).frame(width: Metric.control / 2, height: Metric.control / 2)
-                Text("\(word)…")
+                Text(label)
                     .foregroundStyle(flavour(.overlay1))
                     .overlay {
                         LinearGradient(
@@ -901,13 +906,13 @@ private struct WorkingRow: View {
                             startPoint: UnitPoint(x: light - Self.band, y: 0),
                             endPoint: UnitPoint(x: light + Self.band, y: 0)
                         )
-                        .mask { Text("\(word)…") }
+                        .mask { Text(label) }
                     }
             }
             .font(.ui(Metric.label))
         }
         .accessibilityElement(children: .ignore)
-        .accessibilityLabel("\(word)…")
+        .accessibilityLabel(label)
     }
 }
 
