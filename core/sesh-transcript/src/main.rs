@@ -244,6 +244,7 @@ fn follow(args: &[String]) -> Exit {
         session: Value::Null,
         lost: None,
         wrote: false,
+        background: json!([]),
     };
     follower.start(&pane, options.get("since").copied())?;
     let mut agent_seen = Instant::now();
@@ -280,6 +281,8 @@ struct Follower {
     /// While the session's Transcript is not found, polls since it was last looked for.
     lost: Option<u32>,
     wrote: bool,
+    /// The background work last reported, so only a change is sent.
+    background: Value,
 }
 
 impl Follower {
@@ -440,6 +443,21 @@ impl Follower {
     }
 
     fn emit_cursor(&mut self) -> Result<(), String> {
+        let background: Value = self
+            .transcript
+            .as_ref()
+            .map(|transcript| {
+                transcript
+                    .background()
+                    .iter()
+                    .map(|(call, label)| json!({"call": call, "label": label}))
+                    .collect()
+            })
+            .unwrap_or_default();
+        if background != self.background {
+            self.background = background.clone();
+            self.emit(json!({"t": "background", "tasks": background}))?;
+        }
         let cursor = match &self.transcript {
             Some(transcript) => format!("{}:{}", transcript.offset, transcript.path.display()),
             None => "0:".to_string(),

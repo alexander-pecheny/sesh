@@ -57,6 +57,12 @@ struct TaskView: View {
         #if DEBUG
         // `-start claude` starts an Agent session in the chosen Task, for tests with no menus.
         .task {
+            if UserDefaults.standard.bool(forKey: "close") {
+                for _ in 0..<40 where vault.records[id] == nil || !vault.online { try? await Task.sleep(for: .milliseconds(500)) }
+                if let task = vault.records[id], let problem = await TaskActions.close(task, in: vault, library: library, discard: false) {
+                    Ghostty.logger.error("close failed: \(problem, privacy: .public)")
+                }
+            }
             guard let agent = UserDefaults.standard.string(forKey: "start").flatMap(Agent.init) else { return }
             for _ in 0..<40 where vault.records[id] == nil || !vault.online { try? await Task.sleep(for: .milliseconds(500)) }
             guard let task = vault.records[id] else { return }

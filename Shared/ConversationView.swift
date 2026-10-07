@@ -107,6 +107,25 @@ struct ConversationView: View {
                 pinned = (row.id, .now + 2)
                 reader.scrollTo(row.id, anchor: .top)
             }
+            .overlay(alignment: .bottomTrailing) {
+                if !atBottom {
+                    Button {
+                        atBottom = true
+                        reader.scrollTo(Self.end, anchor: .bottom)
+                    } label: {
+                        Image(systemName: "arrow.down")
+                            .font(.system(size: Metric.label, weight: .semibold))
+                            .foregroundStyle(flavour(.text))
+                            .frame(width: Metric.control, height: Metric.control)
+                            .background(flavour(.surface1), in: .circle)
+                            .shadow(radius: 3)
+                    }
+                    .buttonStyle(.plain)
+                    .padding(Metric.wide)
+                    .help("Jump to the end")
+                    .accessibilityLabel("Jump to the end")
+                }
+            }
             .onChange(of: sent) {
                 atBottom = true
                 reader.scrollTo(Self.end, anchor: .bottom)
@@ -122,7 +141,10 @@ struct ConversationView: View {
             VStack(spacing: 0) {
                 if let todo = conversation.todo?.items, !todo.isEmpty { TodoBar(items: todo) }
                 // A Transcript read from a file, a copy or a subagent's, has no one to send to.
-                if conversation.pane != nil { input }
+                if conversation.pane != nil {
+                    StatusLine(conversation: conversation)
+                    input
+                }
             }
         }
         .background(flavour(.base))
@@ -330,6 +352,57 @@ private struct Bookmarkable: ViewModifier {
 extension View {
     fileprivate func bookmarkable(_ entry: Conversation.Entry?, keep: ((Conversation.Entry) -> Void)?, column: CGFloat?) -> some View {
         modifier(Bookmarkable(entry: entry, keep: keep, column: column))
+    }
+}
+
+/// Whether the Agent is working, waiting for the user or idle, and what it left running in
+/// the background, so an idle Agent with a command still going does not look finished.
+private struct StatusLine: View {
+    @Environment(\.colorScheme) private var colorScheme
+    @ObservedObject var conversation: Conversation
+
+    private var flavour: Catppuccin.Flavour { colorScheme == .dark ? .mocha : .latte }
+    private var agent: String { conversation.agent?.title ?? "The Agent" }
+
+    var body: some View {
+        HStack(spacing: Metric.gap) {
+            Circle().fill(flavour(tint)).frame(width: 7, height: 7)
+            Text(state).foregroundStyle(flavour(.subtext0))
+            if !conversation.background.isEmpty {
+                Text("·").foregroundStyle(flavour(.overlay0))
+                ProgressView().controlSize(.mini)
+                Text(running).foregroundStyle(flavour(.subtext0)).lineLimit(1).truncationMode(.tail)
+                    .help(conversation.background.map(\.label).joined(separator: "\n"))
+            }
+            Spacer(minLength: 0)
+        }
+        .font(.ui(Metric.caption))
+        .padding(.horizontal, Metric.wide)
+        .padding(.vertical, Metric.tiny)
+        .frame(maxWidth: .infinity)
+        .background(flavour(.mantle))
+    }
+
+    private var state: String {
+        switch conversation.state {
+        case "working": "\(agent) is working"
+        case "blocked": "\(agent) is waiting for you"
+        case "done", "idle": conversation.background.isEmpty ? "\(agent) is idle" : "\(agent) is idle, with work in the background"
+        default: agent
+        }
+    }
+
+    private var tint: Catppuccin.Swatch {
+        switch conversation.state {
+        case "working": .mauve
+        case "blocked": .peach
+        default: conversation.background.isEmpty ? .green : .yellow
+        }
+    }
+
+    private var running: String {
+        let first = conversation.background[0].label
+        return conversation.background.count == 1 ? first : "\(first) and \(conversation.background.count - 1) more"
     }
 }
 

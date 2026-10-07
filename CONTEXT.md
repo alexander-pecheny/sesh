@@ -124,11 +124,12 @@ branch. Its branch and folder are suggested from the Task's title and never rena
 herdr Workspace carries the title itself. A Task has at most one.
 _Avoid_: branch copy, checkout, project
 
-**Archive**:
-To put a finished Task away. Its Journal, Documents and Transcript copies stay in the
-Vault; Sesh offers to remove its Worktree once the branch is merged, and never removes it
-unasked.
-_Avoid_: delete, close, done
+**Close**:
+To finish a Task: its Transcripts are copied into the Vault one last time, its Agents are
+stopped, its Worktree is removed with the branch kept, and the Task is archived. Its
+Journal, Documents and Conversations stay readable and searchable, and it can be reopened.
+Uncommitted work in the Worktree is given up only when the user says so.
+_Avoid_: delete, archive, done
 
 **Vault**:
 A store of Tasks, folders and notes, kept on one Host, with a copy on each Mac and phone

@@ -78,4 +78,44 @@ enum TaskActions {
             title: (absolute as NSString).lastPathComponent, task: task, machine: session.body.machine, path: absolute))
         library.open(.document(document.id), in: task)
     }
+
+    /// What `git status` says is uncommitted in the Task's Worktree; empty when clean or absent.
+    static func uncommitted(in task: Record) async -> String {
+        guard let path = task.body.path else { return "" }
+        let ran = await machine(task.body.machine).run("git -C \(quote(path)) status --porcelain")
+        return ran.ok ? ran.out.trimmingCharacters(in: .whitespacesAndNewlines) : ""
+    }
+
+    /// Ends a Task: its Transcripts copied one last time, its Agents stopped, its Worktree and
+    /// Workspace removed with the branch kept, and the Task archived. It stays searchable.
+    static func close(_ task: Record, in vault: Vault, library: Library, discard: Bool) async -> String? {
+        let sessions = vault.children(.session, task: task.id)
+        await vault.copier.copy(sessions)
+        for session in sessions {
+            guard let pane = session.body.pane else { continue }
+            let machine = machine(session.body.machine)
+            _ = await machine.run("herdr agent send-keys \(quote(pane)) ctrl+c ctrl+c; sleep 1; herdr pane close \(quote(pane))")
+        }
+        let home = machine(task.body.machine)
+        let open = await Herdr.workspaces(on: home)
+        let workspace = task.body.workspace.flatMap { open[$0] != nil ? $0 : nil }
+            ?? open.first { $0.value == task.body.title }?.key
+        if let path = task.body.path {
+            let force = discard ? " --force" : ""
+            let ran = if let workspace {
+                await home.run("herdr worktree remove --workspace \(quote(workspace))\(force)")
+            } else {
+                await home.run("git -C \(quote(task.body.repo ?? path)) worktree remove \(quote(path))\(force)")
+            }
+            guard ran.ok else { return "The Worktree is still there: \(ran.problem)" }
+        } else if let workspace {
+            _ = await home.run("herdr workspace close \(quote(workspace))")
+        }
+        var record = vault.records[task.id] ?? task
+        record.body.archived = true
+        vault.write(record)
+        for tab in library.tabs[task.id] ?? [] { library.close(tab, in: task.id) }
+        if library.selection == task.id { library.selection = nil }
+        return nil
+    }
 }

@@ -85,6 +85,14 @@ final class Conversation: ObservableObject {
     @Published private(set) var results: [String: Entry] = [:]
     @Published private(set) var todo: Entry?
     @Published private(set) var permissions: [Permission] = []
+    /// What the Agent left running in the background, a command or a subagent.
+    @Published private(set) var background: [Background] = []
+
+    struct Background: Decodable, Equatable, Identifiable {
+        let call: String
+        let label: String
+        var id: String { call }
+    }
     @Published private(set) var state = ""
     @Published private(set) var agent: Agent?
     /// Whether entries older than the first one shown can still be fetched.
@@ -182,6 +190,9 @@ final class Conversation: ObservableObject {
             permissions.removeAll { $0.id == permission.id }
             permissions.append(permission)
         case "permission_done": permissions.removeAll { $0.id == line.id }
+        case "background":
+            struct Tasks: Decodable { let tasks: [Background] }
+            background = (try? JSONDecoder().decode(Tasks.self, from: data))?.tasks ?? []
         case "cursor":
             cursor = line.cursor
             // A new Agent session has no Transcript until its first message, so nothing is older;

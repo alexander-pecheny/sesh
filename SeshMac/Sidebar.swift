@@ -59,6 +59,7 @@ private struct VaultSection: View {
     var body: some View {
         Section {
             Children(vault: vault, parent: nil, naming: $naming)
+            ArchiveGroup(vault: vault, naming: $naming)
             if let alias = vault.place.alias {
                 UnfiledGroup(items: library.unfiled[alias] ?? [])
             }
@@ -135,6 +136,7 @@ private struct TaskRow: View {
     @ObservedObject var vault: Vault
     let task: Record
     @Binding var naming: Sidebar.Naming?
+    @State private var closing = false
 
     var body: some View {
         HStack(spacing: Metric.gap) {
@@ -151,7 +153,18 @@ private struct TaskRow: View {
             }
             .contextMenu {
                 Button("Rename") { naming = .init(goal: .rename(task), vault: vault, parent: nil) }
+                Divider()
+                if task.body.archived == true {
+                    Button("Reopen") {
+                        var record = vault.records[task.id] ?? task
+                        record.body.archived = false
+                        vault.write(record)
+                    }
+                } else {
+                    Button("Close Task…") { closing = true }
+                }
             }
+            .sheet(isPresented: $closing) { CloseTaskSheet(vault: vault, task: task) }
     }
 }
 
@@ -368,5 +381,78 @@ struct MarkView: View {
         case nil:
             EmptyView()
         }
+    }
+}
+
+/// Closed Tasks, out of the way but still readable and searchable.
+private struct ArchiveGroup: View {
+    @ObservedObject var vault: Vault
+    @Binding var naming: Sidebar.Naming?
+    @State private var open = false
+
+    var body: some View {
+        let archived = vault.all(.task).filter { $0.body.archived == true }.sorted { ($0.body.title ?? "") < ($1.body.title ?? "") }
+        if !archived.isEmpty {
+            DisclosureGroup(isExpanded: $open) {
+                ForEach(archived) { TaskRow(vault: vault, task: $0, naming: $naming).tag($0.id) }
+            } label: {
+                Label("Archive (\(archived.count))", systemImage: "archivebox").foregroundStyle(.secondary)
+            }
+        }
+    }
+}
+
+/// What closing a Task will do, said before it is done; uncommitted work must be given up
+/// explicitly.
+private struct CloseTaskSheet: View {
+    @Environment(\.dismiss) private var dismiss
+    @EnvironmentObject private var library: Library
+    @ObservedObject var vault: Vault
+    let task: Record
+    @State private var uncommitted: String?
+    @State private var discard = false
+    @State private var working = false
+    @State private var problem: String?
+
+    private var sessions: Int { vault.children(.session, task: task.id).count }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: Metric.pad) {
+            Text("Close “\(task.body.title ?? "Task")”?").font(.headline)
+            VStack(alignment: .leading, spacing: Metric.tiny) {
+                Text(sessions == 1 ? "Stops its Agent session." : "Stops its \(sessions) Agent sessions.")
+                if let path = task.body.path {
+                    Text("Removes the Worktree at \(path) on \(TaskActions.machine(task.body.machine).title); the branch \(task.body.branch ?? "") stays.")
+                }
+                Text("Archives the Task. Its Journal, Documents and Conversations stay searchable.")
+            }
+            .font(.callout).foregroundStyle(.secondary)
+            if let uncommitted, !uncommitted.isEmpty {
+                Text("The Worktree has uncommitted changes:").font(.callout)
+                ScrollView { Text(uncommitted).font(.system(.caption, design: .monospaced)).frame(maxWidth: .infinity, alignment: .leading) }
+                    .frame(maxHeight: 120)
+                Toggle("Discard them", isOn: $discard)
+            }
+            if let problem { Text(problem).font(.caption).foregroundStyle(.red).textSelection(.enabled) }
+            HStack {
+                Spacer()
+                Button("Cancel") { dismiss() }.keyboardShortcut(.cancelAction)
+                Button(role: .destructive) { Task { await close() } } label: {
+                    if working { ProgressView().controlSize(.small) } else { Text("Close Task") }
+                }
+                .keyboardShortcut(.defaultAction)
+                .disabled(working || uncommitted == nil || (uncommitted?.isEmpty == false && !discard))
+            }
+        }
+        .padding()
+        .frame(width: 460)
+        .task { uncommitted = await TaskActions.uncommitted(in: task) }
+    }
+
+    private func close() async {
+        working = true
+        defer { working = false }
+        problem = await TaskActions.close(task, in: vault, library: library, discard: discard)
+        if problem == nil { dismiss() }
     }
 }

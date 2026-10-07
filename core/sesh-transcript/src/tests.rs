@@ -555,3 +555,18 @@ fn pi_follows_its_branch_within_a_window() {
     assert_eq!((ids(&page), more), (ids(&transcript.entries[..1]), false));
     let _ = std::fs::remove_dir_all(path.parent().unwrap());
 }
+
+#[test]
+fn claude_background_work_stays_listed_until_its_notification() {
+    let at = "2026-10-05T14:54:42.186Z";
+    let started = |id: &str, description: &str| {
+        json!({"type":"assistant","timestamp":at,"message":{"content":[{"type":"tool_use","id":id,"name":"Bash",
+            "input":{"command":"sleep 600","description":description,"run_in_background":true}}]}})
+    };
+    let notified = |id: &str, status: &str| {
+        json!({"type":"user","timestamp":at,"origin":{"kind":"task-notification"},"message":{"role":"user",
+            "content":format!("<task-notification>\n<tool-use-id>{id}</tool-use-id>\n<status>{status}</status>\n</task-notification>")}})
+    };
+    let transcript = parse("claude", &[started("toolu_a", "Watch CI"), started("toolu_b", "Run the suite"), notified("toolu_a", "completed")]);
+    assert_eq!(transcript.background(), [("toolu_b".to_string(), "Run the suite".to_string())]);
+}

@@ -86,7 +86,7 @@ final class Vault: ObservableObject, Identifiable {
     private var queue: [Change] = []
     private var flushing = false
     private var following: Task<Void, Never>?
-    private lazy var copier = Copier(vault: self)
+    private(set) lazy var copier = Copier(vault: self)
 
     nonisolated var id: String { place.name }
     var name: String { place.name }

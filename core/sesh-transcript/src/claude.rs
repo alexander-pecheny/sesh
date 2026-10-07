@@ -18,6 +18,9 @@ const NOT_TYPED: [&str; 6] = [
 pub(super) struct Parser {
     /// A subagent's own Transcript, whose every line is a sidechain of its parent's.
     pub(super) subagent: bool,
+    /// Commands and Agents started in the background and not yet reported finished, by the
+    /// call that started them, with what to call them.
+    pub(super) background: Vec<(String, String)>,
     questions: HashMap<String, String>,
     hidden_results: HashSet<String>,
     tasks: Vec<(String, String)>,
@@ -42,6 +45,9 @@ impl Parser {
         let content = &line["message"]["content"];
         match line["type"].as_str() {
             Some("user") => {
+                if line["origin"]["kind"] == "task-notification" {
+                    return self.finished(&block_text(content));
+                }
                 if line["origin"]["kind"]
                     .as_str()
                     .is_some_and(|kind| kind != "human")
@@ -94,6 +100,13 @@ impl Parser {
                     return;
                 };
                 let input = &block["input"];
+                if input["run_in_background"] == true {
+                    let label = ["description", "command", "prompt"]
+                        .iter()
+                        .find_map(|key| input[*key].as_str())
+                        .unwrap_or(name);
+                    self.background.push((call.to_string(), label.lines().next().unwrap_or_default().to_string()));
+                }
                 out.push(match name {
                     "AskUserQuestion" => {
                         let entry = question(&ids.tag, at, input);
@@ -109,6 +122,21 @@ impl Parser {
                 });
             }
             _ => {}
+        }
+    }
+
+    /// A `<task-notification>` names the call it reports on; any end status ends it.
+    fn finished(&mut self, text: &str) {
+        let tag = |name: &str| {
+            let start = text.find(&format!("<{name}>"))? + name.len() + 2;
+            let end = text[start..].find(&format!("</{name}>"))? + start;
+            Some(text[start..end].trim().to_string())
+        };
+        let (Some(call), Some(status)) = (tag("tool-use-id"), tag("status")) else {
+            return;
+        };
+        if status != "running" {
+            self.background.retain(|(started, _)| *started != call);
         }
     }
 

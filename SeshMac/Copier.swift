@@ -37,11 +37,18 @@ final class Copier {
 
     private func copyAll() async {
         guard let vault, vault.online else { return }
-        for session in vault.all(.session) {
+        await copy(vault.all(.session))
+    }
+
+    /// Brings these sessions' copies up to date now, as closing a Task does before it stops them.
+    func copy(_ sessions: [Record]) async {
+        guard let vault else { return }
+        for session in sessions {
             guard let pane = session.body.pane else { continue }
             let machine = TaskActions.machine(session.body.machine)
             let ran = await machine.run("herdr pane get \(quote(pane))")
-            if let path = (try? JSONDecoder().decode(Pane.self, from: Data(ran.out.utf8)))?.result.pane.agent_session?.path,
+            let reported = (try? JSONDecoder().decode(Pane.self, from: Data(ran.out.utf8)))?.result.pane.agent_session?.path
+            if let path = await reported.asyncOr({ await self.found(pane, on: machine) }),
                !(session.body.transcripts ?? []).contains(path) {
                 var record = vault.records[session.id] ?? session
                 record.body.transcripts = (record.body.transcripts ?? []) + [path]
@@ -51,6 +58,15 @@ final class Copier {
                 await copy(path, of: session, from: machine, into: vault)
             }
         }
+    }
+
+    /// herdr names Claude's session only by id; the helper finds its Transcript from that, and
+    /// its first line says where.
+    private func found(_ pane: String, on machine: Machine) async -> String? {
+        struct Hello: Decodable { let transcript: String? }
+        let ran = await machine.run("\(Helper.path) follow \(quote(pane)) --last 0 | head -n 1")
+        let path = (try? JSONDecoder().decode(Hello.self, from: Data(ran.out.utf8)))?.transcript
+        return path?.isEmpty == false ? path : nil
     }
 
     private func copy(_ path: String, of session: Record, from machine: Machine, into vault: Vault) async {
@@ -69,5 +85,12 @@ final class Copier {
         guard (await vault.machine.put(bytes, to: staged)).ok else { return }
         _ = await vault.machine.run(
             "\(helper) append \(vault.folder) \(session.id) \(quote(name)) --offset \(size) \(staged); rm -f \(staged)")
+    }
+}
+
+private extension Optional where Wrapped == String {
+    func asyncOr(_ fallback: () async -> String?) async -> String? {
+        if let self { return self }
+        return await fallback()
     }
 }
