@@ -477,6 +477,36 @@ impl Transcript {
         }
     }
 
+    /// Background work over the whole Transcript, so work started long ago still counts;
+    /// only the lines that start or end some are parsed, so a long Transcript stays quick.
+    pub fn scan_background(&mut self) -> std::io::Result<()> {
+        if !matches!(self.parser, Parser::Claude(_)) {
+            return Ok(());
+        }
+        let Some(file) = self.open()? else {
+            return Ok(());
+        };
+        let mut scan = claude::Parser::new(false);
+        let mut ids = Ids { tag: String::new(), prefix: String::new(), next: 0 };
+        let mut out = Vec::new();
+        let mut reader = std::io::BufReader::with_capacity(1 << 20, file);
+        let mut line = Vec::new();
+        while reader.read_until(b'\n', &mut line)? > 0 {
+            let text = std::str::from_utf8(&line).unwrap_or_default();
+            if text.contains("run_in_background") || text.contains("task-notification") {
+                if let Ok(value) = serde_json::from_str::<Value>(text) {
+                    scan.line(&value, &mut ids, &mut out);
+                    out.clear();
+                }
+            }
+            line.clear();
+        }
+        if let Parser::Claude(parser) = &mut self.parser {
+            parser.background = scan.background;
+        }
+        Ok(())
+    }
+
     pub fn find(&self, id: &str) -> Option<&Entry> {
         match &self.parser {
             Parser::Pi(parser) => parser.find(id),

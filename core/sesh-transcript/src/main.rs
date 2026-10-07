@@ -22,9 +22,6 @@ const AGENT_GONE_AFTER: Duration = Duration::from_secs(2);
 /// of the socket has gone; polling the socket does not.
 const PING: Duration = Duration::from_secs(30);
 const DEFAULT_LAST: usize = 50;
-/// Entries read back to find background work still running; one started earlier than this
-/// is missed.
-const BACKGROUND_WINDOW: usize = 400;
 const USAGE: &str = "usage: sesh-transcript --version | follow --protocol | follow <pane> [--since CURSOR] [--last N]
        | history <pane> --before ID [--last N] | entry <pane> ID
        | answer <pane> --json ANSWERS | permit <pane> allow|deny | background <pane>...
@@ -344,8 +341,9 @@ impl Follower {
             {
                 Some((offset, cursor_path)) if cursor_path == path => {
                     transcript
-                        .read_tail(Some(offset), |entries| entries.len() >= self.last.max(BACKGROUND_WINDOW))
+                        .read_tail(Some(offset), |entries| entries.len() >= self.last)
                         .map_err(|err| err.to_string())?;
+                    transcript.scan_background().map_err(|err| err.to_string())?;
                     self.transcript = Some(transcript);
                     self.read_new()?;
                 }
@@ -412,12 +410,12 @@ impl Follower {
         (current.as_deref() != Some(path.as_str())).then_some(path)
     }
 
-    /// Takes over `transcript` and sends its last entries; it reads as far back as the
-    /// `background` command does, so both see the same work still running.
+    /// Takes over `transcript` and sends its last entries.
     fn show(&mut self, mut transcript: Transcript) -> Result<(), String> {
         transcript
-            .read_tail(None, |entries| entries.len() >= self.last.max(BACKGROUND_WINDOW))
+            .read_tail(None, |entries| entries.len() >= self.last)
             .map_err(|err| err.to_string())?;
+        transcript.scan_background().map_err(|err| err.to_string())?;
         let start = transcript.entries.len().saturating_sub(self.last);
         let lines: Vec<Value> = transcript.entries[start..].iter().map(entry_line).collect();
         self.transcript = Some(transcript);
@@ -657,8 +655,9 @@ fn background(panes: &[String]) -> Exit {
         let (tasks, last, turn_over): (Vec<Value>, Option<String>, bool) = match pane_transcript(&Target::Pane(pane)) {
             Ok((mut transcript, _, _)) => {
                 transcript
-                    .read_tail(None, |entries| entries.len() >= BACKGROUND_WINDOW)
+                    .read_tail(None, |entries| entries.len() >= DEFAULT_LAST)
                     .map_err(|err| err.to_string())?;
+                transcript.scan_background().map_err(|err| err.to_string())?;
                 let tasks = transcript
                     .background()
                     .iter()
