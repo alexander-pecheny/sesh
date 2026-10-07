@@ -493,8 +493,12 @@ private struct RowView: View {
         case .item(.entry(let entry)):
             switch entry.kind {
             case "user": UserBubble(entry: entry, conversation: conversation)
-            case "text": AgentText(text: conversation.openPath == nil && conversation.repo == nil
-                ? entry.text ?? entry.summary : PathLinks.link(entry.text ?? entry.summary, repo: conversation.repo))
+            case "text":
+                VStack(alignment: .leading, spacing: Metric.tiny) {
+                    AgentText(text: conversation.openPath == nil && conversation.repo == nil
+                        ? entry.text ?? entry.summary : PathLinks.link(entry.text ?? entry.summary, repo: conversation.repo))
+                    Stamp(at: entry.at)
+                }
                 .readable(wide: Cmark.hasTable(entry.text ?? ""))
             case "thinking": Thinking(entry: entry)
             case "tool": ToolCard(entry: entry, result: conversation.results[entry.id], conversation: conversation)
@@ -530,12 +534,36 @@ private struct UserBubble: View {
                     .background(flavour(.surface0), in: .rect(cornerRadius: 18))
                     .textSelection(.enabled)
             }
+            Stamp(at: entry.at)
         }
         .readable(alignment: .trailing)
         .padding(.leading, 48)
     }
 
     private func message(_ text: String) -> some View { UserText(text: text) }
+}
+
+/// When a message was written: the time today, the date and time before.
+private struct Stamp: View {
+    @Environment(\.colorScheme) private var colorScheme
+    let at: String?
+
+    private static let parser: ISO8601DateFormatter = {
+        let parser = ISO8601DateFormatter()
+        parser.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+        return parser
+    }()
+
+    var body: some View {
+        if let at, let date = Self.parser.date(from: at) ?? ISO8601DateFormatter().date(from: at) {
+            Text(Calendar.current.isDateInToday(date)
+                 ? date.formatted(date: .omitted, time: .shortened)
+                 : date.formatted(.dateTime.day().month(.abbreviated).hour().minute()))
+                .font(.ui(Metric.small).monospacedDigit())
+                .foregroundStyle((colorScheme == .dark ? Catppuccin.Flavour.mocha : .latte)(.overlay0))
+                .help(date.formatted(date: .complete, time: .standard))
+        }
+    }
 }
 
 /// The user's Markdown too: the whole of it on the Mac, its inline marks on the phone.

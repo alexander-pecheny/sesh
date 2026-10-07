@@ -13,6 +13,8 @@ final class Conversation: ObservableObject {
         let id: String
         let kind: String
         let summary: String
+        /// When the Agent wrote it, as ISO 8601.
+        var at: String?
         var text: String?
         var images: [String]?
         var seconds: Double?

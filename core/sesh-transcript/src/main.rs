@@ -572,20 +572,23 @@ fn background(panes: &[String]) -> Exit {
     }
     let mut out = std::io::stdout().lock();
     for pane in panes {
-        let tasks: Vec<Value> = match pane_transcript(&Target::Pane(pane)) {
+        let (tasks, last): (Vec<Value>, Option<String>) = match pane_transcript(&Target::Pane(pane)) {
             Ok((mut transcript, _, _)) => {
                 transcript
                     .read_tail(None, |entries| entries.len() >= BACKGROUND_WINDOW)
                     .map_err(|err| err.to_string())?;
-                transcript
+                let tasks = transcript
                     .background()
                     .iter()
                     .map(|work| json!({"call": work.call, "label": work.label, "agent": work.agent}))
-                    .collect()
+                    .collect();
+                // The last message's time, which orders Tasks by their latest change.
+                (tasks, transcript.entries.last().map(|entry| entry.at.clone()))
             }
-            Err(_) => Vec::new(),
+            Err(_) => (Vec::new(), None),
         };
-        writeln!(out, "{}", json!({"pane": pane, "tasks": tasks})).map_err(|err| err.to_string())?;
+        writeln!(out, "{}", json!({"pane": pane, "tasks": tasks, "last": last}))
+            .map_err(|err| err.to_string())?;
     }
     Ok(0)
 }

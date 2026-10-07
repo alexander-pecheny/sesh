@@ -157,7 +157,6 @@ final class Library: ObservableObject {
             for agent in list.result.agents {
                 let key = "\(machine.alias ?? ""):\(agent.pane_id)"
                 let state = Live(status: agent.agent_status, done: agent.completion_seq ?? 0)
-                if state.status == "working" || (live[key].map { state.done > $0.done } ?? false) { active[key] = Date().timeIntervalSince1970 * 1000 }
                 states[key] = state
             }
             found[machine.id] = list.result.agents.compactMap { agent in
@@ -195,9 +194,9 @@ final class Library: ObservableObject {
     /// Idle Claude sessions may still have commands or subagents running; one helper call per
     /// machine asks for all of them.
     private func refreshBackground() async {
-        let sessions = vaults.flatMap { $0.all(.session) }.filter {
-            $0.body.agent == Agent.claude.rawValue && $0.body.pane != nil && live[key($0)].map { $0.status != "working" } == true
-        }
+        // Every live adopted session, for when its Transcript last changed; only Claude's can
+        // have background work.
+        let sessions = vaults.flatMap { $0.all(.session) }.filter { $0.body.pane != nil && live[key($0)] != nil }
         var found: [String: Int] = [:]
         for (alias, group) in Dictionary(grouping: sessions, by: { $0.body.machine ?? "" }) {
             let machine = TaskActions.machine(alias.isEmpty ? nil : alias)
@@ -207,33 +206,43 @@ final class Library: ObservableObject {
                 struct Work: Decodable { let call: String }
                 let pane: String
                 let tasks: [Work]
+                let last: String?
             }
             for text in ran.out.split(separator: "\n") {
                 guard let line = try? JSONDecoder().decode(Line.self, from: Data(text.utf8)) else { continue }
-                found["\(alias):\(line.pane)"] = line.tasks.count
+                let key = "\(alias):\(line.pane)"
+                if live[key]?.status != "working" { found[key] = line.tasks.count }
+                if let last = line.last.flatMap(Self.time) { active[key] = last }
             }
         }
         busy = found
     }
-    /// When each pane's Agent last worked or finished a turn, in milliseconds since 1970.
+    /// When each pane's Transcript last had a message, in milliseconds since 1970.
     @Published private(set) var active: [String: Double] = UserDefaults.standard.dictionary(forKey: "active") as? [String: Double] ?? [:] {
         didSet { UserDefaults.standard.set(active, forKey: "active") }
     }
 
-    /// The latest moment anything happened in a Task, or in any Task inside a folder: an Entry,
-    /// a Document edited, a session started, an Agent working or finishing.
+    /// When a Task last changed: the last message in any of its Agent sessions' Transcripts;
+    /// a Task without one goes by its Entries and Documents. A folder goes by its newest Task.
     func changed(_ record: Record, in vault: Vault) -> Double {
         if record.kind == .folder {
             return Tree.children(of: record.id, in: vault).map { changed($0, in: vault) }.max() ?? 0
         }
-        let own = Double(record.body.edited ?? 0)
-        let parts = vault.records.values.filter { !$0.deleted && $0.body.task == record.id }.map { part -> Double in
-            switch part.kind {
-            case .session: max((part.body.position ?? 0) * 1000, active[key(part)] ?? 0)
-            default: Double(max(part.body.at ?? 0, part.body.edited ?? 0))
-            }
-        }
-        return max(own, parts.max() ?? 0)
+        let parts = vault.records.values.filter { !$0.deleted && $0.body.task == record.id }
+        let messages = parts.filter { $0.kind == .session }.compactMap { active[key($0)] }
+        if let last = messages.max() { return last }
+        let notes = parts.map { Double(max($0.body.at ?? 0, $0.body.edited ?? 0)) }
+        return max(Double(record.body.edited ?? 0), notes.max() ?? 0)
+    }
+
+    private static let iso: ISO8601DateFormatter = {
+        let parser = ISO8601DateFormatter()
+        parser.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+        return parser
+    }()
+
+    private static func time(_ text: String) -> Double? {
+        (iso.date(from: text) ?? ISO8601DateFormatter().date(from: text)).map { $0.timeIntervalSince1970 * 1000 }
     }
     /// The finished-turn count the user has seen, by `machine:pane`, so a turn finished while
     /// they looked elsewhere, or while the app was closed, still shows.
