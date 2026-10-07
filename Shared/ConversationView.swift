@@ -20,6 +20,10 @@ struct ConversationView: View {
 
     private var flavour: Catppuccin.Flavour { colorScheme == .dark ? .mocha : .latte }
     private var working: Bool { conversation.state == "working" }
+    /// Grows whenever something lands at the bottom.
+    private var changes: Int {
+        conversation.items.count + conversation.permissions.count + conversation.queued.count + (working ? 1 : 0)
+    }
     private static let end = "end"
     private static let nearTop = 200.0
 
@@ -50,6 +54,7 @@ struct ConversationView: View {
                             }
                     }
                     ForEach(conversation.permissions) { PermissionCard(permission: $0, conversation: conversation) }
+                    ForEach(conversation.queued) { QueuedBubble(message: $0, conversation: conversation, edit: takeBack) }
                     if working { WorkingRow() }
                     Color.clear.frame(height: 1).id(Self.end)
                 }
@@ -80,7 +85,7 @@ struct ConversationView: View {
                 atBottom = false
                 withAnimation { reader.scrollTo(row.id, anchor: .top) }
             }
-            .onChange(of: conversation.items.count + conversation.permissions.count + (working ? 1 : 0)) {
+            .onChange(of: changes) {
                 if atBottom { reader.scrollTo(Self.end, anchor: .bottom) }
                 // A Conversation shorter than the screen never scrolls to the top to ask.
                 if nearTop { Task { await loadEarlier() } }
@@ -176,13 +181,13 @@ struct ConversationView: View {
                 .background(flavour(.base), in: .rect(cornerRadius: Metric.control / 2))
                 .foregroundStyle(flavour(.text))
             Button { Task { await sendOrStop() } } label: {
-                Image.lucide(working ? "square" : "arrow-up", size: 18)
+                Image.lucide(working && !canSend ? "square" : "arrow-up", size: 18)
                     .foregroundStyle(flavour(.base))
                     .frame(width: Metric.control, height: Metric.control)
-                    .background(flavour(working ? .red : .mauve).opacity(canSend || working ? 1 : 0.4), in: .circle)
+                    .background(flavour(working && !canSend ? .red : .mauve).opacity(canSend || working ? 1 : 0.4), in: .circle)
             }
             .disabled(!canSend && !working)
-            .accessibilityLabel(working ? "Stop" : "Send")
+            .accessibilityLabel(working && !canSend ? "Stop" : "Send")
         }
         .padding(.horizontal, Metric.pad)
         .padding(.vertical, Metric.gap)
@@ -206,10 +211,16 @@ struct ConversationView: View {
         }
     }
 
+    /// A queued message goes back into the box, ahead of anything typed since.
+    private func takeBack(_ text: String) {
+        draft = draft.isEmpty ? text : text + "\n\n" + draft
+    }
+
     private var canSend: Bool { !sending && !draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
 
+    /// While the Agent works, a written message queues and an empty box stops the Agent.
     private func sendOrStop() async {
-        guard !working else { return await conversation.stop() }
+        guard !working || canSend else { return await conversation.stop() }
         await send()
     }
 
@@ -323,7 +334,41 @@ private struct UserBubble: View {
                     .textSelection(.enabled)
             }
         }
-        .frame(maxWidth: .infinity, alignment: .trailing)
+        .readable(alignment: .trailing)
+        .padding(.leading, 48)
+    }
+}
+
+/// A message written while the Agent works: it waits, and can be taken back or pushed in.
+private struct QueuedBubble: View {
+    @Environment(\.colorScheme) private var colorScheme
+    let message: Conversation.Queued
+    @ObservedObject var conversation: Conversation
+    let edit: (String) -> Void
+
+    private var flavour: Catppuccin.Flavour { colorScheme == .dark ? .mocha : .latte }
+
+    var body: some View {
+        VStack(alignment: .trailing, spacing: 6) {
+            Text(message.text)
+                .font(.ui(15))
+                .foregroundStyle(flavour(.subtext0))
+                .padding(.horizontal, 14)
+                .padding(.vertical, 9)
+                .overlay(RoundedRectangle(cornerRadius: 18).strokeBorder(flavour(.surface1), style: StrokeStyle(lineWidth: 1, dash: [4, 3])))
+            HStack(spacing: Metric.pad) {
+                Text("Sent when \(conversation.agent?.title ?? "the Agent") finishes").foregroundStyle(flavour(.overlay1))
+                Button("Edit") { edit(conversation.unqueue(message)) }
+                Button("Interrupt") { Task { await conversation.interrupt() } }
+                if conversation.agent == .claude {
+                    Button("Background the tool") { Task { await conversation.background() } }
+                        .help("Claude's running command keeps going in the background and Claude reads this now")
+                }
+            }
+            .font(.ui(Metric.caption))
+            .tint(flavour(.mauve))
+        }
+        .readable(alignment: .trailing)
         .padding(.leading, 48)
     }
 }
@@ -343,6 +388,9 @@ private struct Composer: View {
         NavigationStack {
             PlainText(field: field, text: $text)
                 .padding(Metric.gap)
+                #if os(macOS)
+                .frame(minWidth: 640, idealWidth: 760, minHeight: 420, idealHeight: 560)
+                #endif
                 .background(flavour(.base))
                 .navigationTitle("Message")
                 .inlineTitle()

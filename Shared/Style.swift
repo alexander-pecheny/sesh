@@ -12,7 +12,7 @@ extension View {
 
     func fitWidth() -> some View { containerRelativeFrame(.horizontal) }
 
-    func readable() -> some View { self }
+    func readable(alignment: Alignment = .leading) -> some View { frame(maxWidth: .infinity, alignment: alignment) }
 
     /// The whole screen on the phone; a sheet on the Mac, where nothing covers the window.
     func cover<Content: View>(isPresented: Binding<Bool>, @ViewBuilder content: @escaping () -> Content) -> some View {
@@ -33,8 +33,8 @@ extension View {
     func fitWidth() -> some View { frame(maxWidth: .infinity) }
 
     /// Prose no wider than 66 characters, which is hard to read beyond that on a wide window.
-    func readable() -> some View {
-        frame(maxWidth: Metric.measure, alignment: .leading).frame(maxWidth: .infinity, alignment: .leading)
+    func readable(alignment: Alignment = .leading) -> some View {
+        frame(maxWidth: Metric.measure, alignment: alignment).frame(maxWidth: .infinity, alignment: alignment)
     }
 
     func cover<Content: View>(isPresented: Binding<Bool>, @ViewBuilder content: @escaping () -> Content) -> some View {

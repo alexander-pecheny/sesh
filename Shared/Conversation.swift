@@ -162,7 +162,9 @@ final class Conversation: ObservableObject {
             earlier = (line.protocol ?? 0) >= Self.paging
         case "entry":
             if let entry = try? JSONDecoder().decode(Entry.self, from: data) { add(entry) }
-        case "state": state = line.state ?? state
+        case "state":
+            state = line.state ?? state
+            if state != "working", !queued.isEmpty { Task { await sendQueued() } }
         case "switch":
             items.append(.switched(id: items.count, reason: line.reason ?? "other"))
             todo = nil
@@ -238,7 +240,52 @@ final class Conversation: ObservableObject {
 
     func send(_ text: String) async -> String? {
         guard let pane else { return "This Agent session is not running, so it cannot take a message." }
+        guard state != "working" else {
+            queued.append(Queued(text: text))
+            return nil
+        }
         return await run("herdr agent prompt \(quote(pane)) \(quote(text))")
+    }
+
+    /// A message written while the Agent works, held here until it finishes or the user
+    /// decides, so it can still be taken back.
+    struct Queued: Identifiable, Equatable {
+        let id = UUID()
+        let text: String
+    }
+
+    @Published private(set) var queued: [Queued] = []
+    private var sendingQueued = false
+
+    private func sendQueued() async {
+        guard !sendingQueued, let pane, !queued.isEmpty else { return }
+        sendingQueued = true
+        defer { sendingQueued = false }
+        let text = queued.map(\.text).joined(separator: "\n\n")
+        queued = []
+        if let failed = await run("herdr agent prompt \(quote(pane)) \(quote(text))") {
+            problem = failed
+            queued.insert(Queued(text: text), at: 0)
+        }
+    }
+
+    /// Takes a queued message back, for the input box.
+    func unqueue(_ message: Queued) -> String {
+        queued.removeAll { $0 == message }
+        return message.text
+    }
+
+    /// Stops the Agent's turn; the queue goes as soon as it has stopped.
+    func interrupt() async { await stop() }
+
+    /// Moves Claude's running command to the background and hands it the queue at once,
+    /// which Claude reads at its next step.
+    func background() async {
+        guard let pane else { return }
+        _ = await run("herdr agent send-keys \(quote(pane)) ctrl+b")
+        let text = queued.map(\.text).joined(separator: "\n\n")
+        queued = []
+        if let failed = await run("herdr agent prompt \(quote(pane)) \(quote(text))") { problem = failed }
     }
 
     func stop() async {
