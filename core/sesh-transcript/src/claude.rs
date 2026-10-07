@@ -56,6 +56,11 @@ impl Parser {
         let at = &line["timestamp"];
         let content = &line["message"]["content"];
         match line["type"].as_str() {
+            // A notice that arrives mid-turn is recorded as queued, never as a user message.
+            Some("queue-operation") => self.finished(line["content"].as_str().unwrap_or_default()),
+            Some("attachment") if line["attachment"]["type"] == "queued_command" => {
+                self.finished(line["attachment"]["prompt"].as_str().unwrap_or_default());
+            }
             Some("user") => {
                 if line["origin"]["kind"] == "task-notification" {
                     return self.finished(&block_text(content));
@@ -263,7 +268,24 @@ fn typed_text(text: &str) -> Option<String> {
             None => command,
         });
     }
-    Some(text.to_string())
+    Some(unwrap_pastes(text))
+}
+
+/// Claude Code records a paste, which is how Sesh sends a message, between
+/// `<pasted_content id="…">` tags; the person typed only what is inside.
+pub(super) fn unwrap_pastes(text: &str) -> String {
+    let mut out = String::new();
+    let mut rest = text;
+    while let Some(start) = rest.find("<pasted_content") {
+        out.push_str(&rest[..start]);
+        let after = &rest[start..];
+        let Some(open) = after.find('>') else { break };
+        let close = after.find("</pasted_content").unwrap_or(after.len());
+        out.push_str(after[open + 1..close.max(open + 1)].trim_matches('\n'));
+        rest = after[close..].find('>').map_or("", |end| &after[close + end + 1..]);
+    }
+    out.push_str(rest);
+    out.trim().to_string()
 }
 
 /// Its id comes from the questions, so the copy made from the permission hook

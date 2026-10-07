@@ -171,8 +171,8 @@ final class Library: ObservableObject {
         unfiled = found
         live = states
         markSeen()
-        polls += 1
-        if polls % 3 == 1 { await refreshBackground() }
+        // Every poll: a mark that waits for a slower one shows a turn already over or begun.
+        await refreshBackground()
     }
 
     // MARK: Marks
@@ -191,7 +191,6 @@ final class Library: ObservableObject {
     @Published private(set) var live: [String: Live] = [:]
     /// How much each idle Claude pane left running in the background, by `machine:pane`.
     @Published private(set) var busy: [String: Int] = [:]
-    private var polls = 0
     /// Claude panes whose turn is over, so herdr's "working" there is only background work.
     private var turnOver: Set<String> = []
 

@@ -588,3 +588,26 @@ fn claude_turn_is_over_after_end_turn_until_the_user_speaks() {
     assert!(parse("claude", &[reply("tool_use"), reply("end_turn")]).turn_over());
     assert!(!parse("claude", &[reply("end_turn"), said]).turn_over());
 }
+
+#[test]
+fn a_pasted_message_reads_as_typed() {
+    let text = "<pasted_content id=\"f8e7\">\ncheck the recording\n\n1. no shell\n</pasted_content id=\"f8e7\">";
+    assert_eq!(super::claude::unwrap_pastes(text), "check the recording\n\n1. no shell");
+    assert_eq!(super::claude::unwrap_pastes("before <pasted_content id=\"a\">x</pasted_content id=\"a\"> after"), "before x after");
+}
+
+#[test]
+fn a_notice_queued_mid_turn_ends_background_work() {
+    let at = "2026-10-06T14:41:54Z";
+    let notice = "<task-notification> <task-id>b1</task-id> <tool-use-id>toolu_9</tool-use-id> <status>completed</status> </task-notification>";
+    for done in [
+        json!({"type":"queue-operation","operation":"enqueue","timestamp":at,"content":notice}),
+        json!({"type":"attachment","timestamp":at,"attachment":{"type":"queued_command","prompt":notice}}),
+    ] {
+        let lines = [
+            json!({"type":"assistant","timestamp":at,"message":{"content":[{"type":"tool_use","id":"toolu_9","name":"Bash","input":{"command":"sleep 9","description":"Wait","run_in_background":true}}]}}),
+            done,
+        ];
+        assert!(parse("claude", &lines).background().is_empty());
+    }
+}
