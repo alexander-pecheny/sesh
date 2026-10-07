@@ -76,27 +76,25 @@ struct ConversationView: View {
             if top { Task { await loadEarlier() } }
         }
         .onScrollGeometryChange(for: Edge.self) { geometry in
-            Edge(height: geometry.contentSize.height, bottom: geometry.visibleRect.maxY)
+            Edge(height: geometry.contentSize.height, top: geometry.visibleRect.minY, bottom: geometry.visibleRect.maxY)
         } action: { old, new in
-            // The reader left the end when the view moved up by more than the content shrank:
-            // rows above settling move both alike, and new rows below move neither.
-            let moved = new.bottom - old.bottom, shrank = new.height - old.height
-            if moved < -1, moved < shrank - 1, pinned.map({ $0.until < .now }) ?? true {
+            // The reader left the end when the view, keeping its size, rose by more than the
+            // content shrank: rows above settling move both alike.
+            let rose = new.top - old.top, shrank = new.height - old.height
+            let resized = abs((new.bottom - new.top) - (old.bottom - old.top)) > 1
+            if new.bottom >= new.height - Metric.control {
+                atBottom = true
+            } else if !resized, rose < -1, rose < shrank - 1, pinned.map({ $0.until < .now }) ?? true {
                 atBottom = false
                 return
             }
             // New content, or text that has only now measured its height, moves the end away
             // without the reader moving: follow it if the end was in view.
-            guard new.height == old.height else {
-                if let pinned, pinned.until > .now {
-                    position.scrollTo(id: pinned.row, anchor: .top)
-                } else if atBottom {
-                    position.scrollTo(edge: .bottom)
-                }
-                return
-            }
-            if new.bottom >= new.height - Metric.control {
-                atBottom = true
+            guard new.height != old.height else { return }
+            if let pinned, pinned.until > .now {
+                position.scrollTo(id: pinned.row, anchor: .top)
+            } else if atBottom {
+                position.scrollTo(edge: .bottom)
             }
         }
         .onChange(of: conversation.focus) {
@@ -436,6 +434,7 @@ private struct BackgroundLine: View {
 /// How tall the Conversation is and where the visible part ends.
 private struct Edge: Equatable {
     let height: CGFloat
+    let top: CGFloat
     let bottom: CGFloat
 }
 
