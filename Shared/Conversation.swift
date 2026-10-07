@@ -140,7 +140,16 @@ final class Conversation: ObservableObject {
     var draft = "" { didSet { if draft != oldValue { saveDraft?(draft) } } }
     var saveDraft: ((String) -> Void)?
     /// The entry a link or a search result asked to see, scrolled to and marked.
-    @Published var focus: String?
+    /// The item a link pointed at, highlighted until it fades three seconds later.
+    @Published var focus: String? {
+        didSet {
+            guard let focus, focus != oldValue else { return }
+            Task { @MainActor [weak self] in
+                try? await Task.sleep(for: .seconds(3))
+                if self?.focus == focus { self?.focus = nil }
+            }
+        }
+    }
     /// Opens the Transcript of the subagent a tool call started, given the call's id.
     var openSubagent: ((_ call: String, _ title: String) -> Void)?
     /// The Transcript the helper is reading now.

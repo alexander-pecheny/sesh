@@ -104,19 +104,8 @@ struct ConversationView: View {
                 position.scrollTo(edge: .bottom)
             }
         }
-        .onChange(of: conversation.focus) {
-            guard let focus = conversation.focus,
-                  let row = Row.rows(conversation.items).first(where: { $0.contains(focus) }) else { return }
-            atBottom = false
-            // Text above it is still measuring its height; keep the row in place meanwhile.
-            pinned = (row.id, .now + 2)
-            position.scrollTo(id: row.id, anchor: .top)
-            // The highlight only shows where the link pointed; it fades once the eye has found it.
-            Task {
-                try? await Task.sleep(for: .seconds(3))
-                if conversation.focus == focus { withAnimation(.easeOut(duration: 1)) { conversation.focus = nil } }
-            }
-        }
+        .onChange(of: conversation.focus) { showFocus() }
+        .animation(.easeOut(duration: 1), value: conversation.focus)
         .overlay(alignment: .top) {
             if let notice {
                 Text(notice)
@@ -296,7 +285,18 @@ struct ConversationView: View {
         }
     }
 
+    /// Scrolls to the item a link pointed at, set before this view existed or while it shows.
+    private func showFocus() {
+        guard let focus = conversation.focus,
+              let row = Row.rows(conversation.items).first(where: { $0.contains(focus) }) else { return }
+        atBottom = false
+        // Text above it is still measuring its height; keep the row in place meanwhile.
+        pinned = (row.id, .now + 2)
+        position.scrollTo(id: row.id, anchor: .top)
+    }
+
     private func appeared() {
+        if conversation.focus != nil { DispatchQueue.main.async { showFocus() } }
         if draft.isEmpty { draft = conversation.draft }
         if fresh { DispatchQueue.main.async { field.focus() } }
         #if os(macOS)
