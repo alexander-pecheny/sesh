@@ -94,6 +94,19 @@ enum Herdr {
         return opened(ran).map { Opened(workspace: workspace, pane: $0.pane) }
     }
 
+    /// The id `herdr terminal attach` takes for a pane, or nil when the pane is gone.
+    static func terminal(of pane: String, on runner: Runner) async -> String? {
+        struct Pane: Decodable {
+            struct Result: Decodable {
+                struct Info: Decodable { let terminal_id: String }
+                let pane: Info
+            }
+            let result: Result
+        }
+        let ran = await runner.run("herdr pane get \(quote(pane))")
+        return (try? JSONDecoder().decode(Pane.self, from: Data(ran.out.utf8)))?.result.pane.terminal_id
+    }
+
     static func rename(_ workspace: String, to label: String, on runner: Runner) async {
         _ = await runner.run("herdr workspace rename \(quote(workspace)) \(quote(label))")
     }

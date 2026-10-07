@@ -172,52 +172,6 @@ private struct TaskRow: View {
     }
 }
 
-/// Folders and Tasks: which sit where, and moving them between folders.
-enum Tree {
-    @MainActor
-    static func children(of parent: String?, in vault: Vault) -> [Record] {
-        (vault.all(.folder) + vault.all(.task).filter { $0.body.archived != true })
-            .filter { $0.body.parent == parent }
-            .sorted { ($0.body.position ?? 0, $0.id) < ($1.body.position ?? 0, $1.id) }
-    }
-
-    @MainActor
-    static func next(in parent: String?, of vault: Vault) -> Double {
-        (children(of: parent, in: vault).compactMap(\.body.position).max() ?? 0) + 1
-    }
-
-    /// Drops records into a folder, refusing to put a folder inside itself.
-    @MainActor
-    static func move(_ ids: [String], into parent: String?, in vault: Vault) -> Bool {
-        var moved = false
-        for id in ids {
-            guard var record = vault.records[id], record.kind == .folder || record.kind == .task,
-                  record.body.parent != parent, !contains(id, parent, in: vault) else { continue }
-            record.body.parent = parent
-            record.body.position = next(in: parent, of: vault)
-            vault.write(record)
-            moved = true
-        }
-        return moved
-    }
-
-    @MainActor
-    private static func contains(_ folder: String, _ target: String?, in vault: Vault) -> Bool {
-        var current = target
-        while let id = current {
-            if id == folder { return true }
-            current = vault.records[id]?.body.parent
-        }
-        return false
-    }
-
-    @MainActor
-    static func deleteFolder(_ folder: Record, in vault: Vault) {
-        guard children(of: folder.id, in: vault).isEmpty else { return }
-        vault.delete(folder)
-    }
-}
-
 private struct NameSheet: View {
     @Environment(\.dismiss) private var dismiss
     @EnvironmentObject private var library: Library
@@ -357,47 +311,6 @@ private struct UnfiledRow: View {
             Button("Stop and Close", role: .destructive) { Task { await library.stop(item) } }
         } message: {
             Text("The Agent is interrupted and its herdr pane closed. Nothing of it is kept in a Vault, as it was never adopted.")
-        }
-    }
-}
-
-/// A Task's Agents at a glance, as one dot: hollow when idle and seen, yellow while working,
-/// blue while idle with background work running, green for a finished turn not seen yet,
-/// orange when an Agent waits on the user.
-struct MarkView: View {
-    let mark: Library.Mark?
-
-    var body: some View {
-        if let mark {
-            Group {
-                if mark == .seen {
-                    Circle().strokeBorder(.secondary, lineWidth: 1)
-                } else {
-                    Circle().fill(colour(mark))
-                }
-            }
-            .frame(width: 8, height: 8)
-            .help(help(mark))
-        }
-    }
-
-    private func colour(_ mark: Library.Mark) -> Color {
-        switch mark {
-        case .working: .yellow
-        case .background: .blue
-        case .finished: .green
-        case .waiting: .orange
-        case .seen: .clear
-        }
-    }
-
-    private func help(_ mark: Library.Mark) -> String {
-        switch mark {
-        case .working: "An Agent is working"
-        case .background: "Idle, with work still running in the background"
-        case .finished: "An Agent finished; not seen yet"
-        case .waiting: "An Agent is waiting for you"
-        case .seen: "Idle"
         }
     }
 }

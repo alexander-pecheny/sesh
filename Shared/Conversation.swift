@@ -362,7 +362,7 @@ final class Conversation: ObservableObject {
     #if os(iOS)
     func link() async -> URL? {
         guard let pane else { return nil }
-        return await (runner as? Projects)?.link(for: pane)
+        return await (runner as? Machine)?.link?.link(for: pane)
     }
 
     /// What a fixture's images look like, since there is no Host to fetch them from.

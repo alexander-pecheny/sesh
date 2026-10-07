@@ -47,9 +47,12 @@ struct Record: Codable, Identifiable, Equatable {
 /// whenever it is reachable (ADR 0008).
 @MainActor
 final class Vault: ObservableObject, Identifiable {
+    /// The Vault's name on its Host, and the Host: an ssh alias, nil for the Mac. The phone
+    /// also keeps which of its Hosts it reaches that alias by.
     struct Place: Codable, Hashable {
         let name: String
         let alias: String?
+        var host: UUID?
     }
 
     private struct Change: Codable {
@@ -94,6 +97,9 @@ final class Vault: ObservableObject, Identifiable {
 
     init(_ place: Place) {
         self.place = place
+        #if os(iOS)
+        if let alias = place.alias, let host = place.host { Machine.bind(alias, to: host) }
+        #endif
         machine = .named(place.alias)
         load()
     }

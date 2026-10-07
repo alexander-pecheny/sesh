@@ -2,91 +2,20 @@ import CryptoKit
 import PhotosUI
 import SwiftUI
 
-/// A Projects Tab: one Link to the Host, on which it lists folders and drives herdr to run
-/// Agent sessions. Core callbacks arrive on tokio threads and hop to main in `LinkBridge`.
+/// One Link to a Host, shared by everything the phone runs there: Vaults, herdr, the helper,
+/// Conversations. It has no terminal. Core callbacks arrive on tokio threads and hop to main
+/// in `LinkBridge`.
 @MainActor
-final class Projects: ObservableObject, Identifiable, Runner {
-    struct AgentSession: Identifiable, Equatable {
-        let id: String
-        let name: String
-        let agent: Agent
-        let pane: String
-        let state: String
-        let folder: String
-        let cwd: String
-        let branch: String?
-        let workspace: Workspace
-        let activity: UInt64
-    }
-
-    struct Workspace: Hashable, Identifiable {
-        let id: String
-        let label: String
-        let number: Int
-        var repo: String?
-        var linked = false
-    }
-
-    /// A row of herdr's sidebar: a lone Workspace, or a repo's main checkout heading its branch copies.
-    struct WorkspaceGroup: Identifiable {
-        let head: Workspace
-        let children: [Workspace]
-        var id: String { head.id }
-    }
-
-    /// herdr's own rule: a repo groups once it has two Workspaces and one is the main checkout.
-    static func groups(_ spaces: [Workspace]) -> [WorkspaceGroup] {
-        let members = Dictionary(grouping: spaces.filter { $0.repo != nil }, by: { $0.repo! })
-        var emitted = Set<String>()
-        return spaces.compactMap { space in
-            guard let repo = space.repo, let group = members[repo], group.count > 1,
-                  let head = group.first(where: { !$0.linked })
-            else { return WorkspaceGroup(head: space, children: []) }
-            guard emitted.insert(repo).inserted else { return nil }
-            return WorkspaceGroup(head: head, children: group.filter { $0 != head })
-        }
-    }
-
-    /// herdr's state_change_seq is one counter across all agents and moves only on a real change.
-    var homeGroups: [WorkspaceGroup] {
-        let latest = Dictionary(sessions.map { ($0.workspace.id, $0.activity) }, uniquingKeysWith: max)
-        func key(_ group: WorkspaceGroup) -> (Int, UInt64, String, Int) {
-            let seq = ([group.head] + group.children).compactMap { latest[$0.id] }.max()
-            return (seq == nil ? 1 : 0, UInt64.max - (seq ?? 0), group.head.label.lowercased(), group.head.number)
-        }
-        return Self.groups(workspaces).sorted { key($0) < key($1) }
-    }
-
-    struct Failure: Error {
-        let message: String
-    }
-
-    struct Listing {
-        let git: Bool
-        let folders: [String]
-    }
-
-    enum Place: Hashable {
-        case folder(String)
-        case conversation(pane: String, fresh: Bool)
-    }
-
+final class HostLink: ObservableObject, Identifiable, Runner {
     enum Stage: Equatable {
-        case connecting, authenticating, checking, ready, failed
+        case connecting, authenticating, ready, failed
     }
 
     @Published private(set) var stage = Stage.connecting
     @Published private(set) var message = ""
-    @Published var hostKeyQuestion: SeshSession.HostKeyQuestion?
-    @Published var authQuestion: SeshSession.AuthQuestion?
+    @Published var hostKeyQuestion: SeshSession.HostKeyQuestion? { didSet { Asking.shared.update() } }
+    @Published var authQuestion: SeshSession.AuthQuestion? { didSet { Asking.shared.update() } }
     @Published var savePassword = false
-    @Published private(set) var home = ""
-    @Published private(set) var missing: [String] = []
-    /// What `uname -sm` printed on a Host Sesh carries no transcript helper for.
-    @Published private(set) var unsupported: String?
-    @Published private(set) var sessions: [AgentSession] = []
-    @Published private(set) var workspaces: [Workspace] = []
-    @Published var route: [Place] = []
     @Published private(set) var uploading: SeshSession.Progress?
     @Published var uploadError: String?
 
@@ -102,31 +31,16 @@ final class Projects: ObservableObject, Identifiable, Runner {
     private var paused = false
     private var links: [String: URL] = [:]
     private var uploaded: (([String], String?) -> Void)?
+    private var preparing: Task<String?, Never>?
 
     init(host: Host, store: Store) {
         self.host = host
         self.store = store
         savePassword = Keychain.read("password.\(host.id)") != nil
-        connect()
     }
 
-    var name: String { host.title }
+    var title: String { host.title }
 
-    var status: String {
-        switch stage {
-        case .connecting: "connecting"
-        case .authenticating: "authenticating"
-        case .checking: "checking the Host"
-        case .ready: linked ? "Projects" : "reconnecting"
-        case .failed: message.isEmpty ? "disconnected" : message
-        }
-    }
-
-    var canBranch: Bool { !missing.contains("git") }
-
-    var needsHerdr: Bool { missing.contains("herdr") }
-
-    static let helper = Helper.path
     /// Also called on the way to the background: iOS would freeze the socket, and a command
     /// sent on it after waking would wait minutes for TCP to admit it is dead.
     func close() {
@@ -134,11 +48,9 @@ final class Projects: ObservableObject, Identifiable, Runner {
         drop("the connection was closed")
     }
 
-    /// Once the Host is checked, losing the connection costs nothing visible: the screens
-    /// stay put and the next command dials again before it runs.
+    /// Losing the connection costs nothing visible: the next command dials again before it runs.
     func resume() {
         paused = false
-        if handle == nil { connect() }
     }
 
     private func drop(_ problem: String) {
@@ -155,10 +67,8 @@ final class Projects: ObservableObject, Identifiable, Runner {
     }
 
     private func connect() {
-        if stage != .ready {
-            stage = .connecting
-            message = ""
-        }
+        stage = .connecting
+        message = ""
         bridge.owner = nil
         bridge = LinkBridge()
         bridge.owner = self
@@ -186,6 +96,22 @@ final class Projects: ObservableObject, Identifiable, Runner {
         await call(line: line) { sesh_session_stream($0, command) }
     }
 
+    /// Writes `data` to `path` on the Host over SFTP. Sesh's own files land in place; any other
+    /// file is staged and copied over the old one, which keeps its mode.
+    func put(_ data: Data, to path: String) async -> Ran {
+        let file = FileManager.default.temporaryDirectory.appending(path: UUID().uuidString)
+        do { try data.write(to: file) } catch { return Ran(status: -1, out: "", err: error.localizedDescription) }
+        defer { try? FileManager.default.removeItem(at: file) }
+        if path.hasPrefix("~/.sesh/") {
+            return await call { sesh_session_put($0, file.path, String(path.dropFirst(2))) }
+        }
+        let staged = ".sesh/inbox/\(UUID().uuidString.lowercased())"
+        let sent = await call { sesh_session_put($0, file.path, staged) }
+        guard sent.ok else { return sent }
+        let target = shellPath(path)
+        return await run("mkdir -p \"$(dirname \(target))\" && cat ~/\(staged) > \(target); s=$?; rm -f ~/\(staged); exit $s")
+    }
+
     private func call(line: ((String) -> Void)? = nil, start: (OpaquePointer) -> UInt32) async -> Ran {
         guard !paused else { return Ran(status: -1, out: "", err: "not connected") }
         if !linked {
@@ -208,27 +134,30 @@ final class Projects: ObservableObject, Identifiable, Runner {
         }
     }
 
-    private func check() async {
-        stage = .checking
+    /// Makes sure the Host has herdr running and the pinned helper, once per app run.
+    func prepare() async -> String? {
+        if let preparing { return await preparing.value }
+        let task = Task { await check() }
+        preparing = task
+        let problem = await task.value
+        if problem != nil { preparing = nil }
+        return problem
+    }
+
+    private func check() async -> String? {
         let ran = await run("""
-            for t in herdr claude codex pi git; do command -v "$t" >/dev/null 2>&1 || printf '%s ' "$t"; done
-            echo; printf '%s\\n' "$HOME"
+            command -v herdr >/dev/null 2>&1 || echo missing
             uname -sm
-            \(Self.helper) --version 2>/dev/null || echo
+            \(Helper.path) --version 2>/dev/null || echo
             if command -v herdr >/dev/null 2>&1 && ! herdr workspace list >/dev/null 2>&1; then
                 nohup herdr server </dev/null >/dev/null 2>&1 &
                 for i in 1 2 3 4 5; do sleep 1; herdr workspace list >/dev/null 2>&1 && break; done
             fi
             """)
-        guard stage == .checking else { return }
         let lines = ran.out.components(separatedBy: "\n")
-        guard ran.ok, lines.count > 3 else { return fail(ran.problem) }
-        missing = lines[0].split(separator: " ").map(String.init)
-        home = lines[1]
-        if !needsHerdr, let problem = await install(platform: lines[2], found: lines[3]) { return fail(problem) }
-        guard stage == .checking else { return }
-        stage = .ready
-        await refresh()
+        guard ran.ok, lines.count > 1 else { return ran.problem }
+        guard lines[0] != "missing" else { return "\(host.title) has no herdr, which Tasks run their Agents in." }
+        return await install(platform: lines[0], found: lines[1])
     }
 
     /// Puts the published helper for this Host's platform in place unless that version is there.
@@ -237,10 +166,7 @@ final class Projects: ObservableObject, Identifiable, Runner {
     private func install(platform: String, found: String) async -> String? {
         let name = Helper.name(platform)
         guard let published = Helper.published, let sha = published.sha256[name], let download = Helper.download(name)
-        else {
-            unsupported = platform
-            return nil
-        }
+        else { return "Sesh has no helper for \(platform) on \(host.title)." }
         guard found != published.version else { return nil }
         var ran = await run(download)
         if !ran.ok, let data = await Self.download(published.url + "sesh-transcript-\(name).gz", sha: sha) {
@@ -249,118 +175,13 @@ final class Projects: ObservableObject, Identifiable, Runner {
             ran = await call { sesh_session_put($0, file.path, ".sesh/bin/sesh-transcript.gz") }
             if ran.ok { ran = await run(Helper.unpack) }
         }
-        return ran.ok ? nil : "Sesh could not install its helper on the Host: \(ran.problem)"
+        return ran.ok ? nil : "Sesh could not install its helper on \(host.title): \(ran.problem)"
     }
 
     private static func download(_ url: String, sha: String) async -> Data? {
         guard let source = URL(string: url), let (data, _) = try? await URLSession.shared.data(from: source)
         else { return nil }
         return SHA256.hash(data: data).map { String(format: "%02x", $0) }.joined() == sha ? data : nil
-    }
-
-    func refresh() async {
-        guard stage == .ready, !needsHerdr, unsupported == nil else { return }
-        let ran = await run("herdr agent list && herdr workspace list")
-        let lines = ran.out.split(separator: "\n").map { Data($0.utf8) }
-        guard ran.ok, lines.count == 2,
-              let agents = try? JSONDecoder().decode(HerdrReply<AgentList>.self, from: lines[0]).result.agents,
-              let workspaces = try? JSONDecoder().decode(HerdrReply<WorkspaceList>.self, from: lines[1]).result.workspaces
-        else { return }
-        self.workspaces = workspaces.map(Workspace.init).sorted { $0.number < $1.number }
-        let byId = Dictionary(workspaces.map { ($0.workspace_id, $0) }, uniquingKeysWith: { first, _ in first })
-        sessions = agents.compactMap { agent in
-            guard let kind = Agent(rawValue: agent.agent) else { return nil }
-            let space = byId[agent.workspace_id]
-            let worktree = space?.worktree.flatMap { $0.is_linked_worktree ? $0 : nil }
-            return AgentSession(
-                id: agent.pane_id,
-                name: agent.name ?? (agent.cwd as NSString).lastPathComponent,
-                agent: kind,
-                pane: agent.pane_id,
-                state: agent.agent_status,
-                folder: worktree?.repo_root ?? agent.cwd,
-                cwd: agent.cwd,
-                branch: worktree.map { ($0.checkout_path as NSString).lastPathComponent },
-                workspace: space.map(Workspace.init)
-                    ?? Workspace(id: agent.workspace_id, label: agent.workspace_id, number: .max),
-                activity: agent.state_change_seq)
-        }
-        .sorted { ($0.workspace.number, $0.name) < ($1.workspace.number, $1.name) }
-    }
-
-    func list(_ folder: String) async -> Result<Listing, Failure> {
-        let ran = await run("""
-            cd -- \(quote(folder)) || exit 1
-            if [ -e .git ]; then echo git; else echo plain; fi
-            find . -mindepth 1 -maxdepth 1 -type d ! -name '.*'
-            """)
-        guard ran.ok else { return .failure(Failure(message: ran.problem)) }
-        var lines = ran.out.split(separator: "\n").map(String.init)
-        let git = lines.first == "git"
-        lines.removeFirst(min(1, lines.count))
-        let folders = lines.map { String($0.dropFirst(2)) }.sorted { $0.localizedStandardCompare($1) == .orderedAscending }
-        return .success(Listing(git: git, folders: folders))
-    }
-
-    func makeFolder(_ name: String, in parent: String) async -> String? {
-        let ran = await run("mkdir -- \(quote(parent + "/" + name))")
-        return ran.ok ? nil : ran.problem
-    }
-
-    /// Starts an Agent session in `folder`, on a new branch of it, or in `workspace`, and returns
-    /// its pane. The pane is closed on failure so no half-started Agent lingers.
-    func start(
-        _ name: String, agent: Agent, in folder: String, branch: Bool, workspace: String? = nil
-    ) async -> Result<String, Failure> {
-        let pane: String
-        switch await paneFor(name, in: folder, branch: branch, workspace: workspace) {
-        case .failure(let failure): return .failure(failure)
-        case .success(let id): pane = id
-        }
-        if let problem = await Herdr.launch(agent, name: name, pane: pane, on: self) {
-            return .failure(Failure(message: problem))
-        }
-        if agent == .claude { _ = await link(for: pane) }
-        await refresh()
-        return .success(pane)
-    }
-
-    private func paneFor(
-        _ name: String, in folder: String, branch: Bool, workspace chosen: String?
-    ) async -> Result<String, Failure> {
-        if branch {
-            let ran = await run(
-                "herdr worktree create --cwd \(quote(folder)) --branch \(quote(name)) --no-focus")
-            return rootPane(ran)
-        }
-        var workspace = chosen
-        var folder = folder
-        if workspace == nil || folder.isEmpty {
-            let panes = (try? JSONDecoder().decode(HerdrReply<PaneList>.self, from: Data(await run("herdr pane list").out.utf8)))?
-                .result.panes ?? []
-            if let workspace {
-                folder = panes.first { $0.workspace_id == workspace }?.cwd ?? home
-            } else {
-                workspace = panes.first { $0.cwd == folder }?.workspace_id
-            }
-        }
-        let ran: Ran
-        if let workspace {
-            ran = await run(
-                "herdr tab create --workspace \(quote(workspace)) --cwd \(quote(folder)) --label \(quote(name)) --no-focus")
-        } else {
-            let label = (folder as NSString).lastPathComponent
-            ran = await run("herdr workspace create --cwd \(quote(folder)) --label \(quote(label)) --no-focus")
-        }
-        return rootPane(ran)
-    }
-
-    private func rootPane(_ ran: Ran) -> Result<String, Failure> {
-        guard ran.ok else { return .failure(Failure(message: ran.problem)) }
-        guard let created = try? JSONDecoder().decode(HerdrReply<Created>.self, from: Data(ran.out.utf8)) else {
-            return .failure(Failure(message: "herdr said something Sesh cannot read"))
-        }
-        return .success(created.result.root_pane.pane_id)
     }
 
     /// The link `--remote-control` prints when it starts, which opens the Claude app on
@@ -374,34 +195,6 @@ final class Projects: ObservableObject, Identifiable, Runner {
         if let found, found.host != nil { links[pane] = found }
         return links[pane]
     }
-
-    func stop(_ session: AgentSession) async {
-        let pane = quote(session.pane)
-        _ = await run("herdr agent send-keys \(pane) ctrl+c ctrl+c; sleep 1; herdr pane close \(pane)")
-        links[session.pane] = nil
-        await refresh()
-    }
-
-    /// A name herdr accepts as an agent name and git as a branch: the folder's, then two words.
-    func suggestName(for folder: String) -> String {
-        let taken = Set(sessions.map(\.name))
-        let base = String(Names.slug((folder as NSString).lastPathComponent).prefix(14))
-        for _ in 0..<50 {
-            let words = [Self.adjectives.randomElement()!, Self.nouns.randomElement()!]
-            let name = Names.slug(([base] + words).filter { !$0.isEmpty }.joined(separator: "-"))
-            if !taken.contains(name) { return name }
-        }
-        return Names.slug(base + "-\(Int.random(in: 100...999))")
-    }
-
-    private static let adjectives = [
-        "calm", "bright", "quiet", "swift", "gentle", "bold", "warm", "clear", "brave", "lucky",
-        "sunny", "misty", "tidy", "lively", "mellow", "crisp", "rosy", "silver", "amber", "cosy",
-    ]
-    private static let nouns = [
-        "stone", "river", "fern", "harbour", "meadow", "comet", "maple", "pebble", "otter", "lantern",
-        "willow", "orchid", "summit", "breeze", "canyon", "ember", "finch", "grove", "lagoon", "moss",
-    ]
 
     // MARK: Uploads
 
@@ -455,7 +248,7 @@ final class Projects: ObservableObject, Identifiable, Runner {
     // MARK: From the core
 
     private func fail(_ problem: String) {
-        if stage != .ready { stage = .failed }
+        stage = .failed
         message = problem
         drop(problem)
     }
@@ -492,14 +285,14 @@ final class Projects: ObservableObject, Identifiable, Runner {
         case SESH_STATE_PASSWORD_REJECTED.rawValue:
             Keychain.write(nil, to: "password.\(host.id)")
             savePassword = false
-        case SESH_STATE_CONNECTING.rawValue: if stage != .ready { stage = .connecting }
-        case SESH_STATE_AUTHENTICATING.rawValue: if stage != .ready { stage = .authenticating }
+        case SESH_STATE_CONNECTING.rawValue: stage = .connecting
+        case SESH_STATE_AUTHENTICATING.rawValue: stage = .authenticating
         case SESH_STATE_CONNECTED.rawValue:
+            stage = .ready
             linked = true
             let pending = linking
             linking = []
             pending.forEach { $0.resume(returning: true) }
-            if stage != .ready { Task { await check() } }
         default: fail(message.isEmpty ? "disconnected" : message)
         }
     }
@@ -531,50 +324,20 @@ final class Projects: ObservableObject, Identifiable, Runner {
     }
 }
 
-// MARK: What herdr prints
+/// The Link that has a question for the user, if any, so one place on screen can ask it.
+@MainActor
+final class Asking: ObservableObject {
+    static let shared = Asking()
+    @Published private(set) var link: HostLink?
+    var links: () -> [HostLink] = { [] }
 
-private struct HerdrReply<Result: Decodable>: Decodable { let result: Result }
-private struct AgentList: Decodable {
-    struct Agent: Decodable {
-        let agent: String
-        let agent_status: String
-        let cwd: String
-        let name: String?
-        let pane_id: String
-        let state_change_seq: UInt64
-        let workspace_id: String
+    func update() {
+        link = links().first { $0.hostKeyQuestion != nil || $0.authQuestion != nil }
     }
-    let agents: [Agent]
-}
-private struct WorkspaceList: Decodable {
-    struct Worktree: Decodable {
-        let checkout_path: String
-        let is_linked_worktree: Bool
-        let repo_key: String
-        let repo_root: String
-    }
-    struct Workspace: Decodable {
-        let workspace_id: String
-        let label: String
-        let number: Int
-        let worktree: Worktree?
-    }
-    let workspaces: [Workspace]
-}
-private struct PaneList: Decodable {
-    struct Pane: Decodable {
-        let cwd: String
-        let workspace_id: String
-    }
-    let panes: [Pane]
-}
-private struct Created: Decodable {
-    struct Pane: Decodable { let pane_id: String }
-    let root_pane: Pane
 }
 
 private final class LinkBridge {
-    weak var owner: Projects?
+    weak var owner: HostLink?
 
     static let callbacks = sesh_callbacks_t(
         on_output: nil,
@@ -638,13 +401,5 @@ private final class LinkBridge {
 
     private static func of(_ userdata: UnsafeMutableRawPointer) -> LinkBridge {
         Unmanaged<LinkBridge>.fromOpaque(userdata).takeUnretainedValue()
-    }
-}
-
-private extension Projects.Workspace {
-    init(_ space: WorkspaceList.Workspace) {
-        self.init(
-            id: space.workspace_id, label: space.label, number: space.number,
-            repo: space.worktree?.repo_key, linked: space.worktree?.is_linked_worktree ?? false)
     }
 }

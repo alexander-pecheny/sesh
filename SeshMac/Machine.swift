@@ -18,6 +18,8 @@ final class Machine: Runner, Identifiable, Hashable {
     var title: String { alias ?? "This Mac" }
 
     static let mac = Machine(alias: nil)
+    /// The machines on this device itself, which serve every Vault.
+    static let here = [mac]
     private static var known: [String: Machine] = [:]
 
     /// One object per Host for the app's life: Conversations hold their machine weakly.

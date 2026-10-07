@@ -147,7 +147,7 @@ final class Library: ObservableObject {
             }
             let result: Result
         }
-        let machines = [Machine.mac] + vaults.compactMap { $0.place.alias == nil ? nil : $0.machine }
+        let machines = Machine.here + vaults.compactMap { $0.place.alias == nil ? nil : $0.machine }
         let adopted = Set(vaults.flatMap { $0.all(.session) }.map { "\($0.body.machine ?? ""):\($0.body.pane ?? "")" })
         var found: [String: [Unfiled]] = [:]
         var states: [String: Live] = [:]
@@ -342,10 +342,9 @@ final class Library: ObservableObject {
 
     /// Attached views of herdr panes, by Terminal record or by Agent session; an attach is a
     /// view only, and the pane keeps running in herdr when it goes.
-    private var surfaces: [String: Ghostty.TerminalSurface] = [:]
+    let terminals = Terminals()
     /// Which Agent sessions show their own terminal rather than their Conversation.
     @Published var terminalFace: Set<String> = []
-    private static var mosh: String??
 
     /// A shell in a new herdr pane of the Task's Workspace, recorded so it reopens after a
     /// restart: in the Worktree when the machine has it, else at home.
@@ -363,61 +362,9 @@ final class Library: ObservableObject {
         }
     }
 
-    /// The live view of a pane: `herdr terminal attach` over mosh, or ssh where there is no
-    /// mosh, so it survives sleep and a changing network as the phone's Sessions do.
-    func surface(for key: String, pane: String, on machine: Machine, gone: @escaping () -> Void) async -> Ghostty.TerminalSurface? {
-        if let known = surfaces[key] { return known }
-        struct Pane: Decodable {
-            struct Result: Decodable {
-                struct Info: Decodable { let terminal_id: String }
-                let pane: Info
-            }
-            let result: Result
-        }
-        let ran = await machine.run("herdr pane get \(quote(pane))")
-        guard let terminal = (try? JSONDecoder().decode(Pane.self, from: Data(ran.out.utf8)))?.result.pane.terminal_id else {
-            gone()
-            return nil
-        }
-        let attach = "herdr terminal attach \(quote(terminal)) --takeover"
-        let command: String
-        if let alias = machine.alias {
-            let remote = quote("exec \"$SHELL\" -lic \(quote(attach))")
-            if Self.mosh == nil {
-                let found = (await Machine.mac.run("command -v mosh")).out.trimmingCharacters(in: .whitespacesAndNewlines)
-                Self.mosh = .some(found.isEmpty ? nil : found)
-            }
-            if let mosh = Self.mosh ?? nil {
-                // mosh-client looks the terminal type up locally, and knows no xterm-ghostty.
-                command = "TERM=xterm-256color \(quote(mosh)) \(alias) -- sh -c \(remote)"
-            } else {
-                command = "/usr/bin/ssh -t -o ControlPath=none \(alias) \(remote)"
-            }
-        } else {
-            command = attach
-        }
-        if let known = surfaces[key] { return known }
-        // Ghostty starts commands with a bare PATH; the login shell has the user's, which mosh
-        // needs to find its client and ssh.
-        let surface = Ghostty.TerminalSurface(command: "/bin/zsh -lic \(quote(command))", folder: nil)
-        // The attach ended: the pane is gone, or only the connection, and the next look attaches again.
-        surface.onClose = { [weak self] in
-            self?.surfaces[key] = nil
-            Task {
-                let still = await machine.run("herdr pane get \(quote(pane))")
-                if !still.ok { gone() }
-                self?.objectWillChange.send()
-            }
-        }
-        surfaces[key] = surface
-        return surface
-    }
-
-    func attached(_ key: String) -> Bool { surfaces[key] != nil }
-
     /// Closing a Terminal Tab ends its shell; the record goes with it.
     private func closeTerminal(_ id: String) {
-        surfaces[id] = nil
+        terminals.forget(id)
         guard let vault = vault(of: id), let record = vault.records[id] else { return }
         if let pane = record.body.pane {
             let machine = TaskActions.machine(record.body.machine)

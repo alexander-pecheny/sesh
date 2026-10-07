@@ -2,8 +2,7 @@
 import SwiftUI
 
 /// `xcrun simctl launch <udid> me.pecheny.sesh -fixture claude` draws a Conversation from
-/// Resources/Fixtures/claude.jsonl with no Host behind it; `-fixture refusal` draws the
-/// screen a Host without herdr gets.
+/// Resources/Fixtures/claude.jsonl with no Host behind it.
 struct FixtureView: View {
     let name: String
     @StateObject private var conversation: Conversation
@@ -25,11 +24,7 @@ struct FixtureView: View {
     }
 
     var body: some View {
-        if name == "refusal" {
-            NeedsHerdr()
-        } else {
-            NavigationStack { ConversationView(conversation: conversation, title: "\(name)-fixture", fresh: false) }
-        }
+        NavigationStack { ConversationView(conversation: conversation, title: "\(name)-fixture", fresh: false) }
     }
 }
 #endif
