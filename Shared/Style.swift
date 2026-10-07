@@ -12,6 +12,8 @@ extension View {
 
     func fitWidth() -> some View { containerRelativeFrame(.horizontal) }
 
+    func readable() -> some View { self }
+
     /// The whole screen on the phone; a sheet on the Mac, where nothing covers the window.
     func cover<Content: View>(isPresented: Binding<Bool>, @ViewBuilder content: @escaping () -> Content) -> some View {
         fullScreenCover(isPresented: isPresented, content: content)
@@ -27,10 +29,12 @@ extension Image {
 extension View {
     func inlineTitle() -> some View { self }
 
-    /// A column of 66 characters of body text, centred: lines longer than that are hard to
-    /// read on a wide window. The window, not the split view's column, is the container here.
-    func fitWidth() -> some View {
-        frame(maxWidth: Metric.measure + 2 * Metric.wide).frame(maxWidth: .infinity)
+    /// The window is the container on the Mac, wider than a split view's column.
+    func fitWidth() -> some View { frame(maxWidth: .infinity) }
+
+    /// Prose no wider than 66 characters, which is hard to read beyond that on a wide window.
+    func readable() -> some View {
+        frame(maxWidth: Metric.measure, alignment: .leading).frame(maxWidth: .infinity, alignment: .leading)
     }
 
     func cover<Content: View>(isPresented: Binding<Bool>, @ViewBuilder content: @escaping () -> Content) -> some View {

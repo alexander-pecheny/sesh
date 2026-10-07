@@ -287,6 +287,7 @@ private struct RowView: View {
             switch entry.kind {
             case "user": UserBubble(entry: entry, conversation: conversation)
             case "text": Markdown(text: conversation.openPath == nil ? entry.text ?? entry.summary : PathLinks.link(entry.text ?? entry.summary))
+                .readable()
             case "thinking": Thinking(entry: entry)
             case "tool": ToolCard(entry: entry, result: conversation.results[entry.id], conversation: conversation)
             case "question": QuestionCard(entry: entry, result: conversation.results[entry.id], conversation: conversation)
