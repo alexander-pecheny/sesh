@@ -16,6 +16,7 @@ extension Ghostty {
                 CTFontManagerRegisterFontsForURL(url as CFURL, .process, nil)
             }
             if let resources = Bundle.main.resourcePath { setenv("GHOSTTY_RESOURCES_DIR", resources + "/ghostty", 1) }
+            Config.fontSize = TerminalSurface.fontSize
             guard ghostty_init(UInt(CommandLine.argc), CommandLine.unsafeArgv) == GHOSTTY_SUCCESS,
                   let config = Config.load() else { return }
             var runtime = ghostty_runtime_config_s(
@@ -91,7 +92,7 @@ extension Ghostty {
         required init?(coder: NSCoder) { fatalError("unsupported") }
 
         /// The size the owner set for Ghostty itself, so Sesh's terminals read the same.
-        private static let fontSize: Float = {
+        static let fontSize: Float = {
             let home = FileManager.default.homeDirectoryForCurrentUser
             let files = [".config/ghostty/config", "Library/Application Support/com.mitchellh.ghostty/config"]
             for file in files {

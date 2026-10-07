@@ -53,6 +53,7 @@ final class Library: ObservableObject {
         if let known = conversations[session.id] { return known }
         let machine = TaskActions.machine(session.body.machine)
         let agent = session.body.agent.flatMap(Agent.init)
+        _ = await machine.prepare()
         let live = await machine.run("herdr pane get \(quote(session.body.pane ?? ""))")
         let conversation: Conversation
         if !live.ok, let vault = vault(of: session.id), let last = session.body.transcripts?.last, let agent {
@@ -148,6 +149,7 @@ final class Library: ObservableObject {
             let result: Result
         }
         let machines = [Machine.mac] + vaults.compactMap { $0.place.alias == nil ? nil : $0.machine }
+        for machine in Set(machines) { _ = await machine.prepare() }
         let adopted = Set(vaults.flatMap { $0.all(.session) }.map { "\($0.body.machine ?? ""):\($0.body.pane ?? "")" })
         var found: [String: [Unfiled]] = [:]
         var states: [String: Live] = [:]

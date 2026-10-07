@@ -8,13 +8,17 @@ enum Ghostty {
 
 extension Ghostty {
     enum Config {
-        static let source = """
+        /// The Mac sets the owner's own Ghostty size here, so a config reload keeps it.
+        nonisolated(unsafe) static var fontSize: Float = 12
+
+        static var source: String { """
             theme = light:Catppuccin Latte,dark:Catppuccin Mocha
             font-family = JetBrainsMono NF
-            font-size = 12
+            font-size = \(fontSize)
             clipboard-read = deny
             clipboard-write = allow
             """
+        }
 
         // iOS has no XDG config dir, so we hand libghostty a file we write ourselves.
         static func load() -> ghostty_config_t? {

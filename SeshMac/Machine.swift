@@ -73,6 +73,7 @@ final class Machine: Runner, Identifiable, Hashable {
     }
 
     private var home: String?
+    private var prepared = false
 
     /// Pasted images land in `~/.sesh/uploads` under the moment they were pasted, as the
     /// phone's Uploads do, so the Agent can be told where to look.
@@ -186,8 +187,16 @@ private final class LineSplitter {
 }
 
 extension Machine {
-    /// Puts the pinned transcript helper in place unless that version is already there.
+    /// Puts the pinned transcript helper in place unless that version is already there; once
+    /// a run, as every use of a machine asks first.
     func prepare() async -> String? {
+        if prepared { return nil }
+        let problem = await check()
+        prepared = problem == nil
+        return problem
+    }
+
+    private func check() async -> String? {
         let ran = await run("uname -sm; \(Helper.path) --version 2>/dev/null || echo")
         let lines = ran.out.components(separatedBy: "\n")
         guard ran.ok, lines.count > 1 else { return ran.problem }
