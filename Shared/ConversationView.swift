@@ -519,12 +519,15 @@ private struct RowView: View {
             switch entry.kind {
             case "user": UserBubble(entry: entry, conversation: conversation)
             case "text":
+                let text = conversation.openPath == nil && conversation.repo == nil
+                    ? entry.text ?? entry.summary : PathLinks.link(entry.text ?? entry.summary, repo: conversation.repo)
+                let pieces = Cmark.pieces(text)
                 VStack(alignment: .leading, spacing: Metric.tiny) {
-                    AgentText(text: conversation.openPath == nil && conversation.repo == nil
-                        ? entry.text ?? entry.summary : PathLinks.link(entry.text ?? entry.summary, repo: conversation.repo))
-                    Stamp(at: entry.at)
+                    ForEach(pieces.indices, id: \.self) { index in
+                        AgentText(text: pieces[index].text).readable(wide: pieces[index].table)
+                    }
+                    Stamp(at: entry.at).readable()
                 }
-                .readable(wide: Cmark.hasTable(entry.text ?? ""))
             case "thinking": Thinking(entry: entry)
             case "tool": ToolCard(entry: entry, result: conversation.results[entry.id], conversation: conversation)
             case "question": QuestionCard(entry: entry, result: conversation.results[entry.id], conversation: conversation)

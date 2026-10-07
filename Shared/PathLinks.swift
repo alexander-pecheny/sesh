@@ -127,6 +127,32 @@ enum Cmark {
         return false
     }
 
+    /// The Markdown cut around its tables, so a table can take the full width while the
+    /// prose around it keeps the measure.
+    static func pieces(_ markdown: String) -> [(text: String, table: Bool)] {
+        guard hasTable(markdown), let root = parse(markdown) else { return [(markdown, false)] }
+        defer { cmark_node_free(root) }
+        let lines = markdown.components(separatedBy: "\n")
+        var pieces: [(text: String, table: Bool)] = []
+        var next = 0
+        func add(_ range: Range<Int>, table: Bool) {
+            let text = lines[range].joined(separator: "\n").trimmingCharacters(in: .newlines)
+            if !text.isEmpty { pieces.append((text, table)) }
+        }
+        var child = cmark_node_first_child(root)
+        while let node = child {
+            if String(cString: cmark_node_get_type_string(node)) == "table" {
+                let start = Int(cmark_node_get_start_line(node)) - 1, end = Int(cmark_node_get_end_line(node))
+                add(next..<start, table: false)
+                add(start..<min(end, lines.count), table: true)
+                next = min(end, lines.count)
+            }
+            child = cmark_node_next(node)
+        }
+        add(next..<lines.count, table: false)
+        return pieces
+    }
+
     static func parse(_ markdown: String) -> UnsafeMutablePointer<cmark_node>? {
         cmark_gfm_core_extensions_ensure_registered()
         guard let parser = cmark_parser_new(CMARK_OPT_DEFAULT) else { return nil }
