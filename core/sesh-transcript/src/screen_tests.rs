@@ -138,6 +138,17 @@ fn a_command_shows_once_the_transcript_has_had_time_to_name_it() {
 }
 
 #[test]
+fn a_command_run_again_in_a_later_turn_shows_again() {
+    let now = Instant::now();
+    let mut live = Live::default();
+    live.deliver(&bash("sleep 4; ls"), now);
+    live.deliver(&said("user", "Do these one at a time"), now);
+    live.see(view("running"), now);
+    let shown = items(&live, now + TOOL_DELAY);
+    assert_eq!(shown.last().unwrap()["command"], "sleep 4; ls");
+}
+
+#[test]
 fn a_half_drawn_screen_counts_as_a_change_and_items_end_after_the_turn() {
     let now = Instant::now();
     let mut live = Live::default();

@@ -253,8 +253,7 @@ impl View {
         let menu = || (texts.len().saturating_sub(MENU)..texts.len()).find(|&i| rule(&texts[i]));
         let top = prompt.or_else(menu)?;
         let width = measure(texts[top].trim_end());
-        // The status line sits above the prompt box, among right-edge notices, tips and the
-        // todo list Claude draws under it.
+        // The status line sits above the prompt box, among notices, tips and the todo list.
         let mut end = top;
         let mut status = String::new();
         for i in (top.saturating_sub(16)..top).rev() {
@@ -370,7 +369,6 @@ fn marked(row: &Row) -> Kind {
     if marker.plain() {
         return Kind::Reply;
     }
-    // A tool's name is bold; a notice such as `Agent "x" finished` is not.
     let after = row.skip(2);
     if after.first_style().is_some_and(|style| style.bold) || summary(&after.text()) {
         Kind::Tool
@@ -895,6 +893,10 @@ struct Corpus {
 
 impl Corpus {
     fn learn(&mut self, entry: &Entry) {
+        // The same command often runs again in a later turn; only this turn's count.
+        if entry.kind == "user" {
+            self.commands.clear();
+        }
         let list = match entry.kind {
             "text" => &mut self.replies,
             "user" => &mut self.users,
@@ -1005,7 +1007,6 @@ impl Live {
 
     fn reply(&mut self, block: &Block, width: usize, now: Instant, from: &mut usize) {
         if block.cut {
-            // The top of a long reply has scrolled away: carry on from where an earlier read saw it.
             let Some((index, rows)) = self.items[*from..].iter().enumerate().rev().find_map(|(index, item)| {
                 (item.kind == Kind::Reply).then(|| Some((*from + index, extend(&item.rows, &block.rows)?))).flatten()
             }) else {
@@ -1071,8 +1072,7 @@ impl Live {
 
     fn update(&mut self, index: usize, rows: Vec<Row>, width: usize) {
         let item = &mut self.items[index];
-        // Claude hides a line while its Markdown is incomplete, such as a link whose address is
-        // still streaming; the item keeps it rather than shrink.
+        // Claude hides a line while its Markdown is incomplete, such as a link still streaming.
         let shrinks = rows.len() < item.rows.len()
             && rows[..rows.len().saturating_sub(1)].iter().zip(&item.rows).all(|(new, old)| new.text() == old.text());
         if item.rows == rows || shrinks {
