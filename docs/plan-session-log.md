@@ -3,11 +3,13 @@
 The design is in ADRs 0010 to 0013. The work runs in four stages, each usable on its own;
 the old Conversation keeps working until the last.
 
-1. The follower and the Session log, with recorded tests. No app changes.
-2. The native list on the Mac, reading the Session log, behind a switch in Sesh Dev.
-3. The same on the phone, sharing the row model, renderer and scroll rules.
+1. The follower and the Session log, with recorded tests. No app changes. Done.
+2. The native list on the Mac, reading the Session log, behind a switch in Sesh Dev. Done.
+3. The same on the phone, sharing the row model and scroll rules. Done; the phone still
+   renders Markdown with MarkdownUI, so one shared renderer remains to do.
 4. Removal of the per-Conversation `follow`, the live overlay, the SwiftUI chat and the
-   `agent list` and `background` polls.
+   `agent list` and `background` polls. Done; `follow` stays for Transcript copies read
+   from a Vault, which have no pane.
 
 ## Stage 1
 
