@@ -121,7 +121,8 @@ enum Names {
     /// A name herdr accepts as an agent name and git as a branch.
     static func slug(_ text: String) -> String {
         var slug = ""
-        for character in text.lowercased() {
+        let latin = text.applyingTransform(.toLatin, reverse: false)?.applyingTransform(.stripDiacritics, reverse: false) ?? text
+        for character in latin.lowercased() {
             let keep = character.isASCII && (character.isLetter || character.isNumber || character == "_")
             if keep { slug.append(character) } else if !slug.isEmpty, slug.last != "-" { slug.append("-") }
         }

@@ -13,7 +13,10 @@ enum TaskActions {
     }
 
     /// The branch a title suggests, under the user's name as herdr's own branches are.
-    static func branch(for title: String, user: String) -> String { "\(user)/\(Names.slug(title))" }
+    static func branch(for title: String, user: String) -> String {
+        let slug = Names.slug(title)
+        return "\(user)/\(slug.isEmpty ? "task" : slug)"
+    }
 
     /// The Task's Workspace on `machine`, made if herdr has none, and a fresh pane in it.
     static func pane(for task: Record, on machine: Machine, label: String, folder wanted: String? = nil) async -> Result<(Herdr.Opened, String), Herdr.Failure> {
@@ -81,7 +84,13 @@ enum TaskActions {
             .first { $0.body.repo == repo && $0.body.machine == machine.alias && $0.body.path != nil && $0.body.path != repo }
         if let path = known?.body.path { return .success((path, nil)) }
         let title = current.body.title ?? "Task"
-        let branch = current.body.branch ?? branch(for: title, user: user(on: machine))
+        let user = user(on: machine)
+        let branch: String
+        if let named = current.body.branch, !named.hasSuffix("/") {
+            branch = named
+        } else {
+            branch = await suggestBranch(for: title, user: user, in: vault) ?? self.branch(for: title, user: user)
+        }
         guard current.body.path == nil else {
             return await Herdr.worktree(repo, branch: branch, label: title, on: machine).map { ($0.path ?? repo, $0.pane) }
         }
@@ -121,7 +130,7 @@ enum TaskActions {
             let title = task.body.title ?? "task"
             let named = await suggestBranch(for: title, user: user, in: vault)
             var record = vault.records[task.id] ?? task
-            guard record.body.branch == nil else { return }
+            guard record.body.branch?.hasSuffix("/") != false else { return }
             record.body.branch = named ?? branch(for: title, user: user)
             vault.write(record)
         }
@@ -141,7 +150,9 @@ enum TaskActions {
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
         let prompt = "Generate a branch name \(user)/... from natural language short task description: \(title). Reply with only the branch name"
         request.httpBody = try? JSONSerialization.data(withJSONObject: [
-            "model": "anthropic/claude-haiku-5.5", "max_tokens": 40, "messages": [["role": "user", "content": prompt]],
+            // Left to think, Haiku can spend every token reasoning about a title and answer nothing.
+            "model": "anthropic/claude-haiku-5.5", "max_tokens": 60, "reasoning": ["enabled": false],
+            "messages": [["role": "user", "content": prompt]],
         ])
         struct Reply: Decodable {
             struct Choice: Decodable { struct Message: Decodable { let content: String }; let message: Message }
