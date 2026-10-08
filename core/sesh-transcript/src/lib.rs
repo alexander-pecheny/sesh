@@ -4,9 +4,14 @@ mod claude;
 pub use claude::Background;
 mod codex;
 pub mod follower;
+pub mod log;
+pub mod replay;
 pub mod screen;
+pub mod serve;
 mod pi;
 pub mod vault;
+
+pub const VERSION: &str = concat!(env!("CARGO_PKG_VERSION"), "+", env!("SOURCE_HASH"));
 
 use std::fs::File;
 use std::io::{BufRead, Read, Seek, SeekFrom};

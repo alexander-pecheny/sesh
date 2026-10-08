@@ -13,12 +13,19 @@ use crate::{permission, Entry, Transcript, AGENTS, PROTOCOL};
 
 /// While a session's Transcript cannot be found, look again every this many polls.
 const RETRY: u32 = 8;
+/// How many entries a follower keeps parsed, for questions and matching.
+const KEEP: usize = 500;
 
 /// What a follower reads from herdr: the panes, and a pane's screen. A recording stands in
 /// for herdr when a session is replayed.
 pub trait Source {
     fn panes(&mut self) -> Result<Vec<Value>, String>;
     fn read(&mut self, pane_id: &str, ansi: bool) -> Result<String, String>;
+
+    /// The recorder, when this Source records what it reads.
+    fn recorder(&mut self) -> Option<&mut crate::serve::Recorder> {
+        None
+    }
 }
 
 /// herdr itself.
@@ -187,6 +194,11 @@ impl Follower {
         Ok(())
     }
 
+    /// The Agent and the Transcript followed now, for reading what came before it.
+    pub fn transcript(&self) -> Option<(String, PathBuf)> {
+        self.transcript.as_ref().map(|transcript| (self.agent.clone(), transcript.path.clone()))
+    }
+
     /// The lines written since the last call, for whoever passes them on.
     pub fn drain(&mut self) -> Vec<Value> {
         std::mem::take(&mut self.out)
@@ -327,6 +339,11 @@ impl Follower {
         let Some(mut transcript) = self.transcript.take() else {
             return Ok(());
         };
+        // A follower runs for days; what it sent is in the Session log, not needed here.
+        if transcript.entries.len() > 2 * KEEP {
+            let drop = transcript.entries.len() - KEEP;
+            transcript.entries.drain(..drop);
+        }
         let mark = transcript.entries.len();
         if transcript.read(None).map_err(|err| err.to_string())? {
             let path = transcript.path.to_string_lossy().into_owned();

@@ -6,9 +6,8 @@ use std::time::{Duration, Instant};
 use serde_json::{json, Value};
 use sesh_transcript::follower::{entry_line, herdr, transcript_path, Follower, Herdr};
 use sesh_transcript::vault::{self, Vault};
-use sesh_transcript::{Transcript, AGENTS, PROTOCOL};
+use sesh_transcript::{replay, serve, Transcript, AGENTS, PROTOCOL, VERSION};
 
-const VERSION: &str = concat!(env!("CARGO_PKG_VERSION"), "+", env!("SOURCE_HASH"));
 /// Short enough that the chat keeps up with what Claude's screen shows.
 const POLL: Duration = Duration::from_millis(100);
 const VAULT_POLL: Duration = Duration::from_millis(500);
@@ -20,6 +19,7 @@ const AGENT_GONE_AFTER: Duration = Duration::from_secs(2);
 const PING: Duration = Duration::from_secs(30);
 const DEFAULT_LAST: usize = 50;
 const USAGE: &str = "usage: sesh-transcript --version | follow --protocol | follow <pane> [--since CURSOR] [--last N]
+       | serve [--foreground] [--record DIR] | attach | replay FILE
        | history <pane> --before ID [--last N] | entry <pane> ID
        | answer <pane> --json ANSWERS | permit <pane> allow|deny | background <pane>...
        | vault init DIR | vault pull|follow DIR [--since SEQ] | vault push DIR FILE
@@ -39,6 +39,12 @@ fn main() {
             Ok(0)
         }
         Some("follow") => follow(rest),
+        Some("serve") => serve_command(rest),
+        Some("attach") => serve::attach(),
+        Some("replay") => match rest {
+            [file] => replay::print(std::path::Path::new(file)),
+            _ => usage(),
+        },
         Some("history") => history(rest),
         Some("background") => background(rest),
         Some("entry") => entry(rest),
@@ -51,6 +57,18 @@ fn main() {
         eprintln!("{message}");
         1
     }));
+}
+
+fn serve_command(args: &[String]) -> Exit {
+    let foreground = args.iter().any(|arg| arg == "--foreground");
+    let args: Vec<String> = args.iter().filter(|arg| *arg != "--foreground").cloned().collect();
+    let Some((rest, options)) = parse_args(&args, &["record"]) else {
+        return usage();
+    };
+    if !rest.is_empty() {
+        return usage();
+    }
+    serve::serve(foreground, options.get("record").map(std::path::PathBuf::from))
 }
 
 fn usage() -> Exit {
