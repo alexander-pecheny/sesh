@@ -29,14 +29,20 @@ final class DocumentText: ObservableObject {
     /// A file is read-only while its machine cannot be reached, and every non-Markdown file is.
     var editable: Bool { markdown && unreachable == nil && loaded }
 
+    private static let binary: Int32 = 3
+
     func load() async {
         guard let record else { return }
         guard let path else {
             text = record.body.text ?? ""
             return loaded = true
         }
-        let ran = await machine.run("cat -- \(shellPath(path))")
-        if ran.ok {
+        // An image or other binary, laid out as text, would hang the app on every launch.
+        let file = shellPath(path)
+        let ran = await machine.run("if [ -s \(file) ] && ! grep -qI . \(file); then exit \(Self.binary); fi; cat -- \(file)")
+        if ran.status == Self.binary {
+            unreachable = "\((path as NSString).lastPathComponent) is not a text file, so Sesh does not show it."
+        } else if ran.ok {
             text = ran.out
             base = ran.out
             unreachable = nil
