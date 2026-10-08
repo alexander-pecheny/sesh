@@ -205,7 +205,7 @@ private struct TaskRow: View {
                 }
             }
             Spacer(minLength: 0)
-            MarkView(mark: library.mark(ofTask: task.id))
+            MarksView(marks: library.marks(ofTask: task.id))
         }
     }
 

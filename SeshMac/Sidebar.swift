@@ -161,7 +161,7 @@ private struct TaskRow: View {
         HStack(spacing: Metric.gap) {
             Text(task.body.title ?? "Untitled").lineLimit(2)
             Spacer(minLength: 0)
-            MarkView(mark: library.mark(ofTask: task.id))
+            MarksView(marks: library.marks(ofTask: task.id))
         }
             .frame(maxWidth: .infinity, alignment: .leading)
             .contentShape(.rect)
