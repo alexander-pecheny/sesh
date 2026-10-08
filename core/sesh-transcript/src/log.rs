@@ -239,7 +239,18 @@ impl Writer {
     }
 
     pub fn apply(&mut self, log: &Log, lines: &[Value]) -> Result<()> {
+        self.apply_with(log, lines, None)
+    }
+
+    /// As `apply`, also taking what herdr says of the pane: its folder, the Agent's name and
+    /// how many turns it has finished.
+    pub fn apply_with(&mut self, log: &Log, lines: &[Value], pane: Option<&Value>) -> Result<()> {
         let before = self.summary.clone();
+        if let Some(pane) = pane {
+            self.summary["cwd"] = pane["cwd"].clone();
+            self.summary["name"] = pane["name"].clone();
+            self.summary["done"] = pane["completion_seq"].clone();
+        }
         for line in lines {
             self.line(log, line)?;
         }
@@ -312,6 +323,9 @@ impl Writer {
         fields.remove("t");
         let replaces = fields.remove("replaces").and_then(|id| id.as_str().map(|id| self.own(id)));
         let entry_id = entry["id"].as_str().unwrap_or_default().to_string();
+        if entry["at"].is_string() {
+            self.summary["last"] = entry["at"].clone();
+        }
         if let Some(id) = replaces {
             let at = self.live.iter().position(|(live, _)| *live == id);
             if let Some(at) = at {

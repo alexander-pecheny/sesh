@@ -165,62 +165,90 @@ final class Library: ObservableObject {
 
     @Published private(set) var unfiled: [String: [Unfiled]] = [:]
     private var watching: Task<Void, Never>?
+    private var followers: [String: Task<Void, Never>] = [:]
 
-    /// Every Vault's Host and the Mac, looked at again every few seconds.
+    /// One session's summary as its machine's follower keeps it (ADR 0012).
+    private struct Summary: Decodable {
+        let t: String
+        let session: String?
+        let state: String?
+        let agent: String?
+        let cwd: String?
+        let name: String?
+        let done: UInt64?
+        let last: String?
+        let background: [Conversation.Background]?
+    }
+
+    /// Every session's summary, by machine and pane.
+    private var summaries: [String: [String: Summary]] = [:]
+    private var publishing = false
+
+    /// Every Vault's Host and the Mac, each followed by one stream of session summaries.
     func watchUnfiled() {
         guard watching == nil else { return }
         watching = Task { [weak self] in
             while !Task.isCancelled, let self {
-                await self.refreshUnfiled()
+                let machines = Machine.here + self.vaults.compactMap { $0.place.alias == nil ? nil : $0.machine }
+                for machine in machines where self.followers[machine.id] == nil {
+                    self.followers[machine.id] = Task { [weak self] in await self?.follow(machine) }
+                }
                 try? await Task.sleep(for: .seconds(5))
             }
         }
     }
 
-    func refreshUnfiled() async {
-        struct List: Decodable {
-            struct Result: Decodable {
-                struct Agent: Decodable {
-                    let agent: String
-                    let cwd: String
-                    let name: String?
-                    let pane_id: String
-                    let agent_status: String
-                    let completion_seq: UInt64?
-                }
-                let agents: [Agent]
-            }
-            let result: Result
+    private func follow(_ machine: Machine) async {
+        while !Task.isCancelled {
+            _ = await machine.prepare()
+            _ = await machine.stream("\(Helper.path) attach --sessions") { [weak self] in self?.summarize($0, on: machine.id) }
+            listed.remove(machine.id)
+            try? await Task.sleep(for: .seconds(2))
         }
-        let machines = Machine.here + vaults.compactMap { $0.place.alias == nil ? nil : $0.machine }
-        for machine in Set(machines) { _ = await machine.prepare() }
-        let adopted = Set(vaults.flatMap { $0.all(.session) }.map { "\($0.body.machine ?? ""):\($0.body.pane ?? "")" })
-        var found: [String: [Unfiled]] = [:]
-        var states: [String: Live] = [:]
-        var answered: Set<String> = []
-        for machine in Set(machines) {
-            let ran = await machine.run("herdr agent list")
-            guard let list = try? JSONDecoder().decode(List.self, from: Data(ran.out.utf8)) else { continue }
-            answered.insert(machine.alias ?? "")
-            for agent in list.result.agents {
-                let key = "\(machine.alias ?? ""):\(agent.pane_id)"
-                let state = Live(status: agent.agent_status, done: agent.completion_seq ?? 0)
-                states[key] = state
-            }
-            found[machine.id] = list.result.agents.compactMap { agent in
-                guard let kind = Agent(rawValue: agent.agent) else { return nil }
-                let item = Unfiled(machine: machine.alias, pane: agent.pane_id, agent: kind, cwd: agent.cwd,
-                                   name: agent.name ?? (agent.cwd as NSString).lastPathComponent)
-                return adopted.contains(item.id) ? nil : item
+    }
+
+    private func summarize(_ text: String, on machine: String) {
+        guard let summary = try? JSONDecoder().decode(Summary.self, from: Data(text.utf8)) else { return }
+        switch summary.t {
+        case "hello": listed.insert(machine)
+        case "session":
+            guard let pane = summary.session else { return }
+            summaries[machine, default: [:]][pane] = summary
+        default: return
+        }
+        // A working session's status line ticks every second; marks need no more than this.
+        guard !publishing else { return }
+        publishing = true
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.2) { [weak self] in
+            self?.publishing = false
+            self?.publish()
+        }
+    }
+
+    /// The summaries as the marks, the Unfiled lists and the Tasks' order read them.
+    private func publish() {
+        let adopted = Set(vaults.flatMap { $0.all(.session) }.map(key))
+        var states: [String: Live] = [:], found: [String: [Unfiled]] = [:], counts: [String: Int] = [:], over: Set<String> = []
+        for (machine, sessions) in summaries {
+            for (pane, summary) in sessions {
+                guard let state = summary.state, state != "ended" else { continue }
+                let key = "\(machine):\(pane)"
+                states[key] = Live(status: state == "background" ? "working" : state, done: summary.done ?? 0)
+                counts[key] = summary.background?.count ?? 0
+                if state == "background" { over.insert(key) }
+                if let last = summary.last.flatMap(Self.time), active[key] != last { active[key] = last }
+                guard !adopted.contains(key), let agent = summary.agent.flatMap(Agent.init), let cwd = summary.cwd else { continue }
+                found[machine, default: []].append(Unfiled(
+                    machine: machine.isEmpty ? nil : machine, pane: pane, agent: agent, cwd: cwd,
+                    name: summary.name ?? (cwd as NSString).lastPathComponent))
             }
         }
-        unfiled = found
-        live = states
-        listed = answered
+        if unfiled != found { unfiled = found }
+        if live != states { live = states }
+        if busy != counts { busy = counts }
+        turnOver = over
         markSeen()
         sendQueued()
-        // Every poll: a mark that waits for a slower one shows a turn already over or begun.
-        await refreshBackground()
     }
 
     /// A queued message waits for the Agent's turn to end, which only an open Conversation
@@ -251,36 +279,6 @@ final class Library: ObservableObject {
     /// Claude panes whose turn is over, so herdr's "working" there is only background work.
     private var turnOver: Set<String> = []
 
-    /// Idle Claude sessions may still have commands or subagents running; one helper call per
-    /// machine asks for all of them.
-    private func refreshBackground() async {
-        // Every live adopted session, for when its Transcript last changed; only Claude's can
-        // have background work.
-        let sessions = vaults.flatMap { $0.all(.session) }.filter { $0.body.pane != nil && live[key($0)] != nil }
-        var found: [String: Int] = [:]
-        var over: Set<String> = []
-        for (alias, group) in Dictionary(grouping: sessions, by: { $0.body.machine ?? "" }) {
-            let machine = TaskActions.machine(alias.isEmpty ? nil : alias)
-            let panes = group.compactMap(\.body.pane).map(quote).joined(separator: " ")
-            let ran = await machine.run("\(Helper.path) background \(panes)")
-            struct Line: Decodable {
-                struct Work: Decodable { let call: String }
-                let pane: String
-                let tasks: [Work]
-                let last: String?
-                let turn_over: Bool?
-            }
-            for text in ran.out.split(separator: "\n") {
-                guard let line = try? JSONDecoder().decode(Line.self, from: Data(text.utf8)) else { continue }
-                let key = "\(alias):\(line.pane)"
-                found[key] = line.tasks.count
-                if line.turn_over == true { over.insert(key) }
-                if let last = line.last.flatMap(Self.time) { active[key] = last }
-            }
-        }
-        busy = found
-        turnOver = over
-    }
     /// When each pane's Transcript last had a message, in milliseconds since 1970.
     @Published private(set) var active: [String: Double] = UserDefaults.standard.dictionary(forKey: "active") as? [String: Double] ?? [:] {
         didSet { UserDefaults.standard.set(active, forKey: "active") }
@@ -456,7 +454,6 @@ final class Library: ObservableObject {
             resumeProblem = problem
             return
         }
-        await refreshUnfiled()
         reload(session.id)
     }
 

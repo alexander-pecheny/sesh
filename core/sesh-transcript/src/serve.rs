@@ -98,7 +98,7 @@ impl Machine {
                 followed.seen = now;
                 followed.follower.tick(pane, now)?;
                 let lines = followed.follower.drain();
-                followed.writer.apply(&self.log, &lines)?;
+                followed.writer.apply_with(&self.log, &lines, Some(pane))?;
                 continue;
             }
             let writer = Writer::new(key, &self.log)?;
@@ -107,7 +107,7 @@ impl Machine {
             follower.start(pane, since.as_deref())?;
             let mut followed = Followed { follower, writer, seen: now };
             let lines = followed.follower.drain();
-            followed.writer.apply(&self.log, &lines)?;
+            followed.writer.apply_with(&self.log, &lines, Some(pane))?;
             self.sessions.insert(key.to_string(), followed);
         }
         let gone: Vec<String> = self

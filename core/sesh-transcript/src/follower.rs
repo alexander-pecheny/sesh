@@ -32,10 +32,20 @@ pub trait Source {
 pub struct Herdr;
 
 impl Source for Herdr {
+    /// Every pane, with the Agent's name and finished turns, which only `agent list` gives.
     fn panes(&mut self) -> Result<Vec<Value>, String> {
-        let reply: Value = serde_json::from_str(&herdr(&["pane", "list"])?)
-            .map_err(|err| format!("herdr said something sesh-transcript cannot read: {err}"))?;
-        Ok(reply["result"]["panes"].as_array().cloned().unwrap_or_default())
+        let read = |args: &[&str]| -> Result<Value, String> {
+            serde_json::from_str(&herdr(args)?).map_err(|err| format!("herdr said something sesh-transcript cannot read: {err}"))
+        };
+        let mut panes = read(&["pane", "list"])?["result"]["panes"].as_array().cloned().unwrap_or_default();
+        let agents = read(&["agent", "list"])?["result"]["agents"].as_array().cloned().unwrap_or_default();
+        for pane in &mut panes {
+            if let Some(agent) = agents.iter().find(|agent| agent["pane_id"] == pane["pane_id"]) {
+                pane["name"] = agent["name"].clone();
+                pane["completion_seq"] = agent["completion_seq"].clone();
+            }
+        }
+        Ok(panes)
     }
 
     fn read(&mut self, pane_id: &str, ansi: bool) -> Result<String, String> {
