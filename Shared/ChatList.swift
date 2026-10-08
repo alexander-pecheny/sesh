@@ -367,10 +367,19 @@ struct ChatList: UIViewRepresentable {
             switch change {
             case .none: break
             case .rows(let changed, let added):
+                // UIKit aborts the app on a batch that does not add up, so anything it may not
+                // have counted the way the old rows did is reloaded whole instead.
+                guard table.window != nil, table.numberOfRows(inSection: 0) == old.count else {
+                    table.reloadData()
+                    break
+                }
                 UIView.performWithoutAnimation {
-                    table.performBatchUpdates {
-                        table.insertRows(at: added.map { IndexPath(row: $0, section: 0) }, with: .none)
-                        table.reloadRows(at: changed.map { IndexPath(row: $0, section: 0) }, with: .none)
+                    if !added.isEmpty {
+                        table.performBatchUpdates { table.insertRows(at: added.map { IndexPath(row: $0, section: 0) }, with: .none) }
+                    }
+                    // Numbered after the insert, and refreshed in place, keeping their cells.
+                    if !changed.isEmpty {
+                        table.performBatchUpdates { table.reconfigureRows(at: changed.map { IndexPath(row: $0, section: 0) }) }
                     }
                 }
             case .all: table.reloadData()
