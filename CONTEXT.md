@@ -65,6 +65,12 @@ Every Agent session belongs to one Task once adopted, and keeps belonging after
 its Tab closes and its Agent exits. It can move to another Task but never back to Unfiled.
 _Avoid_: Claude session, thread, agent pane
 
+**Ended**, **Resume**:
+An Agent session is ended once its Agent has stopped, whether the user ended it or the Agent
+exited. Closing its Tab never ends it. An ended session keeps its Conversation, read from the
+Vault's copy, and Resume starts the Agent again on the same conversation.
+_Avoid_: closed, killed, dead
+
 **Workspace**:
 herdr's group of Agent sessions, usually one per folder or branch copy. Each Task is one
 Workspace named after its title.

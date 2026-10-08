@@ -7,12 +7,15 @@ enum Agent: String, CaseIterable, Identifiable {
     var id: String { rawValue }
     var title: String { self == .pi ? "pi" : rawValue.capitalized }
 
-    /// Permissions are always bypassed: she cannot be at the terminal to approve them.
-    func flags(_ name: String) -> String {
+    /// Permissions are always bypassed: she cannot be at the terminal to approve them. With a
+    /// Transcript, the Agent picks up the conversation it holds.
+    func flags(_ name: String, resuming transcript: String? = nil) -> String {
+        let id = ((transcript ?? "") as NSString).lastPathComponent.replacingOccurrences(of: ".jsonl", with: "")
         switch self {
-        case .claude: "--remote-control \(quote(name)) --dangerously-skip-permissions"
-        case .codex: "--dangerously-bypass-approvals-and-sandbox"
-        case .pi: ""
+        case .claude: return "--remote-control \(quote(name)) --dangerously-skip-permissions" + (transcript == nil ? "" : " --resume \(quote(id))")
+        // Codex names its files rollout-<time>-<uuid>.
+        case .codex: return (transcript == nil ? "" : "resume \(quote(String(id.suffix(36)))) ") + "--dangerously-bypass-approvals-and-sandbox"
+        case .pi: return transcript.map { "--session \(quote($0))" } ?? ""
         }
     }
 

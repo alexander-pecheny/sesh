@@ -40,6 +40,17 @@ struct TaskView: View {
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
         }
         .navigationTitle(vault.records[id]?.body.title ?? "Task")
+        .alert("End this Agent session?", isPresented: Binding(get: { library.ending != nil }, set: { if !$0 { library.ending = nil } })) {
+            Button("End", role: .destructive) {
+                if let session = library.ending { Task { await library.end(session) } }
+            }
+            Button("Cancel", role: .cancel) {}
+        } message: {
+            Text("The Agent is still at work and stops at once. Its Conversation stays in the Task, and Resume picks it up again.")
+        }
+        .alert("Sesh could not resume it", isPresented: Binding(get: { library.resumeProblem != nil }, set: { if !$0 { library.resumeProblem = nil } })) {
+            Button("OK", role: .cancel) {}
+        } message: { Text(library.resumeProblem ?? "") }
         #if DEBUG
         // `-start claude` starts an Agent session in the chosen Task, for tests with no menus.
         .task {
@@ -75,6 +86,7 @@ private struct TabButton: View {
         HStack(spacing: Metric.tiny) {
             Button { library.open(tab, in: task) } label: {
                 Label(title, systemImage: icon).lineLimit(1).contentShape(.rect)
+                    .foregroundStyle(session.map(library.ended) == true ? .secondary : .primary)
             }
             .buttonStyle(.plain)
             .keyboardShortcut(shortcut)
@@ -89,6 +101,14 @@ private struct TabButton: View {
         .background(selected ? Color.primary.opacity(0.1) : .clear, in: .rect(cornerRadius: 6))
         .draggable(dragged)
         .contextMenu {
+            if let session {
+                if library.ended(session) {
+                    Button("Resume Agent session") { Task { await library.resume(session) } }
+                } else if !library.resuming.contains(session.id) {
+                    Button("End Agent session") { library.askToEnd(session) }
+                }
+                Divider()
+            }
             if !recordID.isEmpty {
                 Menu("Move to Task") {
                     ForEach(vault.all(.task).filter { $0.id != task && $0.body.archived != true }
@@ -98,6 +118,10 @@ private struct TabButton: View {
                 }
             }
         }
+    }
+
+    private var session: Record? {
+        if case .session(let id) = tab { vault.records[id] } else { nil }
     }
 
     /// Command-1 is always the Journal; the others follow in order up to nine.
@@ -164,10 +188,13 @@ private struct AddMenu: View {
                 }
             }
             let sessions = vault.children(.session, task: task.id).sorted { ($0.body.position ?? 0) < ($1.body.position ?? 0) }
-            if !sessions.isEmpty {
-                Section("Agent sessions") {
-                    ForEach(sessions) { session in
-                        Button(session.body.title ?? "Agent session") { library.open(.session(session.id), in: task.id) }
+            ForEach([false, true], id: \.self) { ended in
+                let group = sessions.filter { library.ended($0) == ended }
+                if !group.isEmpty {
+                    Section(ended ? "Ended Agent sessions" : "Running Agent sessions") {
+                        ForEach(group) { session in
+                            Button(session.body.title ?? "Agent session") { library.open(.session(session.id), in: task.id) }
+                        }
                     }
                 }
             }
@@ -270,7 +297,11 @@ private struct SessionTab: View {
         // The Conversation stays laid out under the terminal, so coming back costs no layout.
         ZStack {
             if let conversation, let session = vault.records[id] {
-                ConversationView(conversation: conversation, title: session.body.title ?? "Agent session", fresh: false, hidden: terminal)
+                let ended = conversation.pane == nil && library.ended(session)
+                ConversationView(conversation: conversation, title: session.body.title ?? "Agent session", fresh: false, hidden: terminal,
+                                 end: conversation.pane == nil ? nil : { library.askToEnd(session) },
+                                 resume: ended ? { await library.resume(session) } : nil)
+                    .id(ObjectIdentifier(conversation))
                     .opacity(terminal ? 0 : 1)
                     .allowsHitTesting(!terminal)
             } else {
@@ -284,26 +315,34 @@ private struct SessionTab: View {
         }
         .frame(minWidth: 420, maxWidth: .infinity, minHeight: 300, maxHeight: .infinity)
         .overlay(alignment: .topTrailing) {
-            HStack(spacing: 2) {
-                face("Chat", selected: !terminal) { library.terminalFace.remove(id) }
-                face("Terminal", selected: terminal) { library.terminalFace.insert(id) }
-            }
-            .padding(2)
-            .background(.regularMaterial, in: .capsule)
-            .padding(Metric.gap)
-            .background {
-                Button("") { if terminal { library.terminalFace.remove(id) } else { library.terminalFace.insert(id) } }
-                    .keyboardShortcut("t", modifiers: [.command, .shift])
-                    .hidden()
-            }
+            if conversation?.pane != nil { faces }
         }
-        .task {
+        // An Agent that exits by itself leaves a bare shell; its Conversation comes from the copy.
+        .onChange(of: vault.records[id].map(library.ended) ?? false) { _, ended in
+            if ended, conversation?.pane != nil { library.reload(id) }
+        }
+        .task(id: library.reloads[id, default: 0]) {
             guard let session = vault.records[id] else { return }
             conversation = await library.conversation(for: session)
             #if DEBUG
             // `-reveal ITEM` scrolls to one entry, for tests with no clicking.
             if let item = UserDefaults.standard.string(forKey: "reveal") { await conversation?.reveal(item) }
             #endif
+        }
+    }
+
+    private var faces: some View {
+        HStack(spacing: 2) {
+            face("Chat", selected: !terminal) { library.terminalFace.remove(id) }
+            face("Terminal", selected: terminal) { library.terminalFace.insert(id) }
+        }
+        .padding(2)
+        .background(.regularMaterial, in: .capsule)
+        .padding(Metric.gap)
+        .background {
+            Button("") { if terminal { library.terminalFace.remove(id) } else { library.terminalFace.insert(id) } }
+                .keyboardShortcut("t", modifiers: [.command, .shift])
+                .hidden()
         }
     }
 }

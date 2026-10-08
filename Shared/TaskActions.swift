@@ -33,13 +33,15 @@ enum TaskActions {
     }
 
     /// The Task's Workspace on `machine`, made if herdr has none, and a fresh pane in it.
-    static func pane(for task: Record, on machine: Machine, label: String) async -> Result<(Herdr.Opened, String), Herdr.Failure> {
+    static func pane(for task: Record, on machine: Machine, label: String, folder wanted: String? = nil) async -> Result<(Herdr.Opened, String), Herdr.Failure> {
         let title = task.body.title ?? "Task"
         let open = await Herdr.workspaces(on: machine)
         let known = task.body.workspace.flatMap { open[$0] != nil && machine.alias == task.body.machine ? $0 : nil }
         let workspace = known ?? open.first { $0.value == title }?.key
         let folder: String
-        if let path = task.body.path, machine.alias == task.body.machine {
+        if let wanted {
+            folder = wanted
+        } else if let path = task.body.path, machine.alias == task.body.machine {
             folder = path
         } else {
             folder = (await machine.run("printf %s \"$HOME\"")).out
@@ -65,6 +67,26 @@ enum TaskActions {
             title: count == 0 ? agent.title : "\(agent.title) \(count + 1)", task: task.id,
             position: Double(Date().timeIntervalSince1970), machine: machine.alias, path: folder, pane: opened.pane, agent: agent.rawValue))
         return .success(session)
+    }
+
+    /// Starts a session's Agent again on its last Transcript, in a fresh pane in its folder.
+    static func resume(_ session: Record, of task: Record, in vault: Vault) async -> String? {
+        guard let agent = session.body.agent.flatMap(Agent.init), let transcript = session.body.transcripts?.last else {
+            return "Sesh holds no Transcript of this Agent session, so there is nothing to resume."
+        }
+        let machine = machine(session.body.machine)
+        if let problem = await machine.prepare() { return problem }
+        let opened: Herdr.Opened
+        switch await pane(for: task, on: machine, label: agent.title, folder: session.body.path) {
+        case .failure(let failure): return failure.message
+        case .success(let value): opened = value.0
+        }
+        let name = Names.slug("\(task.body.title ?? "task")-\(agent.rawValue)")
+        if let problem = await Herdr.launch(agent, name: name, pane: opened.pane, resuming: transcript, on: machine) { return problem }
+        var record = vault.records[session.id] ?? session
+        record.body.pane = opened.pane
+        vault.write(record)
+        return nil
     }
 
     /// Opens a file in the Task as a Document, reusing the Tab if it is open already. A bare

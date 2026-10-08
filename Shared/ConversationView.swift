@@ -8,6 +8,10 @@ struct ConversationView: View {
     let title: String
     let fresh: Bool
     var hidden = false
+    /// Stops the Agent, for a session whose Agent runs.
+    var end: (() -> Void)?
+    /// Starts the Agent again, for a session whose Agent has stopped.
+    var resume: (() async -> Void)?
     @State private var draft = ""
     @State private var notice: String?
     @State private var sending = false
@@ -158,6 +162,8 @@ struct ConversationView: View {
                 if conversation.pane != nil {
                     BackgroundLine(conversation: conversation)
                     input
+                } else if let resume {
+                    EndedBar(agent: conversation.agent?.title ?? "The Agent", resume: resume)
                 }
             }
         }
@@ -178,7 +184,12 @@ struct ConversationView: View {
                 }
             }
             #endif
-            if conversation.agent == .claude {
+            if let end {
+                ToolbarItem(placement: .primaryAction) {
+                    Button(action: end) { Label("End Agent session", systemImage: "power") }.help("End Agent session")
+                }
+            }
+            if conversation.agent == .claude, resume == nil {
                 ToolbarItem(placement: .primaryAction) {
                     Button { Task { await openInClaude() } } label: { Label("Open in Claude", image: "external-link") }
                 }
@@ -213,6 +224,7 @@ struct ConversationView: View {
 
     private var stateLabel: String {
         let agent = conversation.agent?.title ?? "Agent"
+        if resume != nil { return "Ended" }
         switch conversation.state {
         case "working": return "\(agent) is working"
         case "background": return "\(agent) is waiting on background work"
@@ -897,6 +909,45 @@ private struct Thinking: View {
                 Text(text).font(.ui(13).italic()).foregroundStyle(flavour(.subtext0)).textSelection(.enabled)
             }
         }
+    }
+}
+
+/// In place of the message box once the Agent has stopped: its Conversation stays readable.
+private struct EndedBar: View {
+    @Environment(\.colorScheme) private var colorScheme
+    let agent: String
+    let resume: () async -> Void
+    @State private var resuming = false
+
+    private var flavour: Catppuccin.Flavour { colorScheme == .dark ? .mocha : .latte }
+
+    var body: some View {
+        HStack(spacing: Metric.gap) {
+            Text("This Agent session has ended.").font(.ui(Metric.label)).foregroundStyle(flavour(.subtext0))
+            Spacer(minLength: 0)
+            Button {
+                resuming = true
+                Task {
+                    await resume()
+                    resuming = false
+                }
+            } label: {
+                HStack(spacing: Metric.tiny) {
+                    if resuming { ProgressView().controlSize(.small) }
+                    Text(resuming ? "Resuming…" : "Resume \(agent)")
+                }
+                .font(.ui(Metric.label).weight(.medium))
+                .foregroundStyle(flavour(.base))
+                .padding(.horizontal, Metric.pad)
+                .padding(.vertical, Metric.gap)
+                .background(flavour(.mauve), in: .capsule)
+            }
+            .buttonStyle(.plain)
+            .disabled(resuming)
+        }
+        .padding(.horizontal, Metric.pad)
+        .padding(.vertical, Metric.gap)
+        .background(flavour(.mantle), ignoresSafeAreaEdges: .vertical)
     }
 }
 

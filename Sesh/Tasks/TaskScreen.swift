@@ -68,6 +68,17 @@ struct TaskScreen: View {
             }
         }
         .sheet(item: $sheet) { $0.view }
+        .alert("End this Agent session?", isPresented: Binding(get: { library.ending != nil }, set: { if !$0 { library.ending = nil } })) {
+            Button("End", role: .destructive) {
+                if let session = library.ending { Task { await library.end(session) } }
+            }
+            Button("Cancel", role: .cancel) {}
+        } message: {
+            Text("The Agent is still at work and stops at once. Its Conversation stays in the Task, and Resume picks it up again.")
+        }
+        .alert("Sesh could not resume it", isPresented: Binding(get: { library.resumeProblem != nil }, set: { if !$0 { library.resumeProblem = nil } })) {
+            Button("OK", role: .cancel) {}
+        } message: { Text(library.resumeProblem ?? "") }
     }
 }
 
@@ -107,6 +118,13 @@ private struct TabChip: View {
         .contextMenu {
             if tab != .journal {
                 Button("Close Tab") { library.close(tab, in: task) }
+            }
+            if case .session(let id) = tab, let session = vault.records[id] {
+                if library.ended(session) {
+                    Button("Resume Agent session") { Task { await library.resume(session) } }
+                } else if !library.resuming.contains(id) {
+                    Button("End Agent session") { library.askToEnd(session) }
+                }
             }
             if !recordID.isEmpty {
                 Menu("Move to Task") {
@@ -176,10 +194,13 @@ private struct AddMenu: View {
                 }
             }
             let sessions = vault.children(.session, task: task.id).sorted { ($0.body.position ?? 0) < ($1.body.position ?? 0) }
-            if !sessions.isEmpty {
-                Section("Agent sessions") {
-                    ForEach(sessions) { session in
-                        Button(session.body.title ?? "Agent session") { library.open(.session(session.id), in: task.id) }
+            ForEach([false, true], id: \.self) { ended in
+                let group = sessions.filter { library.ended($0) == ended }
+                if !group.isEmpty {
+                    Section(ended ? "Ended Agent sessions" : "Running Agent sessions") {
+                        ForEach(group) { session in
+                            Button(session.body.title ?? "Agent session") { library.open(.session(session.id), in: task.id) }
+                        }
                     }
                 }
             }
@@ -248,21 +269,30 @@ private struct SessionScreen: View {
                     library.terminalFace.remove(id)
                 }
             } else if let conversation, let session = vault.records[id] {
-                ConversationView(conversation: conversation, title: session.body.title ?? "Agent session", fresh: false)
+                ConversationView(conversation: conversation, title: session.body.title ?? "Agent session", fresh: false,
+                                 end: conversation.pane == nil ? nil : { library.askToEnd(session) },
+                                 resume: conversation.pane == nil && library.ended(session) ? { await library.resume(session) } : nil)
+                    .id(ObjectIdentifier(conversation))
             } else {
                 ProgressView().frame(maxWidth: .infinity, maxHeight: .infinity)
             }
         }
         .toolbar {
-            ToolbarItem(placement: .topBarTrailing) {
-                Button {
-                    if terminal { library.terminalFace.remove(id) } else { library.terminalFace.insert(id) }
-                } label: {
-                    Label(terminal ? "Chat" : "Terminal", image: terminal ? "bot" : "terminal")
+            if conversation?.pane != nil {
+                ToolbarItem(placement: .topBarTrailing) {
+                    Button {
+                        if terminal { library.terminalFace.remove(id) } else { library.terminalFace.insert(id) }
+                    } label: {
+                        Label(terminal ? "Chat" : "Terminal", image: terminal ? "bot" : "terminal")
+                    }
                 }
             }
         }
-        .task {
+        // An Agent that exits by itself leaves a bare shell; its Conversation comes from the copy.
+        .onChange(of: vault.records[id].map(library.ended) ?? false) { _, ended in
+            if ended, conversation?.pane != nil { library.reload(id) }
+        }
+        .task(id: library.reloads[id, default: 0]) {
             guard let session = vault.records[id] else { return }
             conversation = await library.conversation(for: session)
         }

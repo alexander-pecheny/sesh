@@ -59,9 +59,12 @@ final class Library: ObservableObject {
         let machine = TaskActions.machine(session.body.machine)
         let agent = session.body.agent.flatMap(Agent.init)
         _ = await machine.prepare()
-        let live = await machine.run("herdr pane get \(quote(session.body.pane ?? ""))")
+        let pane = await machine.run("herdr pane get \(quote(session.body.pane ?? ""))")
+        struct Got: Decodable { struct Result: Decodable { struct Pane: Decodable { let agent: String? }; let pane: Pane }; let result: Result }
+        // A pane whose Agent exited is a bare shell, and following it would guess at a Transcript.
+        let running = (try? JSONDecoder().decode(Got.self, from: Data(pane.out.utf8)))?.result.pane.agent != nil
         let conversation: Conversation
-        if !live.ok, let vault = vault(of: session.id), let last = session.body.transcripts?.last, let agent {
+        if !running, let vault = vault(of: session.id), let last = session.body.transcripts?.last, let agent {
             let copy = "\(vault.folder)/transcripts/\(session.id)/\((last as NSString).lastPathComponent)"
             conversation = Conversation(source: .file(path: copy, agent: agent), agent: agent, runner: vault.machine)
         } else {
@@ -165,9 +168,11 @@ final class Library: ObservableObject {
         let adopted = Set(vaults.flatMap { $0.all(.session) }.map { "\($0.body.machine ?? ""):\($0.body.pane ?? "")" })
         var found: [String: [Unfiled]] = [:]
         var states: [String: Live] = [:]
+        var answered: Set<String> = []
         for machine in Set(machines) {
             let ran = await machine.run("herdr agent list")
             guard let list = try? JSONDecoder().decode(List.self, from: Data(ran.out.utf8)) else { continue }
+            answered.insert(machine.alias ?? "")
             for agent in list.result.agents {
                 let key = "\(machine.alias ?? ""):\(agent.pane_id)"
                 let state = Live(status: agent.agent_status, done: agent.completion_seq ?? 0)
@@ -182,6 +187,7 @@ final class Library: ObservableObject {
         }
         unfiled = found
         live = states
+        listed = answered
         markSeen()
         sendQueued()
         // Every poll: a mark that waits for a slower one shows a turn already over or begun.
@@ -375,6 +381,60 @@ final class Library: ObservableObject {
     let terminals = Terminals()
     /// Which Agent sessions show their own terminal rather than their Conversation.
     @Published var terminalFace: Set<String> = []
+
+    // MARK: Ending and resuming
+
+    /// The machines whose Agents the last poll listed, by alias, "" for the Mac.
+    @Published private(set) var listed: Set<String> = []
+    /// Agent sessions being started again, which herdr lists only once their Agent is up.
+    @Published private(set) var resuming: Set<String> = []
+    /// Bumped when a session's Conversation must be loaded afresh, from its pane or its copy.
+    @Published private(set) var reloads: [String: Int] = [:]
+
+    /// Whether a session's Agent has stopped: its machine answered and no longer lists it.
+    func ended(_ session: Record) -> Bool {
+        !resuming.contains(session.id) && listed.contains(session.body.machine ?? "") && live[key(session)] == nil
+    }
+
+    /// Stops a session's Agent and closes its pane, its Transcripts copied first; the session,
+    /// its Conversation and its Tab stay.
+    func end(_ session: Record) async {
+        await vault(of: session.id)?.copier.copy([session])
+        if let pane = session.body.pane {
+            let machine = TaskActions.machine(session.body.machine)
+            _ = await machine.run("herdr agent send-keys \(quote(pane)) ctrl+c ctrl+c; sleep 1; herdr pane close \(quote(pane))")
+        }
+        live[key(session)] = nil
+        reload(session.id)
+    }
+
+    /// A session the user asked to end while its Agent was busy, until they confirm.
+    @Published var ending: Record?
+    /// Why the last resume failed, until the user has read it.
+    @Published var resumeProblem: String?
+
+    /// Ends an idle Agent at once; a busy one waits for the user to confirm.
+    func askToEnd(_ session: Record) {
+        if let mark = mark(of: session), mark >= .background { ending = session } else { Task { await end(session) } }
+    }
+
+    func resume(_ session: Record) async {
+        guard let vault = vault(of: session.id), let task = session.body.task.flatMap({ vault.records[$0] }) else { return }
+        resuming.insert(session.id)
+        defer { resuming.remove(session.id) }
+        if let problem = await TaskActions.resume(vault.records[session.id] ?? session, of: task, in: vault) {
+            resumeProblem = problem
+            return
+        }
+        await refreshUnfiled()
+        reload(session.id)
+    }
+
+    func reload(_ id: String) {
+        conversations[id] = nil
+        terminalFace.remove(id)
+        reloads[id, default: 0] += 1
+    }
 
     /// A shell in a new herdr pane of the Task's Workspace, recorded so it reopens after a
     /// restart: in the Worktree when the machine has it, else at home.
