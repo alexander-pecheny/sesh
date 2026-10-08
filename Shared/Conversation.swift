@@ -231,6 +231,7 @@ final class Conversation: ObservableObject {
     func follow() async {
         // The helper follows only a pane that runs an Agent, and a starting one does not yet.
         while starting, !Task.isCancelled { try? await Task.sleep(for: .milliseconds(200)) }
+        if Self.useLog, case .pane(let pane) = source { return await attach(pane) }
         while !Task.isCancelled, let runner {
             let since = cursor.map { " --since \(quote($0))" } ?? ""
             let ended = await runner.stream("\(Helper.path) follow \(target)\(since)") { [weak self] in
@@ -298,6 +299,116 @@ final class Conversation: ObservableObject {
         }
     }
 
+    // MARK: The Session log (ADR 0010)
+
+    /// `-sessionLog YES` reads the Conversation from the machine's Session log.
+    static let useLog = UserDefaults.standard.bool(forKey: "sessionLog")
+
+    private struct LogItem: Decodable {
+        let id: String
+        let ord: Int
+        let seq: Int
+        let final: Bool
+        let gone: Bool
+        let entry: Entry
+    }
+
+    private struct LogLine: Decodable {
+        let t: String
+        let state: String?
+        let status: String?
+        let agent: String?
+        let transcript: String?
+        let background: [Background]?
+        let permissions: [Permission]?
+        let more: Bool?
+    }
+
+    private var logItems: [String: LogItem] = [:]
+    private var logSeq = 0
+
+    /// Follows the pane's Session log; after a drop it asks again from the last item it has.
+    private func attach(_ pane: String) async {
+        while !Task.isCancelled, let runner {
+            let watch = logSeq > 0 ? "\(pane):\(logSeq)" : pane
+            let ended = await runner.stream("\(Helper.path) attach --watch \(quote(watch))") { [weak self] in self?.applyLog($0) }
+            guard !Task.isCancelled else { return }
+            if ended.status > 0, !ended.problem.isEmpty { problem = ended.problem }
+            try? await Task.sleep(for: .seconds(2))
+        }
+    }
+
+    private func applyLog(_ text: String) {
+        let data = Data(text.utf8)
+        guard let line = try? JSONDecoder().decode(LogLine.self, from: data) else { return }
+        switch line.t {
+        case "item":
+            guard let item = try? JSONDecoder().decode(LogItem.self, from: data) else { return }
+            logSeq = max(logSeq, item.seq)
+            if item.gone { logItems[item.id] = nil } else { logItems[item.id] = item }
+            rebuild()
+        case "session":
+            if let state = line.state, state != self.state {
+                self.state = state
+                if state != "working", !waiting.isEmpty { Task { await sendQueued() } }
+            }
+            status = line.status ?? ""
+            agent = line.agent.flatMap(Agent.init) ?? agent
+            transcript = line.transcript ?? transcript
+            background = line.background ?? []
+            permissions = line.permissions ?? []
+        case "opened":
+            loaded = true
+            earlier = !logItems.isEmpty
+        default: break
+        }
+    }
+
+    /// The log's items as the Conversation shows them: final ones in order, then the screen's,
+    /// each row keyed by the item, so a screen row the Transcript takes over stays put.
+    private func rebuild() {
+        let sorted = logItems.values.sorted { $0.ord < $1.ord }
+        var rows: [Item] = []
+        var shownLive: [Entry] = []
+        for item in sorted {
+            var entry = item.entry
+            switch entry.kind {
+            case "result": if let call = entry.call { results[call] = entry }
+            case "todo": todo = entry
+            case "switch": rows.append(.switched(id: item.ord, reason: entry.summary))
+            default:
+                if item.final {
+                    if item.id != entry.id { rowKeys[entry.id] = item.id }
+                    if entry.kind == "user", let text = entry.text {
+                        queued.removeAll { $0.handed && text.contains($0.text.trimmingCharacters(in: .whitespacesAndNewlines)) }
+                    }
+                    rows.append(.entry(entry))
+                } else {
+                    entry.at = entry.at ?? firstSeen[item.id] ?? Self.dates.string(from: Date())
+                    firstSeen[item.id] = entry.at
+                    shownLive.append(entry)
+                }
+            }
+        }
+        if rows != items { items = rows }
+        if shownLive != live { live = shownLive }
+    }
+
+    /// One page of the log before its first item, read from the Transcript where needed.
+    private func loadEarlierFromLog(_ pane: String) async {
+        guard let runner, let first = logItems.values.map(\.ord).min() else { return earlier = false }
+        let ran = await runner.run("\(Helper.path) page \(quote(pane)) --before \(first) --limit \(Self.page)")
+        guard ran.ok else { return earlier = false }
+        var more = false
+        for text in ran.out.split(separator: "\n") {
+            let data = Data(text.utf8)
+            if let line = try? JSONDecoder().decode(LogLine.self, from: data), line.t == "page_done" { more = line.more ?? false }
+            if let item = try? JSONDecoder().decode(LogItem.self, from: data), !item.gone { logItems[item.id] = item }
+        }
+        rebuild()
+        earlier = more
+    }
+
     private func add(_ entry: Entry) {
         if entry.kind == "user", let text = entry.text {
             queued.removeAll { $0.handed && text.contains($0.text.trimmingCharacters(in: .whitespacesAndNewlines)) }
@@ -328,6 +439,12 @@ final class Conversation: ObservableObject {
 
     /// Fetches the page of entries before the first one shown and puts it above.
     func loadEarlier() async {
+        if Self.useLog, case .pane(let pane) = source {
+            guard earlier, !loading else { return }
+            loading = true
+            defer { loading = false }
+            return await loadEarlierFromLog(pane)
+        }
         guard earlier, !loading, let runner,
               let first = items.lazy.compactMap({ if case .entry(let entry) = $0 { entry } else { nil } }).first
         else { return }

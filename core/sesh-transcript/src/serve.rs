@@ -23,6 +23,7 @@ const TICK: Duration = Duration::from_millis(100);
 /// herdr's panes are listed less often than the screens of working Agents are read.
 const LIST_EVERY: u32 = 2;
 const GONE_AFTER: Duration = Duration::from_secs(2);
+/// With no device attached this long, the follower leaves; the Transcript fills the gap later.
 const IDLE_EXIT: Duration = Duration::from_secs(6 * 60 * 60);
 const PING: Duration = Duration::from_secs(30);
 /// Entries a session starts with when the follower first meets it.
@@ -33,8 +34,11 @@ const START_WAIT: Duration = Duration::from_secs(3);
 
 type Result<T> = std::result::Result<T, String>;
 
+/// Each helper version keeps a follower of its own, so a device that pins another version
+/// never talks to one that speaks differently; an old one leaves once no device uses it.
 fn home() -> PathBuf {
-    std::env::var_os("HOME").map(PathBuf::from).unwrap_or_default().join(".sesh")
+    let version = crate::VERSION.rsplit('+').next().unwrap_or("unversioned");
+    std::env::var_os("HOME").map(PathBuf::from).unwrap_or_default().join(".sesh/follower").join(version)
 }
 
 fn socket() -> PathBuf {
@@ -222,7 +226,7 @@ fn run(record: Option<(PathBuf, String)>) -> Result<i32> {
             client.serve(&mut machine);
         }
         clients.retain(|client| client.open);
-        if machine.following() > 0 || !clients.is_empty() {
+        if !clients.is_empty() {
             busy = Instant::now();
         } else if busy.elapsed() > IDLE_EXIT {
             let _ = std::fs::remove_file(&path);
