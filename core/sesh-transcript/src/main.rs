@@ -255,20 +255,7 @@ fn follow(args: &[String]) -> Exit {
         return usage();
     };
     let (pane, agent) = agent_pane(&target)?;
-    let mut follower = Follower {
-        agent,
-        last,
-        state: None,
-        permission: None,
-        transcript: None,
-        session: Value::Null,
-        lost: None,
-        wrote: false,
-        background: json!([]),
-        reported: None,
-        live: Live::default(),
-        sent: Value::Null,
-    };
+    let mut follower = Follower::new(agent, last);
     follower.start(&pane, options.get("since").copied())?;
     let mut agent_seen = Instant::now();
     let mut pinged = Instant::now();
@@ -315,6 +302,23 @@ struct Follower {
 }
 
 impl Follower {
+    fn new(agent: String, last: usize) -> Self {
+        Follower {
+            agent,
+            last,
+            state: None,
+            permission: None,
+            transcript: None,
+            session: Value::Null,
+            lost: None,
+            wrote: false,
+            background: json!([]),
+            reported: None,
+            live: Live::default(),
+            sent: Value::Null,
+        }
+    }
+
     fn emit(&mut self, line: Value) -> Result<(), String> {
         let mut out = std::io::stdout().lock();
         writeln!(out, "{line}")
@@ -345,7 +349,9 @@ impl Follower {
                         .read_tail(Some(offset), |entries| entries.len() >= self.last)
                         .map_err(|err| err.to_string())?;
                     transcript.scan_background().map_err(|err| err.to_string())?;
+                    let known = transcript.entries.clone();
                     self.transcript = Some(transcript);
+                    self.send(&known, &[])?;
                     self.read_new()?;
                 }
                 Some((_, cursor_path)) if !cursor_path.is_empty() => {
@@ -1000,6 +1006,29 @@ mod tests {
             Some(day.join("rollout-2026-10-05T10-00-00-abc.jsonl"))
         );
         assert_eq!(missing, None);
+    }
+
+    #[test]
+    fn a_reply_the_transcript_held_before_a_resumed_follow_never_shows_live() {
+        let reply = "| Function | Operation |\n|---|---|\n| `add(a, b)` | Returns the sum of a and b |\n| `mul(a, b)` | Returns the product of a and b |\n| `sub(a, b)` | Returns a minus b |\n\nThe file now holds three functions, with `sub` added at the end.";
+        let at = "2026-10-05T14:54:42.186Z";
+        let lines = [
+            json!({"type":"user","timestamp":at,"origin":{"kind":"human"},"message":{"role":"user","content":"Tabulate calc.py"}}),
+            json!({"type":"assistant","timestamp":at,"message":{"content":[{"type":"text","text":reply}]}}),
+        ];
+        let dir = std::env::temp_dir().join(format!("herdr-resume-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("t.jsonl");
+        let bytes: String = lines.iter().map(|line| format!("{line}\n")).collect();
+        std::fs::write(&path, &bytes).unwrap();
+        let pane = json!({"agent": "claude", "agent_session": {"kind": "path", "value": path}});
+        let mut follower = Follower::new("claude".into(), 20);
+        follower.start(&pane, Some(&format!("{}:{}", bytes.len(), path.display()))).unwrap();
+        let screen = std::fs::read_to_string(format!("{}/tests/screens/table.ansi", env!("CARGO_MANIFEST_DIR"))).unwrap();
+        let now = Instant::now();
+        follower.live.see(View::read(&screen).unwrap(), now);
+        std::fs::remove_dir_all(&dir).unwrap();
+        assert_eq!(follower.live.line(now)["items"], json!([]));
     }
 
     fn answers(json: &str) -> Vec<Answer> {
