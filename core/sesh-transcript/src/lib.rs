@@ -3,6 +3,7 @@
 mod claude;
 pub use claude::Background;
 mod codex;
+pub mod follower;
 pub mod screen;
 mod pi;
 pub mod vault;
