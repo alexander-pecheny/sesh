@@ -42,6 +42,8 @@ pub struct Outcome {
     pub items: HashMap<String, Vec<String>>,
     /// Every moment a message showed twice at once.
     pub doubles: Vec<String>,
+    /// How many items were ever shown from the screen before the Transcript had them.
+    pub provisional: usize,
 }
 
 pub fn replay(recording: &Path, work: &Path) -> Result<Outcome> {
@@ -63,6 +65,7 @@ pub fn replay(recording: &Path, work: &Path) -> Result<Outcome> {
     let mut moved: HashMap<String, PathBuf> = HashMap::new();
     let start = Instant::now();
     let mut doubles = Vec::new();
+    let mut provisional = std::collections::HashSet::new();
     for event in &events {
         let at = event["at"].as_u64().unwrap_or(0);
         *now.borrow_mut() = at;
@@ -74,6 +77,14 @@ pub fn replay(recording: &Path, work: &Path) -> Result<Outcome> {
         let Some(panes) = event["panes"].as_array() else { continue };
         let panes: Vec<Value> = panes.iter().map(|pane| relocate(pane, &mut moved, work)).collect();
         machine.tick(&panes, start + Duration::from_millis(at))?;
+        for pane in &panes {
+            let session = pane["pane_id"].as_str().unwrap_or_default();
+            for item in machine.log.last(session, usize::MAX)? {
+                if item["final"] == false {
+                    provisional.insert(item["id"].to_string());
+                }
+            }
+        }
         for (session, shown) in shown(&machine.log, &panes)? {
             let mut seen = std::collections::HashSet::new();
             for text in shown.iter().filter(|text| text.starts_with("user:") || text.starts_with("text:")) {
@@ -84,7 +95,7 @@ pub fn replay(recording: &Path, work: &Path) -> Result<Outcome> {
         }
     }
     let panes: Vec<Value> = events.iter().filter_map(|event| event["panes"].as_array()).flatten().cloned().collect();
-    Ok(Outcome { items: shown(&machine.log, &panes)?.into_iter().collect(), doubles })
+    Ok(Outcome { items: shown(&machine.log, &panes)?.into_iter().collect(), doubles, provisional: provisional.len() })
 }
 
 /// Each session's items as `kind: text`, in order.
@@ -146,6 +157,7 @@ pub fn print(recording: &Path) -> Result<i32> {
     for (session, items) in sessions {
         println!("{}", json!({"session": session, "items": items}));
     }
+    println!("{}", json!({"provisional": outcome.provisional}));
     for double in &outcome.doubles {
         println!("{}", json!({"double": double}));
     }

@@ -147,7 +147,7 @@ impl Machine {
 // MARK: serve
 
 /// Starts the follower unless one answers, and returns once it does.
-pub fn serve(foreground: bool, record: Option<PathBuf>) -> Result<i32> {
+pub fn serve(foreground: bool, record: Option<(PathBuf, String)>) -> Result<i32> {
     if UnixStream::connect(socket()).is_ok() {
         return Ok(0);
     }
@@ -158,8 +158,8 @@ pub fn serve(foreground: bool, record: Option<PathBuf>) -> Result<i32> {
     let log = OpenOptions::new().create(true).append(true).open(home().join("follower.log")).map_err(|err| err.to_string())?;
     let mut command = Command::new(std::env::current_exe().map_err(|err| err.to_string())?);
     command.args(["serve", "--foreground"]);
-    if let Some(record) = &record {
-        command.arg("--record").arg(record);
+    if let Some((dir, pane)) = &record {
+        command.arg("--record").arg(dir).arg("--pane").arg(pane);
     }
     command
         .stdin(Stdio::null())
@@ -178,7 +178,7 @@ pub fn serve(foreground: bool, record: Option<PathBuf>) -> Result<i32> {
     Err("the follower did not start; see ~/.sesh/follower.log".into())
 }
 
-fn run(record: Option<PathBuf>) -> Result<i32> {
+fn run(record: Option<(PathBuf, String)>) -> Result<i32> {
     std::fs::create_dir_all(home()).map_err(|err| err.to_string())?;
     let lock = File::create(home().join("follower.lock")).map_err(|err| err.to_string())?;
     if lock.try_lock().is_err() {
@@ -189,7 +189,7 @@ fn run(record: Option<PathBuf>) -> Result<i32> {
     let listener = UnixListener::bind(&path).map_err(|err| format!("{}: {err}", path.display()))?;
     listener.set_nonblocking(true).map_err(|err| err.to_string())?;
     let source: Rc<RefCell<dyn Source>> = match record {
-        Some(dir) => Rc::new(RefCell::new(Recorder::new(&dir)?)),
+        Some((dir, pane)) => Rc::new(RefCell::new(Recorder::new(&dir, pane)?)),
         None => Rc::new(RefCell::new(Herdr)),
     };
     let mut machine = Machine::new(Log::open(&home().join("sessions.db"))?, Shared(source.clone()));
@@ -375,19 +375,21 @@ pub fn attach() -> Result<i32> {
 
 // MARK: recording
 
-/// herdr's answers and the Transcripts' growth, timed, for replaying a session in a test.
+/// One pane's share of herdr's answers and its Transcript's growth, timed, for replaying the
+/// session in a test; other panes are left out, since they hold other conversations.
 pub struct Recorder {
     file: File,
     started: Instant,
     sizes: HashMap<String, u64>,
+    pane: String,
 }
 
 impl Recorder {
-    fn new(dir: &Path) -> Result<Self> {
+    fn new(dir: &Path, pane: String) -> Result<Self> {
         std::fs::create_dir_all(dir).map_err(|err| err.to_string())?;
         let stamp = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap_or_default().as_secs();
         let file = File::create(dir.join(format!("{stamp}.jsonl"))).map_err(|err| err.to_string())?;
-        Ok(Recorder { file, started: Instant::now(), sizes: HashMap::new() })
+        Ok(Recorder { file, started: Instant::now(), sizes: HashMap::new(), pane })
     }
 
     fn write(&mut self, mut event: Value) {
@@ -397,7 +399,8 @@ impl Recorder {
 
     /// Whole lines added to each followed Transcript since the last look.
     fn transcripts(&mut self, panes: &[Value]) {
-        for path in panes.iter().filter_map(transcript_path) {
+        let paths: Vec<String> = panes.iter().filter(|pane| pane["pane_id"] == self.pane.as_str()).filter_map(transcript_path).collect();
+        for path in paths {
             let Ok(file) = File::open(&path) else { continue };
             let size = file.metadata().map(|meta| meta.len()).unwrap_or(0);
             let known = *self.sizes.entry(path.clone()).or_insert(0);
@@ -408,28 +411,51 @@ impl Recorder {
             let _ = std::io::Seek::seek(&mut reader, std::io::SeekFrom::Start(known));
             let mut added = String::new();
             let mut line = String::new();
+            let mut read = 0;
             while reader.read_line(&mut line).unwrap_or(0) > 0 && line.ends_with('\n') {
-                added.push_str(&line);
+                read += line.len();
+                if parsed(&line) {
+                    added.push_str(&line);
+                }
                 line.clear();
             }
+            self.sizes.insert(path.clone(), known + read as u64);
             if !added.is_empty() {
-                self.sizes.insert(path.clone(), known + added.len() as u64);
                 self.write(json!({"transcript": path, "lines": added}));
             }
         }
     }
 }
 
+/// Whether a Transcript line is one the parsers read. Claude also records its whole system
+/// prompt, the user's instructions and email among it, which a recording must never keep.
+fn parsed(line: &str) -> bool {
+    let Ok(value) = serde_json::from_str::<Value>(line) else { return false };
+    if value["isMeta"] == true {
+        return false;
+    }
+    match value["type"].as_str() {
+        Some("user" | "assistant" | "queue-operation") => true,
+        Some("attachment") => value["attachment"]["type"] == "queued_command",
+        Some(_) => false,
+        // Codex and pi lines carry no Claude type.
+        None => true,
+    }
+}
+
 impl Source for Recorder {
     fn panes(&mut self) -> Result<Vec<Value>> {
         let panes = Herdr.panes()?;
-        self.write(json!({"panes": panes}));
+        let mine: Vec<&Value> = panes.iter().filter(|pane| pane["pane_id"] == self.pane.as_str()).collect();
+        self.write(json!({"panes": mine}));
         Ok(panes)
     }
 
     fn read(&mut self, pane_id: &str, ansi: bool) -> Result<String> {
         let screen = Herdr.read(pane_id, ansi)?;
-        self.write(json!({"read": pane_id, "ansi": ansi, "screen": screen}));
+        if pane_id == self.pane {
+            self.write(json!({"read": pane_id, "ansi": ansi, "screen": screen}));
+        }
         Ok(screen)
     }
 

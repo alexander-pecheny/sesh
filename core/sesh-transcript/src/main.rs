@@ -19,7 +19,7 @@ const AGENT_GONE_AFTER: Duration = Duration::from_secs(2);
 const PING: Duration = Duration::from_secs(30);
 const DEFAULT_LAST: usize = 50;
 const USAGE: &str = "usage: sesh-transcript --version | follow --protocol | follow <pane> [--since CURSOR] [--last N]
-       | serve [--foreground] [--record DIR] | attach | replay FILE
+       | serve [--foreground] [--record DIR --pane PANE] | attach | replay FILE
        | history <pane> --before ID [--last N] | entry <pane> ID
        | answer <pane> --json ANSWERS | permit <pane> allow|deny | background <pane>...
        | vault init DIR | vault pull|follow DIR [--since SEQ] | vault push DIR FILE
@@ -62,13 +62,18 @@ fn main() {
 fn serve_command(args: &[String]) -> Exit {
     let foreground = args.iter().any(|arg| arg == "--foreground");
     let args: Vec<String> = args.iter().filter(|arg| *arg != "--foreground").cloned().collect();
-    let Some((rest, options)) = parse_args(&args, &["record"]) else {
+    let Some((rest, options)) = parse_args(&args, &["record", "pane"]) else {
         return usage();
+    };
+    let record = match (options.get("record"), options.get("pane")) {
+        (Some(dir), Some(pane)) => Some((std::path::PathBuf::from(dir), pane.to_string())),
+        (None, None) => None,
+        _ => return usage(),
     };
     if !rest.is_empty() {
         return usage();
     }
-    serve::serve(foreground, options.get("record").map(std::path::PathBuf::from))
+    serve::serve(foreground, record)
 }
 
 fn usage() -> Exit {

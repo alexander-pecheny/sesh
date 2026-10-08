@@ -225,6 +225,7 @@ impl Follower {
                         .read_tail(Some(offset), |entries| entries.len() >= self.last)
                         .map_err(|err| err.to_string())?;
                     transcript.scan_background().map_err(|err| err.to_string())?;
+                    slim(&mut transcript.entries);
                     let known = transcript.entries.clone();
                     self.transcript = Some(transcript);
                     self.send(&known, &[])?;
@@ -329,6 +330,7 @@ impl Follower {
             .read_tail(None, |entries| entries.len() >= self.last)
             .map_err(|err| err.to_string())?;
         transcript.scan_background().map_err(|err| err.to_string())?;
+        slim(&mut transcript.entries);
         let entries = transcript.entries.clone();
         self.transcript = Some(transcript);
         let start = entries.len().saturating_sub(self.last);
@@ -353,6 +355,7 @@ impl Follower {
             let start = entries.len().saturating_sub(self.last);
             return self.send(&entries[..start], &entries[start..]);
         }
+        slim(&mut transcript.entries[mark..]);
         let entries = transcript.entries[mark..].to_vec();
         self.transcript = Some(transcript);
         self.send(&[], &entries)
@@ -502,6 +505,13 @@ fn settled(source: &mut dyn Source, pane_id: &str, live: &Live) -> Option<View> 
         view = again;
     }
     None
+}
+
+/// Results kept as they are sent: a follower holds hundreds of entries for days.
+fn slim(entries: &mut [Entry]) {
+    for entry in entries.iter_mut().filter(|entry| entry.kind == "result") {
+        *entry = entry.clipped();
+    }
 }
 
 pub fn entry_line(entry: &Entry) -> Value {
