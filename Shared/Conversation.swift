@@ -229,6 +229,8 @@ final class Conversation: ObservableObject {
     /// Follows until the screen goes away, picking up after the last cursor whenever the
     /// Link drops, so a reconnect neither repeats nor misses an entry.
     func follow() async {
+        // The helper follows only a pane that runs an Agent, and a starting one does not yet.
+        while starting, !Task.isCancelled { try? await Task.sleep(for: .milliseconds(200)) }
         while !Task.isCancelled, let runner {
             let since = cursor.map { " --since \(quote($0))" } ?? ""
             let ended = await runner.stream("\(Helper.path) follow \(target)\(since)") { [weak self] in
