@@ -904,6 +904,8 @@ struct Markdown: View {
                         FontDigitVariant(.monospaced)
                         if cell.row == 0 { FontWeight(.semibold) }
                     }
+                    .fixedSize(horizontal: false, vertical: true)
+                    .frame(maxWidth: Metric.measure, alignment: .leading)
                     .padding(.vertical, Metric.tiny)
                     .padding(.horizontal, Metric.gap)
             }

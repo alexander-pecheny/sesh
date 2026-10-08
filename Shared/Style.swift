@@ -75,14 +75,19 @@ enum Metric {
     #endif
     #if os(macOS)
     static let proseColumn: CGFloat? = measure
+    #endif
     /// Room for 99 characters of ordinary prose, measured on a sentence rather than on "0",
     /// which is wider than the average letter.
     static let measure: CGFloat = {
         let sample = "The quick brown fox jumps over the lazy dog, then naps by the river."
-        let width = (sample as NSString).size(withAttributes: [.font: NSFont.systemFont(ofSize: body)]).width
+        #if os(macOS)
+        let font = NSFont.systemFont(ofSize: body)
+        #else
+        let font = UIFont.systemFont(ofSize: body)
+        #endif
+        let width = (sample as NSString).size(withAttributes: [.font: font]).width
         return (99 * width / CGFloat(sample.count)).rounded(.up)
     }()
-    #endif
 }
 
 extension Array {
