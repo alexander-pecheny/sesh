@@ -172,7 +172,7 @@ final class HostLink: ObservableObject, Identifiable, Runner {
         if !ran.ok, let data = await Self.download(published.url + "sesh-transcript-\(name).gz", sha: sha) {
             let file = FileManager.default.temporaryDirectory.appending(path: "sesh-transcript.gz")
             try? data.write(to: file)
-            ran = await call { sesh_session_put($0, file.path, ".sesh/bin/sesh-transcript.gz") }
+            ran = await call { sesh_session_put($0, file.path, ".sesh/bin/\(Helper.file).gz") }
             if ran.ok { ran = await run(Helper.unpack) }
         }
         return ran.ok ? nil : "Sesh could not install its helper on \(host.title): \(ran.problem)"

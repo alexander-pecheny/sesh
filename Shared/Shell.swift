@@ -30,8 +30,6 @@ enum Agent: String, CaseIterable, Identifiable {
 
 /// Where Sesh's transcript helper lives on every machine (ADR 0006).
 enum Helper {
-    static let path = "~/.sesh/bin/sesh-transcript"
-
     /// The published helpers this build trusts: their version, release and SHA-256 by platform.
     struct Published: Decodable {
         let version: String
@@ -42,11 +40,31 @@ enum Helper {
         .flatMap { try? Data(contentsOf: $0) }
         .flatMap { try? JSONDecoder().decode(Published.self, from: $0) }
 
+    #if os(macOS)
+    /// `-helpers DIR` points at `build/helpers`, so a helper not yet released can be tried.
+    static let local = UserDefaults.standard.string(forKey: "helpers").map { URL(filePath: $0) }
+    #endif
+
+    /// The helper this build runs, as its `--version` prints it.
+    static let version: String? = {
+        #if os(macOS)
+        if let local {
+            return (try? String(contentsOf: local.appending(path: "version"), encoding: .utf8))?
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+        }
+        #endif
+        return published?.version
+    }()
+
+    /// Named for its version, so builds that pin different helpers share a machine without
+    /// replacing each other's.
+    static let file = "sesh-transcript-" + (version?.split(separator: "+").last.map(String.init) ?? "unpinned")
+    static let path = "~/.sesh/bin/\(file)"
+    static let gz = "$HOME/.sesh/bin/\(file).gz"
+    static let unpack = "gunzip -f \(gz) && chmod 755 $HOME/.sesh/bin/\(file)"
+
     /// The build's name for what `uname -sm` printed, as in `linux-x86_64`.
     static func name(_ platform: String) -> String { platform.lowercased().replacingOccurrences(of: " ", with: "-") }
-
-    static let gz = "$HOME/.sesh/bin/sesh-transcript.gz"
-    static let unpack = "gunzip -f \(gz) && chmod 755 \(path)"
 
     /// Fetches the pinned build onto the machine and installs it only if its hash matches.
     static func download(_ name: String) -> String? {

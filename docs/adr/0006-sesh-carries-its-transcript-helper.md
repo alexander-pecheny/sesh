@@ -9,9 +9,11 @@ left Projects useless there. So the parsers that turn Transcripts into Conversat
 entries move out of the herdr fork into `sesh-transcript`, a small static binary built
 from Sesh's `core`. `just helpers-release` publishes builds for Linux x86-64, Linux arm64
 and macOS as a release on the GitHub mirror, and the app carries only `helpers.json`: the
-version, the release and each build's SHA-256. On connect, when `~/.sesh/bin` holds another
-version, the Host downloads its build with curl or wget and checks the hash; a Host that
-cannot reach GitHub gets the same bytes through the phone over SFTP.
+version, the release and each build's SHA-256. Each version lives in `~/.sesh/bin` under
+its own name, `sesh-transcript-<hash>`, so two builds that pin different helpers, such as
+the installed app and one under test, never replace each other's. On connect, when its
+version is missing, the Host downloads its build with curl or wget and checks the hash; a
+Host that cannot reach GitHub gets the same bytes through the phone over SFTP.
 
 The helper speaks the same protocol `herdr agent follow` did, so the Conversation is
 unchanged. It asks stock `herdr pane get` for each pane's state and session id, finds

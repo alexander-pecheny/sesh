@@ -207,8 +207,8 @@ extension Machine {
         let ran = await run("uname -sm; \(Helper.path) --version 2>/dev/null || echo")
         let lines = ran.out.components(separatedBy: "\n")
         guard ran.ok, lines.count > 1 else { return ran.problem }
-        if let local = Self.localHelpers { return await install(from: local, platform: lines[0], found: lines[1]) }
-        guard let published = Helper.published, lines[1] != published.version else { return nil }
+        guard lines[1] != Helper.version else { return nil }
+        if let local = Helper.local { return await install(from: local, platform: lines[0]) }
         guard let download = Helper.download(Helper.name(lines[0])) else {
             return "Sesh has no helper for \(lines[0]) on \(title)."
         }
@@ -216,17 +216,11 @@ extension Machine {
         return installed.ok ? nil : "Sesh could not install its helper on \(title): \(installed.problem)"
     }
 
-    /// `-helpers DIR` points at `build/helpers`, so a helper not yet released can be tried.
-    private static let localHelpers = UserDefaults.standard.string(forKey: "helpers").map { URL(filePath: $0) }
-
-    private func install(from folder: URL, platform: String, found: String) async -> String? {
-        let version = (try? String(contentsOf: folder.appending(path: "version"), encoding: .utf8))?
-            .trimmingCharacters(in: .whitespacesAndNewlines)
-        guard found != version else { return nil }
+    private func install(from folder: URL, platform: String) async -> String? {
         guard let data = try? Data(contentsOf: folder.appending(path: "sesh-transcript-\(Helper.name(platform)).gz")) else {
             return "There is no local helper for \(platform)."
         }
-        let put = await put(data, to: "~/.sesh/bin/sesh-transcript.gz")
+        let put = await put(data, to: "~/.sesh/bin/\(Helper.file).gz")
         guard put.ok else { return put.problem }
         let unpacked = await run(Helper.unpack)
         return unpacked.ok ? nil : unpacked.problem
