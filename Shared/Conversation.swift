@@ -231,7 +231,7 @@ final class Conversation: ObservableObject {
     func follow() async {
         // The helper follows only a pane that runs an Agent, and a starting one does not yet.
         while starting, !Task.isCancelled { try? await Task.sleep(for: .milliseconds(200)) }
-        if Self.useLog, case .pane(let pane) = source { return await attach(pane) }
+        if case .pane(let pane) = source { return await attach(pane) }
         while !Task.isCancelled, let runner {
             let since = cursor.map { " --since \(quote($0))" } ?? ""
             let ended = await runner.stream("\(Helper.path) follow \(target)\(since)") { [weak self] in
@@ -300,9 +300,6 @@ final class Conversation: ObservableObject {
     }
 
     // MARK: The Session log (ADR 0010)
-
-    /// `-sessionLog YES` reads the Conversation from the machine's Session log.
-    static let useLog = UserDefaults.standard.bool(forKey: "sessionLog")
 
     private struct LogItem: Decodable {
         let id: String
@@ -439,7 +436,7 @@ final class Conversation: ObservableObject {
 
     /// Fetches the page of entries before the first one shown and puts it above.
     func loadEarlier() async {
-        if Self.useLog, case .pane(let pane) = source {
+        if case .pane(let pane) = source {
             guard earlier, !loading else { return }
             loading = true
             defer { loading = false }

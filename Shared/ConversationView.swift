@@ -19,22 +19,13 @@ struct ConversationView: View {
     @State private var composing = false
     @State private var atBottom = true
     @State private var nearTop = false
-    @State private var position = ScrollPosition(idType: String.self)
     /// Counts the user's sends: whoever sends wants to see the reply, wherever they had scrolled.
     @State private var sent = 0
-    /// A row a link scrolled to, held at the top until the text around it has settled.
-    @State private var pinned: (row: String, until: Date)?
     /// Counts the requests to go to the end, for the native list.
     @State private var jumps = 0
 
     private var flavour: Catppuccin.Flavour { colorScheme == .dark ? .mocha : .latte }
     private var working: Bool { conversation.state == "working" }
-    /// Grows whenever something lands at the bottom.
-    private var changes: Int {
-        conversation.items.count + conversation.permissions.count + conversation.queued.count + (working ? 1 : 0)
-            + conversation.live.reduce(0) { $0 + ($1.text ?? $1.summary).count }
-    }
-    private static let nearTop = 200.0
     private static let rowSpacing: CGFloat = 14
     private static let focusTint = 0.15
     private static let shadow: CGFloat = 3
@@ -140,91 +131,12 @@ struct ConversationView: View {
         }
     }
 
-    @ViewBuilder private var chat: some View {
-        if Conversation.useLog {
-            ChatList(items: listItems, atBottom: $atBottom, nearTop: $nearTop, jumps: jumps, reveal: revealedRow,
-                     spacing: Self.rowSpacing, inset: Metric.wide)
-                .onChange(of: nearTop) { if nearTop { Task { await loadEarlier() } } }
-        } else {
-            scrolling
-        }
-    }
-
-    private var scrolling: some View {
-        ScrollView {
-            LazyVStack(alignment: .leading, spacing: Self.rowSpacing) {
-                if conversation.earlier { ProgressView().frame(maxWidth: .infinity) }
-                if conversation.starting {
-                    HStack(spacing: Metric.gap) {
-                        ProgressView().controlSize(.small)
-                        Text("Starting \(conversation.agent?.title ?? "the Agent")… Anything you send now goes once it is up.")
-                    }
-                    .font(.ui(Metric.label)).foregroundStyle(flavour(.overlay1))
-                    .frame(maxWidth: .infinity)
-                    .padding(.top, Metric.wide)
-                } else if conversation.loaded, conversation.items.isEmpty, conversation.pane != nil {
-                    Text("\(conversation.agent?.title ?? "The Agent") is ready. Its Conversation starts with your first message.")
-                        .font(.ui(Metric.label)).foregroundStyle(flavour(.overlay1))
-                        .frame(maxWidth: .infinity)
-                        .padding(.top, Metric.wide)
-                }
-                ForEach(Row.rows(conversation.shown, key: conversation.rowKey)) { row in rowView(row) }
-                ForEach(conversation.permissions) { PermissionCard(permission: $0, conversation: conversation) }
-                ForEach(conversation.queued) { QueuedBubble(message: $0, conversation: conversation, edit: takeBack) }
-                // Waiting on background work, Claude's own status line says on what.
-                if working || conversation.state == "background" && !conversation.status.isEmpty {
-                    WorkingRow(status: conversation.status)
-                }
-            }
-            .scrollTargetLayout()
-            .padding(Metric.wide)
-            // An opening card with an unbroken path asks for more than the screen; never give it.
-            .fitWidth()
-        }
-        // Tracking the top row keeps it in place while a page lands above it.
-        .scrollPosition($position, anchor: .top)
-        .defaultScrollAnchor(.bottom)
-        .onScrollGeometryChange(for: Bool.self) { geometry in
-            geometry.contentOffset.y + geometry.contentInsets.top < Self.nearTop
-        } action: { _, top in
-            nearTop = top
-            if top { Task { await loadEarlier() } }
-        }
-        .onScrollGeometryChange(for: Edge.self) { geometry in
-            Edge(height: geometry.contentSize.height, top: geometry.visibleRect.minY, bottom: geometry.visibleRect.maxY)
-        } action: { old, new in
-            // The reader left the end when the view, keeping its size, rose by more than the
-            // content shrank: rows above settling move both alike.
-            let rose = new.top - old.top, shrank = new.height - old.height
-            let resized = abs((new.bottom - new.top) - (old.bottom - old.top)) > 1
-            // While a revealed row is held in place, the view is where the link put it.
-            let holding = pinned.map { $0.until > .now } ?? false
-            // A view left wholly past the content's end, by a jump measured while covered, shows
-            // nothing; it goes back to the end.
-            if new.top > new.height, new.height > 0 { position.scrollTo(edge: .bottom) }
-            if holding {
-            } else if new.bottom >= new.height - Metric.control {
-                atBottom = true
-            } else if !resized, rose < -1, rose < shrank - 1 {
-                atBottom = false
-                return
-            }
-            // New content, or text that has only now measured its height, moves the end away
-            // without the reader moving: follow it if the end was in view.
-            guard new.height != old.height else { return }
-            if holding, let pinned {
-                position.scrollTo(id: pinned.row, anchor: .top)
-            } else if atBottom {
-                position.scrollTo(edge: .bottom)
-            }
-        }
-        .onChange(of: conversation.focus) { showFocus() }
-        .animation(.easeOut(duration: 1), value: conversation.focus)
-        .onChange(of: changes) {
-            // A Conversation shorter than the screen never scrolls to the top to ask.
-            if nearTop { Task { await loadEarlier() } }
-            if atBottom { position.scrollTo(edge: .bottom) }
-        }
+    private var chat: some View {
+        ChatList(items: listItems, atBottom: $atBottom, nearTop: $nearTop, jumps: jumps, reveal: revealedRow,
+                 spacing: Self.rowSpacing, inset: Metric.wide)
+            .onChange(of: nearTop) { if nearTop { Task { await loadEarlier() } } }
+            .onChange(of: conversation.items.count) { if nearTop { Task { await loadEarlier() } } }
+            .animation(.easeOut(duration: 1), value: conversation.focus)
     }
 
     private func rowView(_ row: Row) -> some View {
@@ -369,28 +281,9 @@ struct ConversationView: View {
     private func jump() {
         atBottom = true
         jumps += 1
-        position.scrollTo(edge: .bottom)
-        Task {
-            for delay in [50, 150, 400] {
-                try? await Task.sleep(for: .milliseconds(delay))
-                guard atBottom else { return }
-                position.scrollTo(edge: .bottom)
-            }
-        }
-    }
-
-    /// Scrolls to the item a link pointed at, set before this view existed or while it shows.
-    private func showFocus() {
-        guard let focus = conversation.focus,
-              let row = Row.rows(conversation.items, key: conversation.rowKey).first(where: { $0.contains(focus) }) else { return }
-        atBottom = false
-        // Text above it is still measuring its height; keep the row in place meanwhile.
-        pinned = (row.id, .now + 2)
-        position.scrollTo(id: row.id, anchor: .top)
     }
 
     private func appeared() {
-        if conversation.focus != nil { DispatchQueue.main.async { showFocus() } }
         if draft.isEmpty { draft = conversation.draft }
         if fresh { DispatchQueue.main.async { field.focus() } }
         #if os(macOS)
@@ -585,13 +478,6 @@ private struct BackgroundLine: View {
         }
         .padding(Metric.pad)
     }
-}
-
-/// How tall the Conversation is and where the visible part ends.
-private struct Edge: Equatable {
-    let height: CGFloat
-    let top: CGFloat
-    let bottom: CGFloat
 }
 
 /// What the list shows: one entry, or a run of reads, searches and fetches as one line.
