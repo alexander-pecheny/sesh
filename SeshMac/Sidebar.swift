@@ -7,6 +7,8 @@ struct Sidebar: View {
     @State private var adding = false
     @State private var naming: Naming?
     @State private var closing: Closing?
+    /// The order of the Tasks, kept while the pointer is over them.
+    @State private var order: [String: Int] = [:]
 
     struct Closing: Identifiable {
         let vault: Vault
@@ -39,6 +41,8 @@ struct Sidebar: View {
             UnfiledSection(title: "On this Mac", items: library.unfiled[""] ?? [])
         }
         .listStyle(.sidebar)
+        .environment(\.taskOrder, order)
+        .onHover { order = $0 ? library.order() : [:] }
         #if DEBUG
         // A hidden window draws no translucent material, so a snapshot needs a solid one.
         .scrollContentBackground(UserDefaults.standard.string(forKey: "snapshot") == nil ? .automatic : .hidden)
@@ -129,19 +133,17 @@ private struct VaultSection: View {
     }
 }
 
-/// The folders and Tasks directly inside `parent`, the most recently changed first.
+/// The folders and Tasks directly inside `parent`, the most recently changed first. While the
+/// pointer is over the sidebar they keep their places, and new ones come first.
 private struct Children: View {
     @EnvironmentObject private var library: Library
     @ObservedObject var vault: Vault
     let parent: String?
     @Binding var naming: Sidebar.Naming?
+    @Environment(\.taskOrder) private var order
 
     var body: some View {
-        let rows = Tree.children(of: parent, in: vault)
-            .map { ($0, library.changed($0, in: vault)) }
-            .sorted { $0.1 > $1.1 }
-            .map(\.0)
-        ForEach(rows) { record in
+        ForEach(library.children(of: parent, in: vault, order: order)) { record in
             if record.kind == .folder {
                 FolderRow(vault: vault, folder: record, naming: $naming)
             } else {

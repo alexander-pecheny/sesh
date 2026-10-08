@@ -24,15 +24,24 @@ final class PlainField: UITextView, ObservableObject {
 
     /// Command-Return sends from a hardware keyboard; Return alone starts a line, as on screen.
     var submit: (() -> Void)?
+    /// The last message sent, which Up in an empty box brings back, as in the Agent's terminal.
+    var recall: (() -> String?)?
 
     override var keyCommands: [UIKeyCommand]? {
         guard submit != nil else { return super.keyCommands }
         let send = UIKeyCommand(input: "\r", modifierFlags: .command, action: #selector(send))
         send.discoverabilityTitle = "Send"
-        return (super.keyCommands ?? []) + [send]
+        guard text.isEmpty, recall != nil else { return (super.keyCommands ?? []) + [send] }
+        let up = UIKeyCommand(input: UIKeyCommand.inputUpArrow, modifierFlags: [], action: #selector(recallLast))
+        up.wantsPriorityOverSystemBehavior = true
+        return (super.keyCommands ?? []) + [send, up]
     }
 
     @objc private func send() { submit?() }
+
+    @objc private func recallLast() {
+        if let last = recall?() { insertText(last) }
+    }
 }
 
 struct PlainText: UIViewRepresentable {
@@ -87,7 +96,10 @@ struct PlainText: UIViewRepresentable {
 /// The Mac's text for a shell or an Agent: no autocorrect, no typographic quotes or dashes.
 final class PlainField: NSTextView, ObservableObject {
     private static let returnKey: UInt16 = 36
+    private static let upKey: UInt16 = 126
     var submit: (() -> Void)?
+    /// The last message sent, which Up in an empty box brings back, as in the Agent's terminal.
+    var recall: (() -> String?)?
     /// Escape in an empty box, as in the Agent's terminal.
     var escape: (() -> Void)?
     /// Takes a pasted image and returns where it now lives, for its path to go in the text.
@@ -130,6 +142,9 @@ final class PlainField: NSTextView, ObservableObject {
         let plain = event.modifierFlags.intersection([.shift, .option, .command, .control]).isEmpty
         // Return while an input method is composing a word confirms the word.
         if event.keyCode == Self.returnKey, plain, !hasMarkedText(), let submit { return submit() }
+        if event.keyCode == Self.upKey, plain, string.isEmpty, let last = recall?() {
+            return insertText(last, replacementRange: selectedRange())
+        }
         super.keyDown(with: event)
     }
 

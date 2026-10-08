@@ -8,15 +8,8 @@ struct TasksView: View {
     @StateObject private var search = Search()
     @State private var sheet: TaskSheet?
     @State private var settings = false
+    /// The order of the Tasks, taken when the screen shows or is pulled to refresh.
     @State private var order: [String: Int] = [:]
-
-    /// Every Task and folder by how recently it changed, taken when the screen shows.
-    private func freeze() {
-        let all = library.vaults.flatMap { vault in
-            (vault.all(.task) + vault.all(.folder)).map { ($0.id, library.changed($0, in: vault)) }
-        }
-        order = Dictionary(all.sorted { $0.1 > $1.1 }.enumerated().map { ($1.0, $0) }, uniquingKeysWith: { a, _ in a })
-    }
 
     private var flavour: Catppuccin.Flavour { colorScheme == .dark ? .mocha : .latte }
     private var searching: Bool { !search.query.trimmingCharacters(in: .whitespaces).isEmpty }
@@ -34,10 +27,10 @@ struct TasksView: View {
                 .refreshable {
                     library.vaults.forEach { $0.retry() }
                     try? await Task.sleep(for: .seconds(1))
-                    freeze()
+                    order = library.order()
                 }
                 .environment(\.taskOrder, order)
-                .onAppear(perform: freeze)
+                .onAppear { order = library.order() }
             }
         }
         .scrollContentBackground(.hidden)
@@ -82,19 +75,40 @@ private struct VaultSection: View {
     @EnvironmentObject private var library: Library
     @ObservedObject var vault: Vault
     @Binding var sheet: TaskSheet?
+    @AppStorage private var open: Bool
+
+    init(vault: Vault, sheet: Binding<TaskSheet?>) {
+        self.vault = vault
+        _sheet = sheet
+        _open = AppStorage(wrappedValue: true, "open." + vault.name)
+    }
 
     private var flavour: Catppuccin.Flavour { colorScheme == .dark ? .mocha : .latte }
 
     var body: some View {
         Section {
-            Children(vault: vault, parent: nil, sheet: $sheet)
-            ArchiveGroup(vault: vault, sheet: $sheet)
-            if let alias = vault.place.alias {
-                UnfiledGroup(items: library.unfiled[alias] ?? [], sheet: $sheet)
+            if open {
+                Children(vault: vault, parent: nil, sheet: $sheet)
+                ArchiveGroup(vault: vault, sheet: $sheet)
+                if let alias = vault.place.alias {
+                    UnfiledGroup(items: library.unfiled[alias] ?? [], sheet: $sheet)
+                }
             }
         } header: {
             HStack(spacing: Metric.gap) {
-                Text(vault.name)
+                Button {
+                    withAnimation(.easeOut(duration: 0.15)) { open.toggle() }
+                } label: {
+                    HStack(spacing: Metric.tiny) {
+                        Image.lucide("chevron-right", size: Metric.small)
+                            .rotationEffect(.degrees(open ? 90 : 0))
+                        Text(vault.name)
+                    }
+                    .contentShape(.rect)
+                }
+                .buttonStyle(.plain)
+                .accessibilityLabel(vault.name)
+                .accessibilityValue(open ? "expanded" : "collapsed")
                 Circle().fill(vault.online ? flavour(.green) : flavour(.overlay0)).frame(width: 6, height: 6)
                     .accessibilityLabel(vault.online ? "online" : "offline")
                 if vault.pending > 0 { Text("\(vault.pending) to send").foregroundStyle(flavour(.overlay1)) }
@@ -116,8 +130,7 @@ private struct VaultSection: View {
 }
 
 /// The folders and Tasks directly inside `parent`, the most recently changed first, in the
-/// order they had when the screen appeared: a Task moving up as its Agent writes would move
-/// under the finger about to tap it. New ones come first.
+/// order they had when the screen appeared. New ones come first.
 private struct Children: View {
     @EnvironmentObject private var library: Library
     @ObservedObject var vault: Vault
@@ -125,18 +138,8 @@ private struct Children: View {
     @Binding var sheet: TaskSheet?
     @Environment(\.taskOrder) private var order
 
-    private var recent: [Record] {
-        Tree.children(of: parent, in: vault)
-            .map { ($0, library.changed($0, in: vault)) }
-            .sorted { $0.1 > $1.1 }
-            .map(\.0)
-    }
-
     var body: some View {
-        let rows = recent.enumerated()
-            .sorted { (order[$0.element.id] ?? -1, $0.offset) < (order[$1.element.id] ?? -1, $1.offset) }
-            .map(\.element)
-        ForEach(rows) { record in
+        ForEach(library.children(of: parent, in: vault, order: order)) { record in
             if record.kind == .folder {
                 FolderRow(vault: vault, folder: record, sheet: $sheet)
             } else {
@@ -329,8 +332,4 @@ private struct UnfiledRow: View {
             Text("The Agent is interrupted and its herdr pane closed. Nothing of it is kept in a Vault, as it was never adopted.")
         }
     }
-}
-
-extension EnvironmentValues {
-    @Entry var taskOrder: [String: Int] = [:]
 }

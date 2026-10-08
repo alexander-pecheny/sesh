@@ -327,6 +327,26 @@ final class Library: ObservableObject {
         return max(Double(record.body.edited ?? 0), notes.max() ?? 0)
     }
 
+    /// Every Task and folder by how recently it changed, for a list to keep while the user
+    /// aims at it: a Task moving up as its Agent writes would move under the finger or pointer.
+    func order() -> [String: Int] {
+        let all = vaults.flatMap { vault in
+            (vault.all(.task) + vault.all(.folder)).map { ($0.id, changed($0, in: vault)) }
+        }
+        return Dictionary(all.sorted { $0.1 > $1.1 }.enumerated().map { ($1.0, $0) }, uniquingKeysWith: { a, _ in a })
+    }
+
+    /// The folders and Tasks directly inside `parent` in a kept `order`, those new to it first;
+    /// with no order kept, the most recently changed first.
+    func children(of parent: String?, in vault: Vault, order: [String: Int]) -> [Record] {
+        Tree.children(of: parent, in: vault)
+            .map { ($0, changed($0, in: vault)) }
+            .sorted { $0.1 > $1.1 }
+            .enumerated()
+            .sorted { (order[$0.element.0.id] ?? -1, $0.offset) < (order[$1.element.0.id] ?? -1, $1.offset) }
+            .map(\.element.0)
+    }
+
     private static let iso: ISO8601DateFormatter = {
         let parser = ISO8601DateFormatter()
         parser.formatOptions = [.withInternetDateTime, .withFractionalSeconds]

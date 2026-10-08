@@ -25,6 +25,9 @@ struct ConversationView: View {
     @State private var jumps = 0
     /// A message open on its own for selecting part of it, which the phone's list cannot do.
     @State private var selecting: String?
+    /// The rows keep their drawing until their version changes, so a time stamped today
+    /// changes to a date only when the day is part of it.
+    @State private var today = Calendar.current.startOfDay(for: .now)
 
     private var flavour: Catppuccin.Flavour { colorScheme == .dark ? .mocha : .latte }
     private var working: Bool { conversation.state == "working" }
@@ -115,9 +118,17 @@ struct ConversationView: View {
         .task { await conversation.follow() }
         .environment(\.openURL, links)
         .onAppear(perform: appeared)
+        .onReceive(NotificationCenter.default.publisher(for: .NSCalendarDayChanged).receive(on: RunLoop.main)) { _ in
+            today = Calendar.current.startOfDay(for: .now)
+        }
         .onChange(of: draft) { conversation.draft = draft }
         #if os(macOS)
         .onChange(of: hidden) { field.catchesTyping = !hidden }
+        .background {
+            if !hidden, let permission = conversation.permissions.first {
+                PermissionKeys(permission: permission, conversation: conversation).id(permission.id)
+            }
+        }
         #endif
         .sheet(isPresented: Binding(get: { selecting != nil }, set: { if !$0 { selecting = nil } })) {
             if let selecting { SelectSheet(text: selecting) }
@@ -190,6 +201,7 @@ struct ConversationView: View {
             case .lookups(let entries): entries.forEach(mark)
             }
             hasher.combine(conversation.focus.map(row.contains))
+            hasher.combine(today)
             items.append(item(row.id, hasher.finalize(), rowView(row)))
         }
         for permission in conversation.permissions {
@@ -304,8 +316,14 @@ struct ConversationView: View {
     private func appeared() {
         if draft.isEmpty { draft = conversation.draft }
         if fresh { DispatchQueue.main.async { field.focus() } }
-        #if os(macOS)
         let conversation = conversation
+        field.recall = { [weak conversation] in
+            conversation?.items.reversed().lazy.compactMap { item -> String? in
+                guard case .entry(let entry) = item, entry.kind == "user", let text = entry.text, !text.isEmpty else { return nil }
+                return text
+            }.first
+        }
+        #if os(macOS)
         field.pasteImage = { [weak conversation] data, ext in
             let path = await conversation?.upload(data, ext: ext)
             if path == nil { conversation?.problem = "Sesh could not upload the pasted image." }
@@ -635,7 +653,7 @@ private struct RowView: View {
 
     var body: some View {
         switch row.content {
-        case .lookups(let entries): Lookups(entries: entries, open: conversation.isOpen(entries[0].id))
+        case .lookups(let entries): Lookups(entries: entries, open: conversation.isOpen(entries[0].id), openPath: conversation.openPath)
         case .item(.switched(_, let reason)): SwitchDivider(reason: reason)
         case .item(.entry(let entry)):
             switch entry.kind {
@@ -1355,6 +1373,7 @@ private struct Lookups: View {
     @Environment(\.colorScheme) private var colorScheme
     let entries: [Conversation.Entry]
     @Binding var open: Bool
+    let openPath: ((String) -> Void)?
 
     private var flavour: Catppuccin.Flavour { colorScheme == .dark ? .mocha : .latte }
 
@@ -1377,10 +1396,16 @@ private struct Lookups: View {
         } detail: {
             VStack(alignment: .leading, spacing: 4) {
                 ForEach(entries) { entry in
-                    Text(entry.file ?? entry.command ?? entry.summary)
+                    let text = Text(entry.file ?? entry.command ?? entry.summary)
                         .font(.system(size: 11, design: .monospaced))
-                        .foregroundStyle(flavour(.subtext1))
                         .lineLimit(2)
+                    if let file = entry.file, let openPath {
+                        Button { openPath(file) } label: { text.foregroundStyle(flavour(.blue)).multilineTextAlignment(.leading) }
+                            .buttonStyle(.plain)
+                            .help("Open \((file as NSString).lastPathComponent)")
+                    } else {
+                        text.foregroundStyle(flavour(.subtext1))
+                    }
                 }
             }
             .frame(maxWidth: .infinity, alignment: .leading)
@@ -1526,7 +1551,10 @@ private struct PermissionCard: View {
                 Text(permission.summary).font(.ui(Metric.note)).foregroundStyle(flavour(.text)).textSelection(.enabled)
                 ForEach(options, id: \.self) { choice in
                     Button { Task { await pick(choice) } } label: {
-                        Text("\(choice.key). \(choice.label)").frame(maxWidth: .infinity, alignment: .leading)
+                        HStack {
+                            Text("\(choice.key). \(choice.label)").frame(maxWidth: .infinity, alignment: .leading)
+                            hint(choice.key.count == 1 ? "⌥⌘" + choice.key : nil)
+                        }
                     }
                     .buttonStyle(.bordered)
                     .tint(flavour(choice == options.first ? .mauve : .overlay1))
@@ -1534,12 +1562,16 @@ private struct PermissionCard: View {
                 .disabled(answering)
             } else {
                 HStack(spacing: Metric.pad) {
-                    Button { Task { await answer(false) } } label: { Text("Deny").frame(maxWidth: .infinity) }
-                        .buttonStyle(.bordered)
-                        .tint(flavour(.red))
-                    Button { Task { await answer(true) } } label: { Text("Allow").frame(maxWidth: .infinity) }
-                        .buttonStyle(.borderedProminent)
-                        .tint(flavour(.mauve))
+                    Button { Task { await answer(false) } } label: {
+                        HStack { Text("Deny"); hint("⌘.") }.frame(maxWidth: .infinity)
+                    }
+                    .buttonStyle(.bordered)
+                    .tint(flavour(.red))
+                    Button { Task { await answer(true) } } label: {
+                        HStack { Text("Allow"); hint("⌘↩") }.frame(maxWidth: .infinity)
+                    }
+                    .buttonStyle(.borderedProminent)
+                    .tint(flavour(.mauve))
                 }
                 .disabled(answering)
             }
@@ -1547,6 +1579,13 @@ private struct PermissionCard: View {
         .padding(Metric.pad)
         .background(flavour(.mantle), in: .rect(cornerRadius: Metric.corner))
         .overlay(RoundedRectangle(cornerRadius: Metric.corner).stroke(flavour(.peach).opacity(0.6)))
+    }
+
+    /// The keys that answer from anywhere in the window, which only the Mac's keyboard has.
+    @ViewBuilder private func hint(_ keys: String?) -> some View {
+        #if os(macOS)
+        if let keys { Text(keys).opacity(0.6) }
+        #endif
     }
 
     /// The command or file is drawn below, so the header does not repeat it.
@@ -1571,6 +1610,42 @@ private struct PermissionCard: View {
         if conversation.problem != nil { answering = false }
     }
 }
+
+#if os(macOS)
+/// The open permission's answers as keys, which work wherever the card is scrolled to; typed
+/// keys alone go to the message box.
+private struct PermissionKeys: View {
+    let permission: Conversation.Permission
+    let conversation: Conversation
+    @State private var answering = false
+
+    var body: some View {
+        ZStack {
+            if let options = permission.options {
+                ForEach(options, id: \.self) { choice in
+                    if choice.key.count == 1, let key = choice.key.first {
+                        Button("") { answer { await conversation.choose(choice) } }
+                            .keyboardShortcut(KeyEquivalent(key), modifiers: [.command, .option])
+                    }
+                }
+            } else {
+                Button("") { answer { await conversation.permit(true) } }.keyboardShortcut(.return)
+                Button("") { answer { await conversation.permit(false) } }.keyboardShortcut(".")
+            }
+        }
+        .hidden()
+    }
+
+    private func answer(_ send: @escaping () async -> Void) {
+        guard !answering else { return }
+        answering = true
+        Task {
+            await send()
+            if conversation.problem != nil { answering = false }
+        }
+    }
+}
+#endif
 
 private struct TodoBar: View {
     @Environment(\.colorScheme) private var colorScheme
