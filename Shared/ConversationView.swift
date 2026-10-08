@@ -24,6 +24,7 @@ struct ConversationView: View {
     @State private var sent = 0
     /// A row a link scrolled to, held at the top until the text around it has settled.
     @State private var pinned: (row: String, until: Date)?
+    @State private var settling: Task<Void, Never>?
 
     private var flavour: Catppuccin.Flavour { colorScheme == .dark ? .mocha : .latte }
     private var working: Bool { conversation.state == "working" }
@@ -83,8 +84,7 @@ struct ConversationView: View {
             }
             .scrollTargetLayout()
             .padding(Metric.wide)
-            // An opening card with an unbroken path asks for more than the screen; never give it.
-            .fitWidth()
+            .frame(maxWidth: .infinity)
         }
         // Tracking the top row keeps it in place while a page lands above it.
         .scrollPosition($position, anchor: .top)
@@ -98,6 +98,8 @@ struct ConversationView: View {
         .onScrollGeometryChange(for: Edge.self) { geometry in
             Edge(height: geometry.contentSize.height, top: geometry.visibleRect.minY, bottom: geometry.visibleRect.maxY)
         } action: { old, new in
+            // Rows never drawn only guess their heights, and when the guesses jump the stack draws nothing until it scrolls.
+            if settling != nil || atBottom && new.height != old.height { settle(at: new.top) }
             // The reader left the end when the view, keeping its size, rose by more than the
             // content shrank: rows above settling move both alike.
             let rose = new.top - old.top, shrank = new.height - old.height
@@ -296,6 +298,17 @@ struct ConversationView: View {
         .onChange(of: composing) { if !composing, atBottom { jump() } }
         .cover(isPresented: $composing) {
             Composer(text: $draft, canSend: canSend) { Task { await send() } }
+        }
+    }
+
+    /// Scrolls a hair once the view has kept still for a moment, which has the stack draw again.
+    private func settle(at top: CGFloat) {
+        settling?.cancel()
+        settling = Task {
+            try? await Task.sleep(for: .milliseconds(5))
+            guard !Task.isCancelled else { return }
+            settling = nil
+            if atBottom { position.scrollTo(y: top - 0.5) }
         }
     }
 
