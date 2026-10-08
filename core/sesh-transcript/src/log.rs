@@ -222,12 +222,15 @@ pub struct Writer {
     live: Vec<(String, Value)>,
     summary: Value,
     switches: u64,
+    /// The log's head when this writer began: a follower numbers its screen items from one
+    /// again, so the log keeps them apart by this.
+    epoch: i64,
 }
 
 impl Writer {
     pub fn new(session: &str, log: &Log) -> Result<Self> {
         let summary = log.session(session)?.unwrap_or_else(|| json!({"permissions": []}));
-        Ok(Writer { session: session.to_string(), live: Vec::new(), summary, switches: 0 })
+        Ok(Writer { session: session.to_string(), live: Vec::new(), summary, switches: 0, epoch: log.head()? })
     }
 
     /// The Transcript cursor the session was last read to, so a restart picks up there.
@@ -257,15 +260,15 @@ impl Writer {
             "live" => {
                 self.summary["status"] = line["status"].clone();
                 let items: Vec<Value> = line["items"].as_array().cloned().unwrap_or_default();
-                let shown: Vec<&str> = items.iter().filter_map(|item| item["id"].as_str()).collect();
+                let shown: Vec<String> = items.iter().filter_map(|item| item["id"].as_str()).map(|id| self.own(id)).collect();
                 for (id, _) in &self.live {
-                    if !shown.contains(&id.as_str()) {
+                    if !shown.contains(id) {
                         log.drop_item(&session, id)?;
                     }
                 }
                 let held: HashMap<String, Value> = std::mem::take(&mut self.live).into_iter().collect();
                 for item in items {
-                    let Some(id) = item["id"].as_str().map(str::to_string) else { continue };
+                    let Some(id) = item["id"].as_str().map(|id| self.own(id)) else { continue };
                     if held.get(&id) != Some(&item) {
                         log.put_item(&session, &id, None, false, None, &item)?;
                     }
@@ -307,7 +310,7 @@ impl Writer {
         let mut entry = line.clone();
         let fields = entry.as_object_mut().expect("an entry is an object");
         fields.remove("t");
-        let replaces = fields.remove("replaces").and_then(|id| id.as_str().map(str::to_string));
+        let replaces = fields.remove("replaces").and_then(|id| id.as_str().map(|id| self.own(id)));
         let entry_id = entry["id"].as_str().unwrap_or_default().to_string();
         if let Some(id) = replaces {
             let at = self.live.iter().position(|(live, _)| *live == id);
@@ -320,6 +323,10 @@ impl Writer {
             return log.put_item(&self.session, &id, None, true, Some(&entry_id), &entry);
         }
         self.place_final(log, &entry_id, Some(&entry_id), &entry)
+    }
+
+    fn own(&self, live: &str) -> String {
+        format!("{live}.{}", self.epoch)
     }
 
     fn place_final(&mut self, log: &Log, id: &str, entry: Option<&str>, body: &Value) -> Result<()> {

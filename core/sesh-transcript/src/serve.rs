@@ -75,6 +75,10 @@ impl Machine {
         Machine { log, source, sessions: HashMap::new() }
     }
 
+    pub fn source(&self) -> Shared {
+        self.source.clone()
+    }
+
     pub fn following(&self) -> usize {
         self.sessions.len()
     }

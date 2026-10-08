@@ -74,6 +74,11 @@ pub fn replay(recording: &Path, work: &Path) -> Result<Outcome> {
             let mut file = std::fs::OpenOptions::new().create(true).append(true).open(&local).map_err(|err| err.to_string())?;
             file.write_all(lines.as_bytes()).map_err(|err| err.to_string())?;
         }
+        // A follower that stops and starts again resumes from the cursor the log keeps.
+        if event["restart"] == true {
+            machine = Machine::new(Log::open(&db)?, machine.source());
+            continue;
+        }
         let Some(panes) = event["panes"].as_array() else { continue };
         let panes: Vec<Value> = panes.iter().map(|pane| relocate(pane, &mut moved, work)).collect();
         machine.tick(&panes, start + Duration::from_millis(at))?;
