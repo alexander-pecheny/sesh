@@ -57,6 +57,13 @@ final class Conversation: ObservableObject {
         let command: String?
         let file: String?
         let reason: String?
+        /// A menu read off the screen, with no hook to describe it: its choices, each picked by a key.
+        let options: [Choice]?
+
+        struct Choice: Decodable, Equatable, Hashable {
+            let key: String
+            let label: String
+        }
     }
 
     enum Item: Identifiable, Equatable {
@@ -408,12 +415,22 @@ final class Conversation: ObservableObject {
         return message.text
     }
 
-    /// Stops the Agent's turn and sends the queue once it has. herdr can go on reporting
-    /// "working" while Claude only waits on its background agents, so the queue goes anyway.
+    /// Stops the Agent's turn and sends the queue once it has. A message Claude already held is
+    /// dropped with the turn, so it goes again; herdr can go on reporting "working" while Claude
+    /// only waits on its background agents, so the queue goes anyway.
     func interrupt() async {
+        let text = queued.map(\.text).joined(separator: "\n\n")
         await stop()
         try? await Task.sleep(for: .milliseconds(1500))
-        await sendNow()
+        queued.removeAll()
+        guard let pane, !text.isEmpty else { return }
+        if let failed = await run("herdr agent prompt \(quote(pane)) \(quote(text))") { problem = failed }
+    }
+
+    /// Picks a choice in a menu read off the Agent's screen.
+    func choose(_ choice: Permission.Choice) async {
+        guard let pane else { return }
+        problem = await run("herdr pane send-keys \(quote(pane)) \(quote(choice.key))")
     }
 
     /// Hands the queue to the Agent at once; Claude takes a message mid-turn, or while it

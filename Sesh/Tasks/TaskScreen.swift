@@ -123,7 +123,10 @@ private struct TabChip: View {
                 if library.ended(session) {
                     Button("Resume Agent session") { Task { await library.resume(session) } }
                 } else if !library.resuming.contains(id) {
-                    Button("End Agent session") { library.askToEnd(session) }
+                    Button("Close Tab and End \(session.body.agent.flatMap(Agent.init)?.title ?? "Agent") Session") {
+                        library.close(tab, in: task)
+                        library.askToEnd(session)
+                    }
                 }
             }
             if !recordID.isEmpty {
@@ -275,7 +278,6 @@ private struct SessionScreen: View {
                 }
             } else if let conversation, let session = vault.records[id] {
                 ConversationView(conversation: conversation, title: session.body.title ?? "Agent session", fresh: false,
-                                 end: conversation.pane == nil ? nil : { library.askToEnd(session) },
                                  resume: conversation.pane == nil && library.ended(session) ? { await library.resume(session) } : nil)
                     .id(ObjectIdentifier(conversation))
             } else {

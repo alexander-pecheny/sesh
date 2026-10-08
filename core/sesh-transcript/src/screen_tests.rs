@@ -306,3 +306,12 @@ fn replay() {
     }
     std::fs::remove_file(&path).unwrap();
 }
+
+#[test]
+fn a_menu_no_hook_reported_is_read_off_the_screen() {
+    let screen = "⏺ Bash(rm -rf build)\n\n────────────────────────────────\n Bash command\n\n   rm -rf build\n   Remove the build folder\n\n This command was flagged for review.\n Do you want to proceed?\n ❯ 1. Yes\n   2. No, and tell Claude what to do differently (esc)\n\n Esc to cancel · Tab to amend\n";
+    let menu = Menu::read(screen).unwrap();
+    assert_eq!(menu.title, "Bash command\nrm -rf build\nRemove the build folder\nThis command was flagged for review.\nDo you want to proceed?");
+    assert_eq!(menu.options, vec![("1".into(), "Yes".into()), ("2".into(), "No, and tell Claude what to do differently (esc)".into())]);
+    assert_eq!(Menu::read("────────────────\n❯ \n────────────────\n"), None);
+}

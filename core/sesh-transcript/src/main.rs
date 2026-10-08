@@ -1,4 +1,5 @@
 use std::collections::HashMap;
+use std::hash::{Hash as _, Hasher as _};
 use std::io::Write as _;
 use std::path::{Path, PathBuf};
 use std::process::Command;
@@ -6,7 +7,7 @@ use std::time::{Duration, Instant};
 
 use serde_json::{json, Value};
 use sesh_transcript::vault::{self, Vault};
-use sesh_transcript::screen::{Live, View};
+use sesh_transcript::screen::{Live, Menu, View};
 use sesh_transcript::{permission, Entry, Transcript, AGENTS, PROTOCOL};
 
 const VERSION: &str = concat!(env!("CARGO_PKG_VERSION"), "+", env!("SOURCE_HASH"));
@@ -299,6 +300,8 @@ struct Follower {
     live: Live,
     /// The `live` line last sent.
     sent: Value,
+    /// The id of the menu shown that no hook reported.
+    menu: Option<String>,
 }
 
 impl Follower {
@@ -316,6 +319,7 @@ impl Follower {
             reported: None,
             live: Live::default(),
             sent: Value::Null,
+            menu: None,
         }
     }
 
@@ -386,9 +390,37 @@ impl Follower {
             None => self.read_new()?,
         }
         self.update_live(pane)?;
+        self.update_menu(pane)?;
         if self.wrote {
             self.emit_cursor()?;
         }
+        Ok(())
+    }
+
+    /// Claude blocked with no hook to say why shows a menu of its own; it is read off the screen.
+    fn update_menu(&mut self, pane: &Value) -> Result<(), String> {
+        let unexplained = self.agent == "claude" && self.reported.as_deref() == Some("blocked") && self.permission.is_none();
+        let menu = match (unexplained, pane["pane_id"].as_str()) {
+            (true, Some(pane_id)) => read_screen(pane_id).ok().and_then(|screen| Menu::read(&screen)),
+            _ => None,
+        };
+        let id = menu.as_ref().map(|menu| {
+            let mut hasher = std::collections::hash_map::DefaultHasher::new();
+            format!("{menu:?}").hash(&mut hasher);
+            format!("menu.{:016x}", hasher.finish())
+        });
+        if id == self.menu {
+            return Ok(());
+        }
+        if let Some(done) = self.menu.take() {
+            self.emit(json!({"t": "permission_done", "id": done}))?;
+        }
+        let (Some(id), Some(menu)) = (id, menu) else {
+            return Ok(());
+        };
+        let options: Vec<Value> = menu.options.iter().map(|(key, label)| json!({"key": key, "label": label})).collect();
+        self.emit(json!({"t": "permission", "id": id, "tool": "menu", "summary": menu.title, "options": options}))?;
+        self.menu = Some(id);
         Ok(())
     }
 

@@ -8,8 +8,6 @@ struct ConversationView: View {
     let title: String
     let fresh: Bool
     var hidden = false
-    /// Stops the Agent, for a session whose Agent runs.
-    var end: (() -> Void)?
     /// Starts the Agent again, for a session whose Agent has stopped.
     var resume: (() async -> Void)?
     @State private var draft = ""
@@ -192,11 +190,6 @@ struct ConversationView: View {
                 }
             }
             #endif
-            if let end {
-                ToolbarItem(placement: .primaryAction) {
-                    Button(action: end) { Label("End Agent session", systemImage: "power") }.help("End Agent session")
-                }
-            }
             if conversation.agent == .claude, resume == nil {
                 ToolbarItem(placement: .primaryAction) {
                     Button { Task { await openInClaude() } } label: { Label("Open in Claude", image: "external-link") }
@@ -722,6 +715,7 @@ private struct QueuedBubble: View {
             HStack(spacing: Metric.pad) {
                 if message.handed {
                     Text("Queued; \(conversation.agent?.title ?? "the Agent") reads it at its next step").foregroundStyle(flavour(.overlay1))
+                    Button("Interrupt and send now") { Task { await conversation.interrupt() } }
                 } else if conversation.starting {
                     Text("Sent once \(conversation.agent?.title ?? "the Agent") is up").foregroundStyle(flavour(.overlay1))
                     Button("Edit") { edit(conversation.unqueue(message)) }
@@ -1429,15 +1423,27 @@ private struct PermissionCard: View {
             if let reason = permission.reason {
                 Text(reason).font(.ui(Metric.note)).foregroundStyle(flavour(.subtext0))
             }
-            HStack(spacing: Metric.pad) {
-                Button { Task { await answer(false) } } label: { Text("Deny").frame(maxWidth: .infinity) }
+            if let options = permission.options {
+                Text(permission.summary).font(.ui(Metric.note)).foregroundStyle(flavour(.text)).textSelection(.enabled)
+                ForEach(options, id: \.self) { choice in
+                    Button { Task { await pick(choice) } } label: {
+                        Text("\(choice.key). \(choice.label)").frame(maxWidth: .infinity, alignment: .leading)
+                    }
                     .buttonStyle(.bordered)
-                    .tint(flavour(.red))
-                Button { Task { await answer(true) } } label: { Text("Allow").frame(maxWidth: .infinity) }
-                    .buttonStyle(.borderedProminent)
-                    .tint(flavour(.mauve))
+                    .tint(flavour(choice == options.first ? .mauve : .overlay1))
+                }
+                .disabled(answering)
+            } else {
+                HStack(spacing: Metric.pad) {
+                    Button { Task { await answer(false) } } label: { Text("Deny").frame(maxWidth: .infinity) }
+                        .buttonStyle(.bordered)
+                        .tint(flavour(.red))
+                    Button { Task { await answer(true) } } label: { Text("Allow").frame(maxWidth: .infinity) }
+                        .buttonStyle(.borderedProminent)
+                        .tint(flavour(.mauve))
+                }
+                .disabled(answering)
             }
-            .disabled(answering)
         }
         .padding(Metric.pad)
         .background(flavour(.mantle), in: .rect(cornerRadius: Metric.corner))
@@ -1449,7 +1455,14 @@ private struct PermissionCard: View {
         let agent = conversation.agent?.title ?? "The Agent"
         if permission.command != nil { return "\(agent) wants to run a command" }
         if permission.file != nil { return "\(agent) wants to change a file" }
+        if permission.options != nil { return "\(agent) is asking" }
         return permission.summary
+    }
+
+    private func pick(_ choice: Conversation.Permission.Choice) async {
+        answering = true
+        await conversation.choose(choice)
+        answering = false
     }
 
     private func answer(_ allow: Bool) async {

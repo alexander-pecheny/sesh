@@ -282,6 +282,40 @@ impl View {
     }
 }
 
+/// A menu in the prompt box's place that no hook reported, such as a check that asks even with
+/// permissions skipped: what it asks, and its choices by the number that picks each.
+#[derive(Clone, Debug, PartialEq)]
+pub struct Menu {
+    pub title: String,
+    pub options: Vec<(String, String)>,
+}
+
+impl Menu {
+    pub fn read(screen: &str) -> Option<Menu> {
+        let texts: Vec<&str> = screen.lines().collect();
+        let start = (texts.len().saturating_sub(MENU)..texts.len()).find(|&i| rule(texts[i]))?;
+        let mut title = Vec::new();
+        let mut options = Vec::new();
+        for text in &texts[start + 1..] {
+            let text = text.trim();
+            if let Some(option) = numbered(text) {
+                options.push(option);
+            } else if options.is_empty() && !text.is_empty() && !rule(text) {
+                title.push(text);
+            }
+        }
+        (options.len() >= 2).then(|| Menu { title: title.join("\n"), options })
+    }
+}
+
+/// "❯ 1. Yes" or "2. No": the number, and the words after it.
+fn numbered(text: &str) -> Option<(String, String)> {
+    let text = text.strip_prefix('❯').unwrap_or(text).trim_start();
+    let (number, label) = text.split_once(". ")?;
+    (!number.is_empty() && number.chars().all(|c| c.is_ascii_digit()))
+        .then(|| (number.to_string(), label.trim().to_string()))
+}
+
 fn rule(text: &str) -> bool {
     let text = text.trim();
     text.chars().filter(|&c| c == '─').count() >= 10 && text.starts_with('─') && text.ends_with('─')
