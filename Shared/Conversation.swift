@@ -9,7 +9,7 @@ final class Conversation: ObservableObject {
     private static let paging = 2
     private static let page = 50
 
-    struct Entry: Decodable, Identifiable, Equatable {
+    struct Entry: Decodable, Identifiable, Hashable {
         let id: String
         let kind: String
         let summary: String
@@ -39,8 +39,8 @@ final class Conversation: ObservableObject {
         let status: String
     }
 
-    struct Question: Decodable, Equatable {
-        struct Option: Decodable, Equatable {
+    struct Question: Decodable, Hashable {
+        struct Option: Decodable, Hashable {
             let label: String
             let description: String?
         }
@@ -50,7 +50,7 @@ final class Conversation: ObservableObject {
         let options: [Option]
     }
 
-    struct Permission: Decodable, Identifiable, Equatable {
+    struct Permission: Decodable, Identifiable, Hashable {
         let id: String
         let tool: String
         let summary: String

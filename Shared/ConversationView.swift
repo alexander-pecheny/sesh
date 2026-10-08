@@ -24,6 +24,8 @@ struct ConversationView: View {
     @State private var sent = 0
     /// A row a link scrolled to, held at the top until the text around it has settled.
     @State private var pinned: (row: String, until: Date)?
+    /// Counts the requests to go to the end, for the native list.
+    @State private var jumps = 0
 
     private var flavour: Catppuccin.Flavour { colorScheme == .dark ? .mocha : .latte }
     private var working: Bool { conversation.state == "working" }
@@ -44,10 +46,115 @@ struct ConversationView: View {
             let count = conversation.items.count
             await conversation.loadEarlier()
             if conversation.items.count == count { return }
+            // The view says where the reader is only once it has laid the page out.
+            try? await Task.sleep(for: .milliseconds(150))
         }
     }
 
     var body: some View {
+        chat
+        .overlay(alignment: .top) {
+            if let notice {
+                Text(notice)
+                    .font(.ui(Metric.note).weight(.medium))
+                    .foregroundStyle(flavour(.text))
+                    .padding(.horizontal, Metric.pad)
+                    .padding(.vertical, Metric.gap)
+                    .background(flavour(.surface1), in: .capsule)
+                    .shadow(radius: Self.shadow)
+                    .padding(Metric.pad)
+                    .transition(.opacity)
+                    .allowsHitTesting(false)
+            }
+        }
+        .overlay(alignment: .bottom) {
+            if !atBottom {
+                Button { jump() } label: {
+                    Text("Move to bottom ↓")
+                        .font(.ui(Metric.note).weight(.medium))
+                        .foregroundStyle(flavour(.text))
+                        .frame(maxWidth: Self.jumpWidth)
+                        .padding(.vertical, Metric.gap)
+                        .background(flavour(.surface1), in: .capsule)
+                        .shadow(radius: Self.shadow)
+                }
+                .buttonStyle(.plain)
+                .padding(Metric.pad)
+            }
+        }
+        .onChange(of: sent) { jump() }
+        .scrollDismissesKeyboard(.interactively)
+        .safeAreaInset(edge: .bottom, spacing: 0) {
+            VStack(spacing: 0) {
+                if let todo = conversation.todo?.items, !todo.isEmpty { TodoBar(items: todo) }
+                // A Transcript read from a file, a copy or a subagent's, has no one to send to.
+                if conversation.pane != nil {
+                    BackgroundLine(conversation: conversation)
+                    input
+                } else if let resume {
+                    EndedBar(agent: conversation.agent?.title ?? "The Agent", resume: resume)
+                }
+            }
+        }
+        // Not sideways: under macOS 26's floating sidebar the colour would tint its glass.
+        .background(flavour(.base), ignoresSafeAreaEdges: .vertical)
+        .navigationTitle(title)
+        .inlineTitle()
+        #if os(macOS)
+        .navigationSubtitle(stateLabel)
+        .buttonStyle(.plain)
+        #endif
+        .toolbar {
+            #if os(iOS)
+            ToolbarItem(placement: .principal) {
+                VStack(spacing: 0) {
+                    Text(title).font(.ui(15).weight(.semibold)).foregroundStyle(flavour(.text))
+                    Text(stateLabel).font(.ui(11)).foregroundStyle(flavour(.subtext0))
+                }
+            }
+            #endif
+            if conversation.agent == .claude, resume == nil {
+                ToolbarItem(placement: .primaryAction) {
+                    Button { Task { await openInClaude() } } label: { Label("Open in Claude", image: "external-link") }
+                }
+            }
+        }
+        .task { await conversation.follow() }
+        .environment(\.openURL, links)
+        .onAppear(perform: appeared)
+        .onChange(of: draft) { conversation.draft = draft }
+        #if os(macOS)
+        .onChange(of: hidden) { field.catchesTyping = !hidden }
+        #endif
+        .alert("Open it in the Claude app", isPresented: $lost) {
+            Button("OK") {}
+        } message: {
+            Text("Sesh found no link for \(title). Remote Control needs Claude on the Host signed in with a Claude plan, not an API key. If it is, look for that name in the Claude app.")
+        }
+        .alert("Sesh could not do that", isPresented: Binding(
+            get: { conversation.problem != nil }, set: { if !$0 { conversation.problem = nil } }
+        )) {
+            Button("OK", role: .cancel) {}
+        } message: {
+            Text(conversation.problem ?? "")
+        }
+    }
+
+    @ViewBuilder private var chat: some View {
+        #if os(macOS)
+        if Conversation.useLog {
+            ChatList(items: listItems, atBottom: $atBottom, nearTop: $nearTop, jumps: jumps, reveal: revealedRow,
+                     spacing: Self.rowSpacing, inset: Metric.wide)
+                .onChange(of: nearTop) { if nearTop { Task { await loadEarlier() } } }
+        } else {
+            scrolling
+        }
+        #else
+        scrolling
+        #endif
+    }
+
+    private var scrolling: some View {
         ScrollView {
             LazyVStack(alignment: .leading, spacing: Self.rowSpacing) {
                 if conversation.earlier { ProgressView().frame(maxWidth: .infinity) }
@@ -65,15 +172,7 @@ struct ConversationView: View {
                         .frame(maxWidth: .infinity)
                         .padding(.top, Metric.wide)
                 }
-                ForEach(Row.rows(conversation.shown, key: conversation.rowKey)) { row in
-                    RowView(row: row, conversation: conversation)
-                        .padding(Metric.tiny)
-                        .background(
-                            conversation.focus.map(row.contains) == true ? flavour(.yellow).opacity(Self.focusTint) : .clear,
-                            in: .rect(cornerRadius: Metric.corner))
-                        .bookmarkable(row.entry, live: row.live, keep: confirmed(conversation.bookmark, "Bookmarked in the Journal"),
-                                  copy: confirmed(conversation.copyLink, "Link copied"), column: row.prose ? Metric.proseColumn : nil)
-                }
+                ForEach(Row.rows(conversation.shown, key: conversation.rowKey)) { row in rowView(row) }
                 ForEach(conversation.permissions) { PermissionCard(permission: $0, conversation: conversation) }
                 ForEach(conversation.queued) { QueuedBubble(message: $0, conversation: conversation, edit: takeBack) }
                 // Waiting on background work, Claude's own status line says on what.
@@ -125,101 +224,73 @@ struct ConversationView: View {
         }
         .onChange(of: conversation.focus) { showFocus() }
         .animation(.easeOut(duration: 1), value: conversation.focus)
-        .overlay(alignment: .top) {
-            if let notice {
-                Text(notice)
-                    .font(.ui(Metric.note).weight(.medium))
-                    .foregroundStyle(flavour(.text))
-                    .padding(.horizontal, Metric.pad)
-                    .padding(.vertical, Metric.gap)
-                    .background(flavour(.surface1), in: .capsule)
-                    .shadow(radius: Self.shadow)
-                    .padding(Metric.pad)
-                    .transition(.opacity)
-                    .allowsHitTesting(false)
-            }
-        }
-        .overlay(alignment: .bottom) {
-            if !atBottom {
-                Button { jump() } label: {
-                    Text("Move to bottom ↓")
-                        .font(.ui(Metric.note).weight(.medium))
-                        .foregroundStyle(flavour(.text))
-                        .frame(maxWidth: Self.jumpWidth)
-                        .padding(.vertical, Metric.gap)
-                        .background(flavour(.surface1), in: .capsule)
-                        .shadow(radius: Self.shadow)
-                }
-                .buttonStyle(.plain)
-                .padding(Metric.pad)
-            }
-        }
-        .onChange(of: sent) { jump() }
         .onChange(of: changes) {
             // A Conversation shorter than the screen never scrolls to the top to ask.
             if nearTop { Task { await loadEarlier() } }
             if atBottom { position.scrollTo(edge: .bottom) }
         }
-        .scrollDismissesKeyboard(.interactively)
-        .safeAreaInset(edge: .bottom, spacing: 0) {
-            VStack(spacing: 0) {
-                if let todo = conversation.todo?.items, !todo.isEmpty { TodoBar(items: todo) }
-                // A Transcript read from a file, a copy or a subagent's, has no one to send to.
-                if conversation.pane != nil {
-                    BackgroundLine(conversation: conversation)
-                    input
-                } else if let resume {
-                    EndedBar(agent: conversation.agent?.title ?? "The Agent", resume: resume)
-                }
-            }
+    }
+
+    private func rowView(_ row: Row) -> some View {
+        RowView(row: row, conversation: conversation)
+            .padding(Metric.tiny)
+            .background(
+                conversation.focus.map(row.contains) == true ? flavour(.yellow).opacity(Self.focusTint) : .clear,
+                in: .rect(cornerRadius: Metric.corner))
+            .bookmarkable(row.entry, live: row.live, keep: confirmed(conversation.bookmark, "Bookmarked in the Journal"),
+                          copy: confirmed(conversation.copyLink, "Link copied"), column: row.prose ? Metric.proseColumn : nil)
+    }
+
+    #if os(macOS)
+    /// The row the focused entry is in, for the native list to bring to the top.
+    private var revealedRow: String? {
+        guard let focus = conversation.focus else { return nil }
+        return Row.rows(conversation.shown, key: conversation.rowKey).first { $0.contains(focus) }?.id
+    }
+
+    /// Everything the native list shows, each row versioned by what it draws.
+    private var listItems: [ChatList.Item] {
+        func item(_ id: String, _ version: Int, _ view: some View) -> ChatList.Item {
+            ChatList.Item(id: id, version: version, view: AnyView(
+                view.frame(maxWidth: .infinity, alignment: .leading).padding(.horizontal, Metric.wide).environment(\.openURL, links)))
         }
-        // Not sideways: under macOS 26's floating sidebar the colour would tint its glass.
-        .background(flavour(.base), ignoresSafeAreaEdges: .vertical)
-        .navigationTitle(title)
-        .inlineTitle()
-        #if os(macOS)
-        .navigationSubtitle(stateLabel)
-        .buttonStyle(.plain)
-        #endif
-        .toolbar {
-            #if os(iOS)
-            ToolbarItem(placement: .principal) {
-                VStack(spacing: 0) {
-                    Text(title).font(.ui(15).weight(.semibold)).foregroundStyle(flavour(.text))
-                    Text(stateLabel).font(.ui(11)).foregroundStyle(flavour(.subtext0))
-                }
+        var items: [ChatList.Item] = []
+        if conversation.earlier { items.append(item(ChatList.earlier, 0, ProgressView().frame(maxWidth: .infinity))) }
+        for row in Row.rows(conversation.shown, key: conversation.rowKey) {
+            var hasher = Hasher()
+            switch row.content {
+            case .item(.entry(let entry)):
+                hasher.combine(entry)
+                hasher.combine(entry.call.flatMap { conversation.results[$0] })
+            case .item(.switched(_, let reason)): hasher.combine(reason)
+            case .lookups(let entries): hasher.combine(entries)
             }
-            #endif
-            if conversation.agent == .claude, resume == nil {
-                ToolbarItem(placement: .primaryAction) {
-                    Button { Task { await openInClaude() } } label: { Label("Open in Claude", image: "external-link") }
-                }
-            }
+            hasher.combine(conversation.focus.map(row.contains))
+            items.append(item(row.id, hasher.finalize(), rowView(row)))
         }
-        .task { await conversation.follow() }
-        .environment(\.openURL, OpenURLAction { url in
+        for permission in conversation.permissions {
+            items.append(item("permission." + permission.id, permission.hashValue, PermissionCard(permission: permission, conversation: conversation)))
+        }
+        for message in conversation.queued {
+            var hasher = Hasher()
+            hasher.combine(message.text)
+            hasher.combine(message.handed)
+            items.append(item("queued." + message.id.uuidString, hasher.finalize(), QueuedBubble(message: message, conversation: conversation, edit: takeBack)))
+        }
+        if working || conversation.state == "background" && !conversation.status.isEmpty {
+            items.append(item("working", 0, WorkingRow(status: conversation.status)))
+        }
+        return items
+    }
+    #endif
+
+    private var links: OpenURLAction {
+        OpenURLAction { url in
             // A link read off the screen, whose address only the Transcript has.
             if url.absoluteString == "about:blank" { return .handled }
             guard let path = PathLinks.path(from: url), let open = conversation.openPath else { return .systemAction }
             open(path)
             return .handled
-        })
-        .onAppear(perform: appeared)
-        .onChange(of: draft) { conversation.draft = draft }
-        #if os(macOS)
-        .onChange(of: hidden) { field.catchesTyping = !hidden }
-        #endif
-        .alert("Open it in the Claude app", isPresented: $lost) {
-            Button("OK") {}
-        } message: {
-            Text("Sesh found no link for \(title). Remote Control needs Claude on the Host signed in with a Claude plan, not an API key. If it is, look for that name in the Claude app.")
-        }
-        .alert("Sesh could not do that", isPresented: Binding(
-            get: { conversation.problem != nil }, set: { if !$0 { conversation.problem = nil } }
-        )) {
-            Button("OK", role: .cancel) {}
-        } message: {
-            Text(conversation.problem ?? "")
         }
     }
 
@@ -303,6 +374,7 @@ struct ConversationView: View {
     /// repeated as they measure, unless the reader scrolls away meanwhile.
     private func jump() {
         atBottom = true
+        jumps += 1
         position.scrollTo(edge: .bottom)
         Task {
             for delay in [50, 150, 400] {
