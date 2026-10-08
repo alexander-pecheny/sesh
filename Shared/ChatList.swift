@@ -62,6 +62,7 @@ struct ChatList: NSViewRepresentable {
         /// How close to the end still counts as at the end, and to the top as near it.
         private static let edge: CGFloat = 40
         private static let top: CGFloat = 400
+        private static let narrowest: CGFloat = 120
 
         var parent: ChatList?
         private weak var scroll: NSScrollView?
@@ -83,7 +84,11 @@ struct ChatList: NSViewRepresentable {
             scroll.contentView.postsBoundsChangedNotifications = true
             NotificationCenter.default.addObserver(self, selector: #selector(scrolled), name: NSView.boundsDidChangeNotification, object: scroll.contentView)
             NotificationCenter.default.addObserver(self, selector: #selector(resized), name: NSView.frameDidChangeNotification, object: scroll)
+            NotificationCenter.default.addObserver(self, selector: #selector(resized), name: NSTableView.columnDidResizeNotification, object: table)
         }
+
+        /// The column width the rows' heights were last measured at.
+        private var measured: CGFloat = 0
 
         private var width: CGFloat { max(1, table?.tableColumns.first?.width ?? scroll?.contentSize.width ?? 1) }
 
@@ -91,6 +96,7 @@ struct ChatList: NSViewRepresentable {
         /// there, else on the row at the top of the view.
         func update() {
             guard let parent, let table, let scroll else { return }
+            if width != measured { resized() }
             let anchor = atBottom ? nil : topRow()
             let old = items
             items = parent.items
@@ -181,6 +187,9 @@ struct ChatList: NSViewRepresentable {
 
         /// The window or the sidebar changed the width: every row wraps anew.
         @objc private func resized() {
+            // The scroll view resizes before its column does; only the column's width counts.
+            guard width != measured else { return }
+            measured = width
             let anchor = atBottom ? nil : topRow()
             table?.noteHeightOfRows(withIndexesChanged: IndexSet(integersIn: 0..<items.count))
             table?.tile()
@@ -215,6 +224,8 @@ struct ChatList: NSViewRepresentable {
             guard row < items.count else { return 1 }
             let item = items[row]
             let width = width
+            // Before the column has its width, any height would be wrong and kept.
+            guard width >= Self.narrowest else { return 1 }
             if let known = heights[item.id], known.version == item.version, known.width == width { return known.height }
             sizer.rootView = ChatList.laidOut(item.view, report: nil)
             let height = max(1, ceil(sizer.sizeThatFits(in: CGSize(width: width, height: .greatestFiniteMagnitude)).height))
@@ -227,16 +238,21 @@ struct ChatList: NSViewRepresentable {
             let item = items[row]
             let cell = tableView.makeView(withIdentifier: Self.cell, owner: self) as? Cell ?? Cell()
             cell.identifier = Self.cell
-            cell.show(ChatList.laidOut(item.view) { [weak self] height in self?.grew(item.id, to: height) })
+            cell.show(ChatList.laidOut(item.view) { [weak self] size in self?.grew(item.id, to: size) })
             return cell
         }
 
         func tableView(_ tableView: NSTableView, shouldSelectRow row: Int) -> Bool { false }
 
         /// A row that changed its own size, such as a card opened, keeps the size it took.
-        private func grew(_ id: String, to height: CGFloat) {
+        private func grew(_ id: String, to size: CGSize) {
+            let height = ceil(size.height)
+            // A cell laid out before it has its width, or for another row, reports nonsense.
             guard let row = items.firstIndex(where: { $0.id == id }), let known = heights[id],
-                  abs(known.height - height) > 0.5 else { return }
+                  abs(size.width - known.width) < 1, abs(known.height - height) > 0.5 else { return }
+            #if DEBUG
+            Self.trace("grew \(id) \(known.height) -> \(height) at \(size.width)")
+            #endif
             let anchor = atBottom ? nil : topRow()
             heights[id] = (known.version, known.width, height)
             table?.noteHeightOfRows(withIndexesChanged: IndexSet(integer: row))
@@ -448,13 +464,15 @@ struct ChatList: UIViewRepresentable {
             let cell = tableView.dequeueReusableCell(withIdentifier: Self.cell, for: indexPath)
             guard let cell = cell as? Cell, indexPath.row < items.count else { return cell }
             let item = items[indexPath.row]
-            cell.show(ChatList.laidOut(item.view) { [weak self] height in self?.grew(item.id, to: height) })
+            cell.show(ChatList.laidOut(item.view) { [weak self] size in self?.grew(item.id, to: size) })
             return cell
         }
 
         /// A row that changed its own size, such as a card opened, keeps the size it took.
-        private func grew(_ id: String, to height: CGFloat) {
-            guard let table, let known = heights[id], abs(known.height - height) > 0.5 else { return }
+        private func grew(_ id: String, to size: CGSize) {
+            let height = ceil(size.height)
+            // A cell laid out before it has its width, or for another row, reports nonsense.
+            guard let table, let known = heights[id], abs(size.width - known.width) < 1, abs(known.height - height) > 0.5 else { return }
             let anchor = atBottom ? nil : topRow()
             heights[id] = (known.version, known.width, height)
             adjusting = true
@@ -528,12 +546,12 @@ extension ChatList {
     /// A row as both the measuring and the shown copy lay it out: the list's width, its own
     /// height, from the top. The shown copy reports the height it takes, which changes when a
     /// card opens or an image loads.
-    static func laidOut(_ view: AnyView, report: ((CGFloat) -> Void)?) -> AnyView {
+    static func laidOut(_ view: AnyView, report: ((CGSize) -> Void)?) -> AnyView {
         let fixed = view.fixedSize(horizontal: false, vertical: true)
         guard let report else { return AnyView(fixed) }
         return AnyView(
             fixed
-                .onGeometryChange(for: CGFloat.self) { $0.size.height } action: { height in report(ceil(height)) }
+                .onGeometryChange(for: CGSize.self) { $0.size } action: { size in report(size) }
                 .frame(maxHeight: .infinity, alignment: .top))
     }
 }

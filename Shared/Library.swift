@@ -86,11 +86,21 @@ final class Library: ObservableObject {
         if let known = conversations[session.id] { return known }
         let machine = TaskActions.machine(session.body.machine)
         let agent = session.body.agent.flatMap(Agent.init)
-        _ = await machine.prepare()
-        let pane = await machine.run("herdr pane get \(quote(session.body.pane ?? ""))")
-        struct Got: Decodable { struct Result: Decodable { struct Pane: Decodable { let agent: String? }; let pane: Pane }; let result: Result }
-        // A pane whose Agent exited is a bare shell, and following it would guess at a Transcript.
-        let running = (try? JSONDecoder().decode(Got.self, from: Data(pane.out.utf8)))?.result.pane.agent != nil
+        let cache = Self.cache(of: session.id)
+        // A session kept on the device opens from what it last showed, at once; whether its Agent
+        // still runs is found out meanwhile.
+        let kept = FileManager.default.fileExists(atPath: cache.path) && !stopped.contains(session.id) && !ended(session)
+        let running: Bool
+        if kept {
+            running = true
+            Task { [weak self] in
+                guard let self, !(await self.runs(session, on: machine)) else { return }
+                stopped.insert(session.id)
+                reload(session.id)
+            }
+        } else {
+            running = await runs(session, on: machine)
+        }
         let conversation: Conversation
         if !running, let vault = vault(of: session.id), let last = session.body.transcripts?.last, let agent {
             let copy = "\(vault.folder)/transcripts/\(session.id)/\((last as NSString).lastPathComponent)"
@@ -106,6 +116,10 @@ final class Library: ObservableObject {
             }
         }
         if let cached = conversations[session.id] { return cached }
+        if case .pane = conversation.source {
+            conversation.prepare = { _ = await machine.prepare() }
+            conversation.cache = cache
+        }
         conversation.starting = launching.contains(session.id)
         conversation.bookmark = { [weak self] entry in self?.bookmark(entry, in: session.id) }
         conversation.copyLink = { [weak self] entry in self?.copyLink(entry, in: session.id) }
@@ -128,6 +142,22 @@ final class Library: ObservableObject {
         conversations[session.id] = conversation
         if let item = pendingFocus.removeValue(forKey: session.id) { Task { await conversation.reveal(item) } }
         return conversation
+    }
+
+    /// Sessions found stopped since the app started, which open from their Vault copy.
+    private var stopped: Set<String> = []
+
+    private static func cache(of session: String) -> URL {
+        FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
+            .appending(path: "Sesh/conversations/\(session).json")
+    }
+
+    /// Whether the session's pane still runs its Agent; a pane whose Agent exited is a bare shell.
+    private func runs(_ session: Record, on machine: Machine) async -> Bool {
+        _ = await machine.prepare()
+        let pane = await machine.run("herdr pane get \(quote(session.body.pane ?? ""))")
+        struct Got: Decodable { struct Result: Decodable { struct Pane: Decodable { let agent: String? }; let pane: Pane }; let result: Result }
+        return (try? JSONDecoder().decode(Got.self, from: Data(pane.out.utf8)))?.result.pane.agent != nil
     }
 
     init() {
@@ -454,6 +484,7 @@ final class Library: ObservableObject {
             resumeProblem = problem
             return
         }
+        stopped.remove(session.id)
         reload(session.id)
     }
 

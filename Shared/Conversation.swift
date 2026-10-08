@@ -9,7 +9,7 @@ final class Conversation: ObservableObject {
     private static let paging = 2
     private static let page = 50
 
-    struct Entry: Decodable, Identifiable, Hashable {
+    struct Entry: Codable, Identifiable, Hashable {
         let id: String
         let kind: String
         let summary: String
@@ -34,13 +34,13 @@ final class Conversation: ObservableObject {
         var answers: [String]?
     }
 
-    struct Todo: Decodable, Equatable, Hashable {
+    struct Todo: Codable, Equatable, Hashable {
         let text: String
         let status: String
     }
 
-    struct Question: Decodable, Hashable {
-        struct Option: Decodable, Hashable {
+    struct Question: Codable, Hashable {
+        struct Option: Codable, Hashable {
             let label: String
             let description: String?
         }
@@ -301,7 +301,7 @@ final class Conversation: ObservableObject {
 
     // MARK: The Session log (ADR 0010)
 
-    private struct LogItem: Decodable {
+    private struct LogItem: Codable {
         let id: String
         let ord: Int
         let seq: Int
@@ -323,9 +323,62 @@ final class Conversation: ObservableObject {
 
     private var logItems: [String: LogItem] = [:]
     private var logSeq = 0
+    private var rebuilding = false
+    /// Runs before the first attach, as a machine must have its helper first.
+    var prepare: (() async -> Void)?
+
+    /// Where this session's last items are kept on the device, so opening it shows them at
+    /// once and asks the follower only for what changed since.
+    var cache: URL? {
+        didSet { loadCache() }
+    }
+
+    private struct Cache: Codable {
+        let seq: Int
+        let items: [LogItem]
+    }
+    private static let kept = 80
+    private var saving = false
+
+    private func loadCache() {
+        guard let cache, let data = try? Data(contentsOf: cache),
+              let kept = try? JSONDecoder().decode(Cache.self, from: data) else { return }
+        logItems = Dictionary(kept.items.map { ($0.id, $0) }, uniquingKeysWith: { _, last in last })
+        logSeq = kept.seq
+        rebuild()
+        loaded = true
+        earlier = true
+    }
+
+    /// Written a second after the last change, not on every screen update.
+    private func saveCache() {
+        guard let cache, !saving else { return }
+        saving = true
+        DispatchQueue.main.asyncAfter(deadline: .now() + 1) { [weak self] in
+            guard let self else { return }
+            saving = false
+            let items = logItems.values.sorted { $0.ord < $1.ord }.suffix(Self.kept)
+            guard let data = try? JSONEncoder().encode(Cache(seq: logSeq, items: Array(items))) else { return }
+            try? FileManager.default.createDirectory(at: cache.deletingLastPathComponent(), withIntermediateDirectories: true)
+            try? data.write(to: cache, options: .atomic)
+        }
+    }
+
+    /// Items that arrive together, as the opening batch does, are shown in one go.
+    private func scheduleRebuild() {
+        guard !rebuilding else { return }
+        rebuilding = true
+        DispatchQueue.main.async { [weak self] in
+            guard let self else { return }
+            rebuilding = false
+            rebuild()
+            saveCache()
+        }
+    }
 
     /// Follows the pane's Session log; after a drop it asks again from the last item it has.
     private func attach(_ pane: String) async {
+        await prepare?()
         while !Task.isCancelled, let runner {
             let watch = logSeq > 0 ? "\(pane):\(logSeq)" : pane
             let ended = await runner.stream("\(Helper.path) attach --watch \(quote(watch))") { [weak self] in self?.applyLog($0) }
@@ -343,7 +396,7 @@ final class Conversation: ObservableObject {
             guard let item = try? JSONDecoder().decode(LogItem.self, from: data) else { return }
             logSeq = max(logSeq, item.seq)
             if item.gone { logItems[item.id] = nil } else { logItems[item.id] = item }
-            rebuild()
+            scheduleRebuild()
         case "session":
             if let state = line.state, state != self.state {
                 self.state = state
@@ -403,6 +456,7 @@ final class Conversation: ObservableObject {
             if let item = try? JSONDecoder().decode(LogItem.self, from: data), !item.gone { logItems[item.id] = item }
         }
         rebuild()
+        saveCache()
         earlier = more
     }
 
