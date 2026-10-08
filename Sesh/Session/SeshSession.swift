@@ -205,11 +205,14 @@ final class SeshSession: ObservableObject, Identifiable {
         }
     }
 
+    /// Frees the button at once: a stalled transfer may never report that it stopped.
     func cancelUpload() {
         guard let uploading else { return }
-        guard uploading.id != 0 else { return self.uploading = nil }
-        guard let handle else { return }
-        sesh_session_cancel_upload(handle, uploading.id)
+        if uploading.id != 0, let handle { sesh_session_cancel_upload(handle, uploading.id) }
+        self.uploading = nil
+        let finish = finished
+        finished = nil
+        finish?([], nil)
     }
 
     fileprivate func progressed(_ id: UInt32, _ done: UInt64, _ total: UInt64) {

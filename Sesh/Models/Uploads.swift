@@ -132,11 +132,13 @@ struct UploadRing: View {
     let fraction: Double
     let colour: Color
 
+    /// The ring fills as the files go; the cross inside says a tap stops them.
     var body: some View {
         Circle()
             .trim(from: 0, to: max(fraction, 0.02))
             .stroke(colour, style: .init(lineWidth: 2.5, lineCap: .round))
             .rotationEffect(.degrees(-90))
+            .overlay { Image(systemName: "xmark").font(.system(size: 7, weight: .bold)).foregroundStyle(colour) }
             .frame(width: 16, height: 16)
     }
 }

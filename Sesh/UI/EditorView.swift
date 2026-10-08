@@ -71,7 +71,7 @@ private struct DraftView: View {
                     Button("Done") { dismiss() }
                 }
                 ToolbarItemGroup(placement: .topBarTrailing) {
-                    Button { picking = true } label: {
+                    Button { if session.uploading != nil { session.cancelUpload() } else { picking = true } } label: {
                         if let fraction = session.uploading?.fraction {
                             UploadRing(fraction: fraction, colour: .accentColor)
                         } else {

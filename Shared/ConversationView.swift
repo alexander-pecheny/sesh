@@ -1517,7 +1517,7 @@ private struct UploadButton: View {
             .frame(width: 38, height: 38)
         }
         .disabled(link.uploading == nil && !link.canUpload)
-        .accessibilityLabel("upload")
+        .accessibilityLabel(link.uploading == nil ? "upload" : "cancel upload")
         .uploadFailure($link.uploadError)
     }
 }

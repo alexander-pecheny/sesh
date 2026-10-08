@@ -228,10 +228,14 @@ final class HostLink: ObservableObject, Identifiable, Runner {
         }
     }
 
+    /// Frees the button at once: a stalled transfer may never report that it stopped.
     func cancelUpload() {
         guard let uploading else { return }
-        guard uploading.id != 0, let handle else { return self.uploading = nil }
-        sesh_session_cancel_upload(handle, uploading.id)
+        if uploading.id != 0, let handle { sesh_session_cancel_upload(handle, uploading.id) }
+        self.uploading = nil
+        let finish = uploaded
+        uploaded = nil
+        finish?([], nil)
     }
 
     fileprivate func uploadProgressed(_ id: UInt32, _ done: UInt64, _ total: UInt64) {
