@@ -21,6 +21,18 @@ final class PlainField: UITextView, ObservableObject {
     }
 
     func focus() { becomeFirstResponder() }
+
+    /// Command-Return sends from a hardware keyboard; Return alone starts a line, as on screen.
+    var submit: (() -> Void)?
+
+    override var keyCommands: [UIKeyCommand]? {
+        guard submit != nil else { return super.keyCommands }
+        let send = UIKeyCommand(input: "\r", modifierFlags: .command, action: #selector(send))
+        send.discoverabilityTitle = "Send"
+        return (super.keyCommands ?? []) + [send]
+    }
+
+    @objc private func send() { submit?() }
 }
 
 struct PlainText: UIViewRepresentable {
@@ -50,6 +62,7 @@ struct PlainText: UIViewRepresentable {
 
     func updateUIView(_ field: PlainField, context: Context) {
         if field.text != text { field.text = text }
+        field.submit = submit
     }
 
     func sizeThatFits(_ proposal: ProposedViewSize, uiView field: PlainField, context: Context) -> CGSize? {
@@ -75,6 +88,8 @@ struct PlainText: UIViewRepresentable {
 final class PlainField: NSTextView, ObservableObject {
     private static let returnKey: UInt16 = 36
     var submit: (() -> Void)?
+    /// Escape in an empty box, as in the Agent's terminal.
+    var escape: (() -> Void)?
     /// Takes a pasted image and returns where it now lives, for its path to go in the text.
     var pasteImage: ((Data, String) async -> String?)?
 
@@ -113,8 +128,14 @@ final class PlainField: NSTextView, ObservableObject {
     /// Return sends when there is somewhere to send; shift or option with it starts a new line.
     override func keyDown(with event: NSEvent) {
         let plain = event.modifierFlags.intersection([.shift, .option, .command, .control]).isEmpty
-        if event.keyCode == Self.returnKey, plain, let submit { return submit() }
+        // Return while an input method is composing a word confirms the word.
+        if event.keyCode == Self.returnKey, plain, !hasMarkedText(), let submit { return submit() }
         super.keyDown(with: event)
+    }
+
+    override func cancelOperation(_ sender: Any?) {
+        guard string.isEmpty, let escape else { return super.cancelOperation(sender) }
+        escape()
     }
 
     func insertPaths(_ paths: String) {

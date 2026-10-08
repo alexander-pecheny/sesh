@@ -61,6 +61,7 @@ private struct EntryRow: View {
     let entry: Record
     @State private var editing = false
     @State private var text = ""
+    @State private var deleting = false
     @StateObject private var field = PlainField()
 
     private var flavour: Catppuccin.Flavour { colorScheme == .dark ? .mocha : .latte }
@@ -85,7 +86,13 @@ private struct EntryRow: View {
         .frame(maxWidth: .infinity, alignment: .leading)
         .contextMenu {
             Button("Edit") { edit() }
+            Button("Copy") { Pasteboard.copy(entry.body.text ?? "") }
+            Button("Delete…", role: .destructive) { deleting = true }
+        }
+        .confirmationDialog("Delete this Entry?", isPresented: $deleting) {
             Button("Delete", role: .destructive) { vault.delete(entry) }
+        } message: {
+            Text((entry.body.text ?? "").prefix(120))
         }
     }
 
@@ -94,9 +101,12 @@ private struct EntryRow: View {
         editing = true
     }
 
+    /// An Entry emptied of its words is asked about, as a deletion, rather than kept blank.
     private func save() {
+        let words = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !words.isEmpty else { return deleting = true }
         var record = entry
-        record.body.text = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        record.body.text = words
         record.body.edited = Int64(Date().timeIntervalSince1970 * 1000)
         vault.write(record)
         editing = false

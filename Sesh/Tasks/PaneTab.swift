@@ -13,6 +13,7 @@ struct PaneTab: View {
     let gone: () -> Void
     @State private var session: SeshSession?
     @State private var problem: String?
+    @State private var attempt = 0
 
     private var flavour: Catppuccin.Flavour { colorScheme == .dark ? .mocha : .latte }
 
@@ -23,7 +24,12 @@ struct PaneTab: View {
             } else if let problem {
                 VStack(spacing: Metric.pad) {
                     Text(problem).font(.ui(Metric.label)).foregroundStyle(flavour(.text)).multilineTextAlignment(.center)
-                    Button("Close Tab", action: gone).buttonStyle(.borderedProminent)
+                    Button("Try Again") {
+                        self.problem = nil
+                        attempt += 1
+                    }
+                    .buttonStyle(.borderedProminent)
+                    Button("Close Tab", action: gone)
                 }
                 .padding(Metric.wide)
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -31,8 +37,8 @@ struct PaneTab: View {
                 ProgressView().frame(maxWidth: .infinity, maxHeight: .infinity)
             }
         }
-        .task {
-            guard let app = ghostty.app else { return }
+        .task(id: attempt) {
+            guard let app = ghostty.app else { return problem = "The terminal could not start." }
             switch await library.session(for: key, pane: pane, on: machine, app: app) {
             case .success(let found): session = found
             case .failure(let failure): problem = failure.message
@@ -51,7 +57,8 @@ private struct Attached: View {
         SessionTab(session: session)
             .onChange(of: session.ended) { _, ended in
                 guard ended else { return }
-                Task { if await Herdr.terminal(of: pane, on: machine) == nil { gone() } }
+                // Only a pane herdr says is gone closes the Tab; a dropped connection reconnects.
+                Task { if case .gone = await Herdr.look(for: pane, on: machine) { gone() } }
             }
     }
 }

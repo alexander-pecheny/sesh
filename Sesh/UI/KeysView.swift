@@ -5,6 +5,7 @@ struct KeysView: View {
     @EnvironmentObject private var store: Store
     @Environment(\.dismiss) private var dismiss
     @State private var importing = false
+    @State private var removing: Key?
 
     var body: some View {
         NavigationStack {
@@ -16,7 +17,7 @@ struct KeysView: View {
                         Button("Copy public key") { UIPasteboard.general.string = key.publicKey }
                             .font(.ui(12))
                     }
-                    .swipeActions { Button("Delete", role: .destructive) { store.remove(key) } }
+                    .swipeActions(allowsFullSwipe: false) { Button("Delete", role: .destructive) { removing = key } }
                 }
                 if store.keys.isEmpty {
                     Text("No Keys yet").font(.ui(14)).foregroundStyle(.secondary)
@@ -32,6 +33,12 @@ struct KeysView: View {
             }
         }
         .sheet(isPresented: $importing) { KeyImportView() }
+        .confirmationDialog("Delete \(removing?.name ?? "this key")?", isPresented: Binding(get: { removing != nil }, set: { if !$0 { removing = nil } }),
+                            presenting: removing) { key in
+            Button("Delete Key", role: .destructive) { store.remove(key) }
+        } message: { _ in
+            Text("The private key leaves this phone for good. Hosts that use it can no longer be reached until you import it again.")
+        }
     }
 }
 
@@ -49,7 +56,7 @@ struct KeyImportView: View {
             Form {
                 Section {
                     LabeledField("Name", "id_ed25519", text: $name)
-                    LabeledField("Passphrase", "none", text: $passphrase)
+                    LabeledField("Passphrase", "none", text: $passphrase, secure: true)
                     Button("Choose a file") { picking = true }.font(.ui(14))
                 }
                 Section {

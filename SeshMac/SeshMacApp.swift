@@ -22,15 +22,26 @@ struct SeshMacApp: App {
             WindowPlacement(context.defaultDisplay.visibleRect.origin, size: context.defaultDisplay.visibleRect.size)
         }
         .commands {
+            // One window: its sidebar and Tabs would only mirror a second's.
+            CommandGroup(replacing: .newItem) {
+                Button("New Task…") { NotificationCenter.default.post(name: .newTask, object: nil) }.keyboardShortcut("n")
+            }
             // Command-W closes a Tab, as in a browser, never the window.
             CommandGroup(replacing: .saveItem) {
                 Button("Close Tab") { library.closeCurrent() }.keyboardShortcut("w")
+            }
+            CommandGroup(before: .windowArrangement) {
+                Button("Show Next Tab") { library.cycle(by: 1) }.keyboardShortcut("]", modifiers: [.command, .shift])
+                Button("Show Previous Tab") { library.cycle(by: -1) }.keyboardShortcut("[", modifiers: [.command, .shift])
+                Divider()
             }
             // Find in whatever text has the focus: a file, a Document, an editor.
             CommandGroup(after: .textEditing) {
                 Button("Find…") { find(.showFindInterface) }.keyboardShortcut("f")
                 Button("Find Next") { find(.nextMatch) }.keyboardShortcut("g")
                 Button("Find Previous") { find(.previousMatch) }.keyboardShortcut("g", modifiers: [.command, .shift])
+                Button("Search Everything…") { NotificationCenter.default.post(name: .searchAll, object: nil) }
+                    .keyboardShortcut("f", modifiers: [.command, .option])
             }
         }
     }
@@ -40,6 +51,11 @@ struct SeshMacApp: App {
         sender.tag = action.rawValue
         NSApp.sendAction(#selector(NSResponder.performTextFinderAction(_:)), to: nil, from: sender)
     }
+}
+
+extension Notification.Name {
+    static let newTask = Notification.Name("newTask")
+    static let searchAll = Notification.Name("searchAll")
 }
 
 #if DEBUG

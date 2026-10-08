@@ -23,6 +23,8 @@ struct ConversationView: View {
     @State private var sent = 0
     /// Counts the requests to go to the end, for the native list.
     @State private var jumps = 0
+    /// A message open on its own for selecting part of it, which the phone's list cannot do.
+    @State private var selecting: String?
 
     private var flavour: Catppuccin.Flavour { colorScheme == .dark ? .mocha : .latte }
     private var working: Bool { conversation.state == "working" }
@@ -117,6 +119,9 @@ struct ConversationView: View {
         #if os(macOS)
         .onChange(of: hidden) { field.catchesTyping = !hidden }
         #endif
+        .sheet(isPresented: Binding(get: { selecting != nil }, set: { if !$0 { selecting = nil } })) {
+            if let selecting { SelectSheet(text: selecting) }
+        }
         .alert("Open it in the Claude app", isPresented: $lost) {
             Button("OK") {}
         } message: {
@@ -132,7 +137,7 @@ struct ConversationView: View {
     }
 
     private var chat: some View {
-        ChatList(items: listItems, atBottom: $atBottom, nearTop: $nearTop, jumps: jumps, reveal: revealedRow,
+        ChatList(items: listItems, atBottom: $atBottom, nearTop: $nearTop, jumps: jumps, reveal: revealedRow, hold: conversation.opened.hashValue,
                  spacing: Self.rowSpacing, inset: Metric.wide)
             .onChange(of: nearTop) { if nearTop { Task { await loadEarlier() } } }
             .onChange(of: conversation.items.count) { if nearTop { Task { await loadEarlier() } } }
@@ -146,7 +151,8 @@ struct ConversationView: View {
                 conversation.focus.map(row.contains) == true ? flavour(.yellow).opacity(Self.focusTint) : .clear,
                 in: .rect(cornerRadius: Metric.corner))
             .bookmarkable(row.entry, live: row.live, keep: confirmed(conversation.bookmark, "Bookmarked in the Journal"),
-                          copy: confirmed(conversation.copyLink, "Link copied"), column: row.prose ? Metric.proseColumn : nil)
+                          copy: confirmed(conversation.copyLink, "Link copied"), column: row.prose ? Metric.proseColumn : nil,
+                          text: row.text, copyText: { copyText($0) }, select: { selecting = $0 })
     }
 
     /// The row the focused entry is in, for the native list to bring to the top.
@@ -171,6 +177,7 @@ struct ConversationView: View {
                 hasher.combine(entry.kind)
                 hasher.combine(entry.text?.utf8.count)
                 hasher.combine(entry.summary.utf8.count)
+                hasher.combine(conversation.opened.contains(conversation.rowKey(entry.id)))
                 if let result = entry.call.flatMap({ conversation.results[$0] }) {
                     hasher.combine(result.id)
                     hasher.combine(result.text?.utf8.count)
@@ -253,13 +260,14 @@ struct ConversationView: View {
                 .background(flavour(.base), in: .rect(cornerRadius: Metric.control / 2))
                 .foregroundStyle(flavour(.text))
             Button { Task { await sendOrStop() } } label: {
-                Image.lucide(working && !canSend ? "square" : "arrow-up", size: 18)
+                Image.lucide(stops ? "square" : "arrow-up", size: 18)
                     .foregroundStyle(flavour(.base))
                     .frame(width: Metric.control, height: Metric.control)
-                    .background(flavour(working && !canSend ? .red : .mauve).opacity(canSend || working ? 1 : 0.4), in: .circle)
+                    .background(flavour(stops ? .red : .mauve).opacity(canSend || stops ? 1 : 0.4), in: .circle)
             }
-            .disabled(!canSend && !working)
-            .accessibilityLabel(working && !canSend ? "Stop" : "Send")
+            .disabled(!canSend && !stops)
+            .accessibilityLabel(stops ? "Stop" : "Send")
+            .help(stops ? "Stop the Agent" : "Send")
         }
         .padding(.horizontal, Metric.pad)
         .padding(.vertical, Metric.gap)
@@ -298,7 +306,15 @@ struct ConversationView: View {
         if fresh { DispatchQueue.main.async { field.focus() } }
         #if os(macOS)
         let conversation = conversation
-        field.pasteImage = { [weak conversation] data, ext in await conversation?.upload(data, ext: ext) }
+        field.pasteImage = { [weak conversation] data, ext in
+            let path = await conversation?.upload(data, ext: ext)
+            if path == nil { conversation?.problem = "Sesh could not upload the pasted image." }
+            return path
+        }
+        field.escape = { [weak conversation] in
+            guard let conversation, conversation.state == "working" else { return }
+            Task { await conversation.stop() }
+        }
         field.catchesTyping = !hidden
         #endif
     }
@@ -317,16 +333,28 @@ struct ConversationView: View {
         }
     }
 
+    private func copyText(_ text: String) {
+        Pasteboard.copy(text)
+        withAnimation { notice = "Copied" }
+        Task {
+            try? await Task.sleep(for: .seconds(1.5))
+            withAnimation { if notice == "Copied" { notice = nil } }
+        }
+    }
+
     /// A queued message goes back into the box, ahead of anything typed since.
     private func takeBack(_ text: String) {
         draft = draft.isEmpty ? text : text + "\n\n" + draft
     }
 
-    private var canSend: Bool { !sending && !draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
+    private var canSend: Bool { !sending && !empty }
+    private var empty: Bool { draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
+    /// The button stops the Agent only for an empty box, never while a message is on its way.
+    private var stops: Bool { working && empty && !sending }
 
     /// While the Agent works, a written message queues and an empty box stops the Agent.
     private func sendOrStop() async {
-        guard !working || canSend else { return await conversation.stop() }
+        guard !stops else { return await conversation.stop() }
         await send()
     }
 
@@ -334,7 +362,9 @@ struct ConversationView: View {
         sending = true
         let text = draft.trimmingCharacters(in: .whitespacesAndNewlines)
         if let problem = await conversation.send(text) { conversation.problem = problem } else {
-            draft = ""
+            // Words typed while the message was on its way stay in the box.
+            let now = draft.trimmingCharacters(in: .whitespacesAndNewlines)
+            draft = now.hasPrefix(text) ? String(now.dropFirst(text.count)).trimmingCharacters(in: .whitespacesAndNewlines) : draft
             sent += 1
         }
         sending = false
@@ -371,6 +401,10 @@ private struct Bookmarkable: ViewModifier {
     let copy: ((Conversation.Entry) -> Void)?
     /// How wide a reply's text column is, so the icon sits at its corner, not the window's.
     let column: CGFloat?
+    /// The row's own words, for Copy and, on the phone, Select Text.
+    let text: String?
+    let copyText: (String) -> Void
+    let select: (String) -> Void
     @State private var hovered = false
     #if os(macOS)
     private static let gutter: CGFloat = 48
@@ -385,14 +419,26 @@ private struct Bookmarkable: ViewModifier {
     private static let always = false
     #endif
 
+    @ViewBuilder private var menu: some View {
+        if let text, !text.isEmpty {
+            Button("Copy") { copyText(text) }
+            let code = Cmark.codeBlocks(text)
+            if !code.isEmpty { Button(code.count == 1 ? "Copy Code" : "Copy All Code") { copyText(code.joined(separator: "\n")) } }
+            #if os(iOS)
+            Button("Select Text") { select(text) }
+            #endif
+        }
+        if let entry, let keep {
+            Button("Bookmark in the Journal") { keep(entry) }
+            if let copy { Button("Copy Link") { copy(entry) } }
+        }
+    }
+
     func body(content: Content) -> some View {
         if let entry, let keep {
             content
                 .padding(.trailing, Self.gutter)
-                .contextMenu {
-                    Button("Bookmark in the Journal") { keep(entry) }
-                    if let copy { Button("Copy Link") { copy(entry) } }
-                }
+                .contextMenu { menu }
                 .overlay(alignment: .topLeading) {
                     HStack(spacing: 0) {
                         Spacer(minLength: 0)
@@ -408,6 +454,8 @@ private struct Bookmarkable: ViewModifier {
                 // The whole row, not just its ink, so the pointer can travel to the icon.
                 .contentShape(.rect)
                 .onHover { hovered = $0 }
+        } else if text?.isEmpty == false {
+            content.padding(.trailing, live && keep != nil ? Self.gutter : 0).contextMenu { menu }
         } else {
             content.padding(.trailing, live && keep != nil ? Self.gutter : 0)
         }
@@ -427,8 +475,30 @@ private struct Bookmarkable: ViewModifier {
 
 extension View {
     fileprivate func bookmarkable(_ entry: Conversation.Entry?, live: Bool, keep: ((Conversation.Entry) -> Void)?,
-                                  copy: ((Conversation.Entry) -> Void)?, column: CGFloat?) -> some View {
-        modifier(Bookmarkable(entry: entry, live: live, keep: keep, copy: copy, column: column))
+                                  copy: ((Conversation.Entry) -> Void)?, column: CGFloat?, text: String?,
+                                  copyText: @escaping (String) -> Void, select: @escaping (String) -> Void) -> some View {
+        modifier(Bookmarkable(entry: entry, live: live, keep: keep, copy: copy, column: column, text: text, copyText: copyText, select: select))
+    }
+}
+
+/// One message on its own, where a long press selects words instead of opening a menu.
+private struct SelectSheet: View {
+    @Environment(\.dismiss) private var dismiss
+    @Environment(\.colorScheme) private var colorScheme
+    let text: String
+
+    var body: some View {
+        NavigationStack {
+            ScrollView { Prose(text: text).frame(maxWidth: .infinity, alignment: .leading).padding(Metric.wide) }
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+                .background((colorScheme == .dark ? Catppuccin.Flavour.mocha : .latte)(.base), ignoresSafeAreaEdges: .all)
+                .navigationTitle("Select Text")
+                .inlineTitle()
+                .toolbar { ToolbarItem(placement: .confirmationAction) { Button("Done") { dismiss() } } }
+        }
+        #if os(macOS)
+        .frame(minWidth: 520, minHeight: 360)
+        #endif
     }
 }
 
@@ -460,7 +530,7 @@ private struct BackgroundLine: View {
                 .contentShape(.rect)
             }
             .buttonStyle(.plain)
-            .popover(isPresented: $listing, arrowEdge: .top) { list }
+            .popover(isPresented: $listing, arrowEdge: .top) { list.presentationCompactAdaptation(.popover) }
         }
     }
 
@@ -518,6 +588,16 @@ private struct Row: Identifiable {
 
     var live: Bool { Conversation.isLive(id) }
 
+    /// What Copy puts on the clipboard: the words, or the command or file a tool worked on.
+    var text: String? {
+        switch content {
+        case .item(.switched): nil
+        case .lookups(let entries): entries.map { $0.file ?? $0.command ?? $0.summary }.joined(separator: "\n")
+        case .item(.entry(let entry)):
+            entry.kind == "tool" ? entry.command ?? entry.file ?? entry.summary : entry.text ?? entry.summary
+        }
+    }
+
     /// The entry a Bookmark of this row keeps; a live item is not in the Transcript yet.
     var entry: Conversation.Entry? {
         let entry: Conversation.Entry? = switch content {
@@ -555,14 +635,15 @@ private struct RowView: View {
 
     var body: some View {
         switch row.content {
-        case .lookups(let entries): Lookups(entries: entries)
+        case .lookups(let entries): Lookups(entries: entries, open: conversation.isOpen(entries[0].id))
         case .item(.switched(_, let reason)): SwitchDivider(reason: reason)
         case .item(.entry(let entry)):
             switch entry.kind {
             case "user": UserBubble(entry: entry, conversation: conversation)
             case "text":
                 let text = conversation.openPath == nil && conversation.repo == nil
-                    ? entry.text ?? entry.summary : PathLinks.link(entry.text ?? entry.summary, repo: conversation.repo)
+                    ? entry.text ?? entry.summary
+                    : PathLinks.link(entry.text ?? entry.summary, repo: conversation.repo, paths: conversation.openPath != nil)
                 let pieces = Cmark.pieces(text)
                 VStack(alignment: .leading, spacing: Metric.tiny) {
                     ForEach(pieces.indices, id: \.self) { index in
@@ -570,9 +651,9 @@ private struct RowView: View {
                     }
                     Stamp(at: entry.at).readable()
                 }
-            case "thinking": Thinking(entry: entry)
+            case "thinking": Thinking(entry: entry, open: conversation.isOpen(entry.id))
             case "tool": ToolCard(entry: entry, result: conversation.results[entry.id], conversation: conversation)
-            case "question": QuestionCard(entry: entry, result: conversation.results[entry.id], conversation: conversation)
+            case "question": QuestionCard(entry: entry, result: conversation.results[entry.id], conversation: conversation).id(entry.id)
             default: Text(entry.summary).font(.ui(13)).foregroundStyle(flavour(.subtext0))
             }
         }
@@ -682,9 +763,11 @@ private struct QueuedBubble: View {
                 } else if conversation.starting {
                     Text("Sent once \(conversation.agent?.title ?? "the Agent") is up").foregroundStyle(flavour(.overlay1))
                     Button("Edit") { edit(conversation.unqueue(message)) }
+                    Button("Remove") { _ = conversation.unqueue(message) }
                 } else {
                     Text("Sent when \(conversation.agent?.title ?? "the Agent") finishes").foregroundStyle(flavour(.overlay1))
                     Button("Edit") { edit(conversation.unqueue(message)) }
+                    Button("Remove") { _ = conversation.unqueue(message) }
                     Button("Interrupt") { Task { await conversation.interrupt() } }
                     if conversation.agent == .claude {
                         Button("Send now") { Task { await conversation.sendNow() } }
@@ -745,15 +828,29 @@ private struct ImageViewer: View {
     let image: PlatformImage
     @State private var scale = 1.0
     @GestureState private var pinch = 1.0
+    /// Where a zoomed image has been dragged to, so its edges can be reached.
+    @State private var shift = CGSize.zero
+    @GestureState private var drag = CGSize.zero
 
     var body: some View {
         Image(platform: image)
             .resizable()
             .scaledToFit()
             .scaleEffect(scale * pinch)
+            .offset(x: shift.width + drag.width, y: shift.height + drag.height)
             .gesture(MagnifyGesture().updating($pinch) { value, pinch, _ in pinch = value.magnification }
-                .onEnded { scale = max(1, scale * $0.magnification) })
-            .onTapGesture(count: 2) { withAnimation { scale = scale > 1 ? 1 : 2 } }
+                .onEnded {
+                    scale = max(1, scale * $0.magnification)
+                    if scale == 1 { shift = .zero }
+                })
+            .simultaneousGesture(DragGesture().updating($drag) { value, drag, _ in if scale > 1 { drag = value.translation } }
+                .onEnded { value in if scale > 1 { shift.width += value.translation.width; shift.height += value.translation.height } })
+            .onTapGesture(count: 2) {
+                withAnimation {
+                    scale = scale > 1 ? 1 : 2
+                    shift = .zero
+                }
+            }
             .frame(maxWidth: .infinity, maxHeight: .infinity)
             .background(.black)
             .overlay(alignment: .topTrailing) {
@@ -765,6 +862,16 @@ private struct ImageViewer: View {
                 .padding(Metric.wide)
                 .keyboardShortcut(.cancelAction)
                 .accessibilityLabel("Close")
+            }
+            .overlay(alignment: .topLeading) {
+                ShareLink(item: Image(platform: image), preview: SharePreview("Image", image: Image(platform: image))) {
+                    Image(systemName: "square.and.arrow.up").foregroundStyle(.white)
+                        .frame(width: Metric.control, height: Metric.control)
+                        .background(.white.opacity(0.2), in: .circle)
+                }
+                .buttonStyle(.plain)
+                .padding(Metric.wide)
+                .accessibilityLabel("Share")
             }
             #if os(macOS)
             .frame(width: fitted.width, height: fitted.height)
@@ -872,7 +979,7 @@ struct Markdown: View {
 private struct Thinking: View {
     @Environment(\.colorScheme) private var colorScheme
     let entry: Conversation.Entry
-    @State private var open = false
+    @Binding var open: Bool
 
     private var flavour: Catppuccin.Flavour { colorScheme == .dark ? .mocha : .latte }
 
@@ -882,7 +989,9 @@ private struct Thinking: View {
                 HStack(spacing: 6) {
                     Image.lucide("brain", size: 14)
                     Text(entry.seconds.map { "Thought for \(Int($0.rounded()))s" } ?? "Thought")
-                    Image.lucide(open ? "chevron-down" : "chevron-right", size: 12)
+                    if entry.text?.isEmpty == false {
+                        Image.lucide(open ? "chevron-down" : "chevron-right", size: 12)
+                    }
                 }
                 .font(.ui(13))
                 .foregroundStyle(flavour(.overlay1))
@@ -1054,10 +1163,10 @@ private struct Card<Header: View, Detail: View>: View {
     var opens = true
     /// A button beside the header, outside the one that opens the card.
     var side: (label: String, icon: String, run: () -> Void)?
+    @Binding var open: Bool
     @ViewBuilder let header: () -> Header
     @ViewBuilder let detail: () -> Detail
     var opened: () -> Void = {}
-    @State private var open = false
 
     private var flavour: Catppuccin.Flavour { colorScheme == .dark ? .mocha : .latte }
 
@@ -1082,9 +1191,13 @@ private struct Card<Header: View, Detail: View>: View {
                 if let side {
                     Button(action: side.run) {
                         Image.lucide(side.icon, size: Metric.label).foregroundStyle(flavour(.overlay1))
+                            .padding(Metric.gap)
+                            .contentShape(.rect)
                     }
                     .buttonStyle(.plain)
+                    .padding(-Metric.gap)
                     .accessibilityLabel(side.label)
+                    .help(side.label)
                 }
             }
             if open { detail().frame(maxWidth: .infinity, alignment: .leading) }
@@ -1102,12 +1215,13 @@ private struct ToolCard: View {
 
     private var flavour: Catppuccin.Flavour { colorScheme == .dark ? .mocha : .latte }
     private var failed: Bool { result?.error == true }
+    private var open: Binding<Bool> { conversation.isOpen(entry.id) }
 
     var body: some View {
         switch entry.tool {
         case "edit", "write":
             Card(icon: entry.tool == "edit" ? "file-pen" : "file-plus", tint: failed ? .red : .blue,
-                 opens: result?.diff != nil || result?.text != nil, side: openSide) {
+                 opens: result?.diff != nil || result?.text != nil, side: openSide, open: open) {
                 HStack(spacing: Metric.gap) {
                     Text(entry.file.map { ($0 as NSString).lastPathComponent } ?? entry.summary)
                         .font(.ui(Metric.label).weight(.medium)).foregroundStyle(flavour(.text)).lineLimit(1)
@@ -1120,7 +1234,7 @@ private struct ToolCard: View {
                 if let diff = result?.diff { Diff(text: diff, truncated: result?.truncated == true) } else { output }
             } opened: { expand() }
         case "bash":
-            Card(icon: "terminal", tint: failed ? .red : .green, opens: result != nil) {
+            Card(icon: "terminal", tint: failed ? .red : .green, opens: result != nil, open: open) {
                 VStack(alignment: .leading, spacing: Metric.tiny) {
                     if let description = entry.description {
                         Text(description).font(.ui(Metric.note)).foregroundStyle(flavour(.subtext0))
@@ -1128,9 +1242,18 @@ private struct ToolCard: View {
                     Text(entry.command ?? entry.summary)
                         .font(.system(size: Metric.caption, design: .monospaced)).foregroundStyle(flavour(.text)).lineLimit(3)
                 }
-            } detail: { output } opened: { expand() }
+            } detail: {
+                VStack(alignment: .leading, spacing: Metric.gap) {
+                    // The header cuts a long command after three lines.
+                    if let command = entry.command, command.split(separator: "\n").count > 3 || command.count > 240 {
+                        Text(command).font(.system(size: Metric.caption, design: .monospaced)).foregroundStyle(flavour(.text))
+                            .textSelection(.enabled)
+                    }
+                    output
+                }
+            } opened: { expand() }
         case "task":
-            Card(icon: "bot", tint: .mauve, opens: result != nil, side: subagentSide) {
+            Card(icon: "bot", tint: .mauve, opens: result != nil, side: subagentSide, open: open) {
                 VStack(alignment: .leading, spacing: Metric.tiny) {
                     Text("Task").font(.ui(Metric.caption)).foregroundStyle(flavour(.subtext0))
                     Text(entry.description ?? entry.summary).font(.ui(Metric.label)).foregroundStyle(flavour(.text))
@@ -1139,7 +1262,7 @@ private struct ToolCard: View {
                 Markdown(text: result?.text ?? "")
             } opened: { expand() }
         default:
-            Card(icon: "wrench", tint: failed ? .red : .overlay1, opens: result?.text != nil) {
+            Card(icon: "wrench", tint: failed ? .red : .overlay1, opens: result?.text != nil, open: open) {
                 Text(entry.summary).font(.ui(Metric.label)).foregroundStyle(flavour(.text))
             } detail: { output } opened: { expand() }
         }
@@ -1231,6 +1354,7 @@ private struct Diff: View {
 private struct Lookups: View {
     @Environment(\.colorScheme) private var colorScheme
     let entries: [Conversation.Entry]
+    @Binding var open: Bool
 
     private var flavour: Catppuccin.Flavour { colorScheme == .dark ? .mocha : .latte }
 
@@ -1248,7 +1372,7 @@ private struct Lookups: View {
     }
 
     var body: some View {
-        Card(icon: "search") {
+        Card(icon: "search", open: $open) {
             Text(line).font(.ui(14)).foregroundStyle(flavour(.text))
         } detail: {
             VStack(alignment: .leading, spacing: 4) {
@@ -1271,10 +1395,19 @@ private struct QuestionCard: View {
     let entry: Conversation.Entry
     let result: Conversation.Entry?
     let conversation: Conversation
-    @State private var picked: [Int: Set<String>] = [:]
-    @State private var typed: [Int: String] = [:]
+    @State private var picked: [Int: Set<String>]
+    @State private var typed: [Int: String]
     @State private var sending = false
     @State private var problem: String?
+
+    init(entry: Conversation.Entry, result: Conversation.Entry?, conversation: Conversation) {
+        self.entry = entry
+        self.result = result
+        self.conversation = conversation
+        let kept = conversation.answers[entry.id]
+        _picked = State(initialValue: kept?.picked ?? [:])
+        _typed = State(initialValue: kept?.typed ?? [:])
+    }
 
     private var flavour: Catppuccin.Flavour { colorScheme == .dark ? .mocha : .latte }
     private var questions: [Conversation.Question] { entry.questions ?? [] }
@@ -1316,6 +1449,8 @@ private struct QuestionCard: View {
         .frame(maxWidth: .infinity, alignment: .leading)
         .background(flavour(.mantle), in: .rect(cornerRadius: Metric.corner))
         .overlay(RoundedRectangle(cornerRadius: Metric.corner).stroke(flavour(result == nil ? .mauve : .mantle).opacity(0.5)))
+        .onChange(of: picked) { conversation.answers[entry.id] = (picked, typed) }
+        .onChange(of: typed) { conversation.answers[entry.id] = (picked, typed) }
     }
 
     private func answered(_ text: String) -> some View {
@@ -1357,7 +1492,8 @@ private struct QuestionCard: View {
         problem = await conversation.answer(questions.indices.map {
             (Array(picked[$0, default: []]), typed[$0, default: ""])
         })
-        sending = false
+        // Sent, the card waits for its answer to show; a second tap would answer twice.
+        if problem != nil { sending = false }
     }
 }
 
@@ -1422,16 +1558,17 @@ private struct PermissionCard: View {
         return permission.summary
     }
 
+    /// Answered, the card stays until the Agent moves on; a second tap would land as a keystroke.
     private func pick(_ choice: Conversation.Permission.Choice) async {
         answering = true
         await conversation.choose(choice)
-        answering = false
+        if conversation.problem != nil { answering = false }
     }
 
     private func answer(_ allow: Bool) async {
         answering = true
         await conversation.permit(allow)
-        answering = false
+        if conversation.problem != nil { answering = false }
     }
 }
 

@@ -73,22 +73,32 @@ struct AddVaultSheet: View {
     @State private var name = ""
     @State private var host: UUID?
     @State private var alias = ""
+    @State private var addingHost = false
+
+    private var taken: Bool { library.vaults.contains { $0.name == Names.slug(name) } }
 
     var body: some View {
-        SheetForm(title: "Add Vault", action: "Add", enabled: !Names.slug(name).isEmpty && host != nil && !trimmed.isEmpty,
+        SheetForm(title: "Add Vault", action: "Add", enabled: !Names.slug(name).isEmpty && !taken && host != nil && !trimmed.isEmpty,
                   working: false, perform: add) {
             Section {
                 LabeledField("Name", "hobby", text: $name)
-                Picker("Host", selection: $host) {
-                    Text("Choose").tag(UUID?.none)
-                    ForEach(store.hosts) { Text($0.title).tag(UUID?.some($0.id)) }
+                if store.hosts.isEmpty {
+                    Button("Add a Host first") { addingHost = true }
+                } else {
+                    Picker("Host", selection: $host) {
+                        Text("Choose").tag(UUID?.none)
+                        ForEach(store.hosts) { Text($0.title).tag(UUID?.some($0.id)) }
+                    }
                 }
                 LabeledField("Name on the Mac", "vps-he", text: $alias)
             } footer: {
+                if taken { Text("There is a Vault named \(Names.slug(name)) already.").foregroundStyle(.red) }
                 Text("The Vault lives on that Host in ~/.sesh/vaults/\(Names.slug(name).isEmpty ? "NAME" : Names.slug(name)), and this phone keeps a copy. "
                      + "Give the Host the ssh alias the Mac reaches it by, so Tasks started on either open on both.")
             }
         }
+        .sheet(isPresented: $addingHost) { HostFormView(host: Host()) }
+        .onChange(of: store.hosts.count) { if host == nil, store.hosts.count == 1 { host = store.hosts.first?.id } }
         .onChange(of: host) { _, id in
             if let host = store.hosts.first(where: { $0.id == id }) { alias = host.name.isEmpty ? host.address : host.name }
         }

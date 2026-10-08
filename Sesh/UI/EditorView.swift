@@ -64,6 +64,7 @@ private struct DraftView: View {
         PlainText(field: field, text: $draft.text)
             .padding(8)
             .onChange(of: draft.text) { finish(draft, nil) }
+            .onAppear { DispatchQueue.main.async { field.focus() } }
             .navigationTitle("Draft")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {

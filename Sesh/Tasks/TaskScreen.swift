@@ -45,6 +45,7 @@ struct TaskScreen: View {
         }
         .background(flavour(.base))
         .navigationTitle(vault.records[id]?.body.title ?? "Task")
+        .confirmsClosing(library)
         .navigationBarTitleDisplayMode(.inline)
         .toolbar {
             if let task = vault.records[id] {
@@ -89,6 +90,7 @@ private struct TabChip: View {
     let task: String
     let tab: TabItem
     let selected: Bool
+    @State private var sheet: TaskSheet?
 
     private var flavour: Catppuccin.Flavour { colorScheme == .dark ? .mocha : .latte }
 
@@ -100,8 +102,12 @@ private struct TabChip: View {
             if selected, tab != .journal {
                 Button { library.close(tab, in: task) } label: {
                     Image(systemName: "xmark").imageScale(.small).foregroundStyle(flavour(.overlay1))
+                        .frame(width: Metric.control * 0.75, height: Metric.control * 0.75)
+                        .contentShape(.rect)
                 }
                 .buttonStyle(.plain)
+                .padding(.vertical, -Metric.gap)
+                .padding(.trailing, -Metric.gap)
                 .accessibilityLabel("Close \(title)")
             }
         }
@@ -115,7 +121,11 @@ private struct TabChip: View {
         .accessibilityElement(children: .combine)
         .accessibilityAddTraits(.isButton)
         .accessibilityAddTraits(selected ? .isSelected : [])
+        .sheet(item: $sheet) { $0.view }
         .contextMenu {
+            if !recordID.isEmpty, let record = vault.records[recordID] {
+                Button("Rename") { sheet = .rename(vault, record) }
+            }
             if tab != .journal {
                 Button("Close Tab") { library.close(tab, in: task) }
             }
@@ -176,6 +186,7 @@ private struct AddMenu: View {
     let task: Record
     @State private var problem: String?
     @State private var agent: Agent?
+    @State private var opening = false
 
     private var flavour: Catppuccin.Flavour { colorScheme == .dark ? .mocha : .latte }
 
@@ -188,8 +199,13 @@ private struct AddMenu: View {
                 let machines = TaskActions.machines(for: task, in: vault)
                 ForEach(machines) { machine in
                     Button(machines.count > 1 ? "New Terminal on \(machine.title)" : "New Terminal") {
-                        Task { problem = await library.openTerminal(in: task, on: machine) }
+                        opening = true
+                        Task {
+                            problem = await library.openTerminal(in: task, on: machine)
+                            opening = false
+                        }
                     }
+                    .disabled(opening)
                 }
             }
             Section {
@@ -218,9 +234,11 @@ private struct AddMenu: View {
                 }
             }
         } label: {
-            Image.lucide("plus", size: Metric.title)
-                .foregroundStyle(flavour(.mauve))
-                .frame(width: Metric.control, height: Metric.control)
+            Group {
+                if opening { ProgressView() } else { Image.lucide("plus", size: Metric.title) }
+            }
+            .foregroundStyle(flavour(.mauve))
+            .frame(width: Metric.control, height: Metric.control)
         }
         .accessibilityLabel("New Tab")
         .sheet(item: $agent) { agent in
@@ -243,7 +261,7 @@ private struct TabContent: View {
         switch tab {
         case .journal: JournalScreen(vault: vault, task: task)
         case .session(let session): SessionScreen(vault: vault, id: session).id(session)
-        case .document(let document): DocumentScreen(vault: vault, id: document).id(document)
+        case .document(let document): DocumentScreen(document: library.document(document, in: vault)).id(document)
         case .subagent(let session, let path, let title):
             if let record = vault.records[session] {
                 ConversationView(conversation: library.subagentConversation(path: path, of: record), title: title, fresh: false)
@@ -252,7 +270,7 @@ private struct TabContent: View {
         case .terminal(let terminal):
             if let record = vault.records[terminal], let pane = record.body.pane {
                 PaneTab(key: terminal, pane: pane, machine: TaskActions.machine(record.body.machine)) {
-                    library.close(.terminal(terminal), in: task)
+                    library.close(.terminal(terminal), in: task, confirmed: true)
                 }
                 .id(terminal)
             }

@@ -20,6 +20,8 @@ final class Search: ObservableObject {
     @Published private(set) var searching = false
     /// Vaults searched from the copy here, without their Conversations.
     @Published private(set) var offline: [String] = []
+    /// Set by Return in the search field: the first hit opens once there is one.
+    @Published var openFirst = false
 
     weak var library: Library?
     private var pending: Task<Void, Never>?
@@ -28,7 +30,12 @@ final class Search: ObservableObject {
     private func schedule() {
         pending?.cancel()
         let query = query.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !query.isEmpty else { return hits = [] }
+        guard !query.isEmpty else {
+            searching = false
+            return hits = []
+        }
+        // Searching from the first key, so "Nothing found" never shows before the search has run.
+        searching = true
         pending = Task { [weak self] in
             try? await Task.sleep(for: Self.pause)
             guard !Task.isCancelled else { return }
@@ -38,8 +45,7 @@ final class Search: ObservableObject {
 
     private func run(_ query: String) async {
         guard let library else { return }
-        searching = true
-        defer { searching = false }
+        defer { if !Task.isCancelled { searching = false } }
         var found: [Hit] = []
         var missed: [String] = []
         for vault in library.vaults {
@@ -63,7 +69,7 @@ final class Search: ObservableObject {
     /// Every word somewhere in a record's title or text, as the Host's search would want.
     private static func local(_ query: String, in vault: Vault) -> [Hit] {
         let words = query.lowercased().split(separator: " ")
-        return vault.records.values.filter { !$0.deleted && $0.kind != .session }.compactMap { record in
+        return vault.records.values.filter { !$0.deleted && [.task, .entry, .document].contains($0.kind) }.compactMap { record in
             let text = [record.body.title, record.body.text].compactMap { $0 }.joined(separator: " ")
             guard words.allSatisfy({ text.lowercased().contains($0) }) else { return nil }
             var hit = Hit(kind: record.kind.rawValue, id: record.id, task: record.kind == .task ? record.id : record.body.task,

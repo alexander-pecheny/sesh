@@ -16,8 +16,11 @@ extension Library {
     func session(for key: String, pane: String, on machine: Machine, app: ghostty_app_t) async -> Result<SeshSession, Herdr.Failure> {
         if let known = terminals.sessions[key] { return .success(known) }
         guard let host = machine.host else { return .failure(Herdr.Failure("\(machine.title) is not reachable from the phone.")) }
-        guard let terminal = await Herdr.terminal(of: pane, on: machine) else {
-            return .failure(Herdr.Failure("The pane is gone from \(machine.title)."))
+        let terminal: String
+        switch await Herdr.look(for: pane, on: machine) {
+        case .found(let found): terminal = found
+        case .gone: return .failure(Herdr.Failure("The pane is gone from \(machine.title)."))
+        case .unreachable(let problem): return .failure(Herdr.Failure("Sesh could not reach \(machine.title): \(problem)"))
         }
         if let known = terminals.sessions[key] { return .success(known) }
         let session = SeshSession(host: host, store: Store.shared, app: app,

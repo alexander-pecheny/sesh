@@ -163,6 +163,20 @@ final class Conversation: ObservableObject {
     @Published var problem: String?
     /// An image from a message, open on the whole screen.
     @Published var viewing: PlatformImage?
+    /// The cards and thoughts the reader opened. Kept here, not in the rows, which the list
+    /// rebuilds as the Agent works.
+    @Published var opened: Set<String> = []
+
+    /// Keyed by the row, which a live item's entry keeps when the Transcript replaces it.
+    func isOpen(_ id: String) -> Binding<Bool> {
+        let key = rowKey(id)
+        return Binding { [weak self] in self?.opened.contains(key) == true } set: { [weak self] open in
+            if open { self?.opened.insert(key) } else { self?.opened.remove(key) }
+        }
+    }
+
+    /// What the user has picked and typed in a question card, by entry, until it is sent.
+    var answers: [String: (picked: [Int: Set<String>], typed: [Int: String])] = [:]
 
     /// Where the entries come from: a live pane, or a Transcript copy in a Vault when the
     /// Agent session's machine is off.

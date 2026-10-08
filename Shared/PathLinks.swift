@@ -7,32 +7,36 @@ import cmark_gfm_extensions
 enum PathLinks {
     static let scheme = "sesh-path"
 
-    /// Paths in code spans become file links, and `#213` a link to that pull request when the
-    /// session's repository is known.
-    static func link(_ markdown: String, repo: Repo? = nil) -> String {
+    /// Paths in code spans become file links, unless there is nowhere to open them, and `#213`
+    /// a link to that pull request when the session's repository is known.
+    static func link(_ markdown: String, repo: Repo? = nil, paths: Bool = true) -> String {
         let numbers = repo != nil && markdown.contains("#")
-        guard markdown.contains("`") || numbers, let root = Cmark.parse(markdown) else { return markdown }
+        guard paths && markdown.contains("`") || numbers, let root = Cmark.parse(markdown) else { return markdown }
         defer { cmark_node_free(root) }
         var changed = false
         if let repo, numbers { changed = linkNumbers(root, repo: repo) }
 
         // A bare name listed under a folder the message named, as in "Files are in `/a/b/`:",
-        // lives in that folder.
+        // lives in that folder: within that block and the one after it, such as its list.
         var spans: [(node: UnsafeMutablePointer<cmark_node>, path: String)] = []
-        var folder: String?
+        var folder: (path: String, block: UnsafeMutablePointer<cmark_node>)?
         let walk = cmark_iter_new(root)
-        while cmark_iter_next(walk) != CMARK_EVENT_DONE {
+        while paths, cmark_iter_next(walk) != CMARK_EVENT_DONE {
             guard let node = cmark_iter_get_node(walk), cmark_node_get_type(node) == CMARK_NODE_CODE,
                   cmark_node_get_type(cmark_node_parent(node)) != CMARK_NODE_LINK,
                   let literal = cmark_node_get_literal(node) else { continue }
-            let text = String(cString: literal)
+            var block = node
+            while let parent = cmark_node_parent(block), parent != root { block = parent }
+            if let known = folder, known.block != block, cmark_node_next(known.block) != block { folder = nil }
+            // `Sources/App.swift:42` names the file; the line is for the reader.
+            let text = String(cString: literal).replacing(/:\d+(:\d+)?$/, with: "")
             if (text.hasPrefix("/") || text.hasPrefix("~/")) && text.hasSuffix("/") && !text.contains(" ") {
-                folder = text
+                folder = (text, block)
                 continue
             }
             guard isPath(text) else { continue }
             let rooted = text.hasPrefix("/") || text.hasPrefix("~/")
-            spans.append((node, rooted || folder == nil ? text : folder! + text))
+            spans.append((node, rooted || folder == nil ? text : folder!.path + text))
         }
         cmark_iter_free(walk)
         guard !spans.isEmpty || changed else { return markdown }
@@ -151,6 +155,21 @@ enum Cmark {
         }
         add(next..<lines.count, table: false)
         return pieces
+    }
+
+    /// The text of every fenced or indented code block, in order.
+    static func codeBlocks(_ markdown: String) -> [String] {
+        guard markdown.contains("```") || markdown.contains("~~~"), let root = parse(markdown) else { return [] }
+        defer { cmark_node_free(root) }
+        var blocks: [String] = []
+        let walk = cmark_iter_new(root)
+        while cmark_iter_next(walk) != CMARK_EVENT_DONE {
+            guard let node = cmark_iter_get_node(walk), cmark_node_get_type(node) == CMARK_NODE_CODE_BLOCK,
+                  let literal = cmark_node_get_literal(node) else { continue }
+            blocks.append(String(cString: literal))
+        }
+        cmark_iter_free(walk)
+        return blocks
     }
 
     static func parse(_ markdown: String) -> UnsafeMutablePointer<cmark_node>? {

@@ -19,6 +19,14 @@ struct SearchView: View {
                 Text("Nothing found").foregroundStyle(.secondary)
             }
         }
+        .onChange(of: search.openFirst) { openWhenFound() }
+        .onChange(of: search.searching) { openWhenFound() }
+    }
+
+    private func openWhenFound() {
+        guard search.openFirst, !search.searching else { return }
+        search.openFirst = false
+        if let first = search.hits.first { open(first) }
     }
 
     #if os(iOS)

@@ -260,7 +260,7 @@ enum TaskActions {
         var record = vault.records[task.id] ?? task
         record.body.archived = true
         vault.write(record)
-        for tab in library.tabs[task.id] ?? [] { library.close(tab, in: task.id) }
+        for tab in library.tabs[task.id] ?? [] { library.close(tab, in: task.id, confirmed: true) }
         if library.selection == task.id { library.selection = nil }
         return nil
     }

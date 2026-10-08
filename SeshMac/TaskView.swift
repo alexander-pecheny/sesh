@@ -30,6 +30,15 @@ struct TaskView: View {
                     Label("\(branch) on \(TaskActions.machine(task.body.machine).title)", systemImage: "arrow.triangle.branch")
                         .font(.caption).foregroundStyle(.secondary).lineLimit(1)
                         .help(task.body.path ?? "")
+                        .contextMenu {
+                            Button("Copy Branch Name") { Pasteboard.copy(branch) }
+                            if let path = task.body.path {
+                                Button("Copy Worktree Path") { Pasteboard.copy(path) }
+                                if task.body.machine == nil {
+                                    Button("Show in Finder") { NSWorkspace.shared.activateFileViewerSelecting([URL(filePath: path)]) }
+                                }
+                            }
+                        }
                 }
             }
             .padding(.horizontal, Metric.gap)
@@ -40,6 +49,7 @@ struct TaskView: View {
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
         }
         .navigationTitle(vault.records[id]?.body.title ?? "Task")
+        .confirmsClosing(library)
         .alert("End this Agent session?", isPresented: Binding(get: { library.ending != nil }, set: { if !$0 { library.ending = nil } })) {
             Button("End", role: .destructive) {
                 if let session = library.ending { Task { await library.end(session) } }
@@ -82,6 +92,7 @@ private struct TabButton: View {
     let task: String
     let tab: TabItem
     let selected: Bool
+    @State private var naming: Sidebar.Naming?
 
     var body: some View {
         HStack(spacing: Metric.tiny) {
@@ -95,13 +106,21 @@ private struct TabButton: View {
             if tab != .journal {
                 Button { library.close(tab, in: task) } label: { Image(systemName: "xmark").imageScale(.small) }
                     .buttonStyle(.borderless)
+                    .help("Close Tab (⌘W)")
             }
         }
         .padding(.horizontal, Metric.pad)
         .padding(.vertical, Metric.tiny)
         .background(selected ? Color.primary.opacity(0.1) : .clear, in: .rect(cornerRadius: 6))
         .draggable(dragged)
+        .sheet(item: $naming) { NameSheet(naming: $0) }
         .contextMenu {
+            if !recordID.isEmpty, let record = vault.records[recordID] {
+                Button("Rename…") { naming = .init(goal: .rename(record), vault: vault, parent: nil) }
+            }
+            if case .document(let id) = tab, let path = vault.records[id]?.body.path {
+                Button("Copy Path") { Pasteboard.copy(path) }
+            }
             if let session {
                 if library.ended(session) {
                     Button("Resume Agent session") { Task { await library.resume(session) } }
@@ -138,8 +157,7 @@ private struct TabButton: View {
     private var recordID: String {
         switch tab {
         case .session(let id), .document(let id): id
-        case .terminal(let id): id
-        case .journal, .subagent: ""
+        case .journal, .terminal, .subagent: ""
         }
     }
 
@@ -173,6 +191,7 @@ private struct AddMenu: View {
     let task: Record
     @State private var problem: String?
     @State private var agent: Agent?
+    @State private var opening = false
 
     var body: some View {
         Menu {
@@ -183,8 +202,13 @@ private struct AddMenu: View {
                 let machines = TaskActions.machines(for: task, in: vault)
                 ForEach(machines) { machine in
                     Button(machines.count > 1 ? "New Terminal on \(machine.title)" : "New Terminal") {
-                        Task { problem = await library.openTerminal(in: task, on: machine) }
+                        opening = true
+                        Task {
+                            problem = await library.openTerminal(in: task, on: machine)
+                            opening = false
+                        }
                     }
+                    .disabled(opening)
                 }
             }
             Section {
@@ -204,8 +228,16 @@ private struct AddMenu: View {
                     }
                 }
             }
+            let documents = vault.children(.document, task: task.id).sorted { ($0.body.title ?? "") < ($1.body.title ?? "") }
+            if !documents.isEmpty {
+                Section("Documents") {
+                    ForEach(documents) { document in
+                        Button(document.body.title ?? "Untitled") { library.open(.document(document.id), in: task.id) }
+                    }
+                }
+            }
         } label: {
-            Image(systemName: "plus")
+            if opening { ProgressView().controlSize(.small) } else { Image(systemName: "plus") }
         }
         .menuStyle(.borderlessButton)
         .menuIndicator(.hidden)
@@ -233,7 +265,7 @@ private struct TabContent: View {
         switch tab {
         case .journal: JournalView(vault: vault, task: task)
         case .session(let session): SessionTab(vault: vault, id: session).id(session)
-        case .document(let document): DocumentTab(vault: vault, id: document).id(document)
+        case .document(let document): DocumentTab(document: library.document(document, in: vault)).id(document)
         case .subagent(let session, let path, let title):
             if let record = vault.records[session] {
                 ConversationView(conversation: library.subagentConversation(path: path, of: record), title: title, fresh: false)
@@ -243,7 +275,7 @@ private struct TabContent: View {
         case .terminal(let terminal):
             if let record = vault.records[terminal], let pane = record.body.pane {
                 PaneView(key: terminal, pane: pane, machine: TaskActions.machine(record.body.machine)) {
-                    library.close(.terminal(terminal), in: task)
+                    library.close(.terminal(terminal), in: task, confirmed: true)
                 }
                 .id(terminal)
             }
@@ -349,5 +381,6 @@ private struct SessionTab: View {
                 .keyboardShortcut("t", modifiers: [.command, .shift])
                 .hidden()
         }
+        .help("Switch between the chat and the Agent's own terminal (⇧⌘T)")
     }
 }

@@ -4,13 +4,9 @@ import SwiftUI
 struct DocumentScreen: View {
     @Environment(\.colorScheme) private var colorScheme
     @EnvironmentObject private var library: Library
-    @StateObject private var document: DocumentText
+    @ObservedObject var document: DocumentText
     @State private var editing = false
     @StateObject private var field = PlainField()
-
-    init(vault: Vault, id: String) {
-        _document = StateObject(wrappedValue: DocumentText(vault: vault, id: id))
-    }
 
     private var flavour: Catppuccin.Flavour { colorScheme == .dark ? .mocha : .latte }
     private var path: String? { document.path }
@@ -48,7 +44,10 @@ struct DocumentScreen: View {
         }
         .background(flavour(.base))
         .environment(\.openURL, OpenURLAction { url in library.follow(url) ? .handled : .systemAction })
-        .task { await document.load() }
+        .task {
+            if document.dirty { editing = true } else { await document.load() }
+            if document.text.isEmpty, document.editable { editing = true }
+        }
         .alert("The file changed since Sesh read it", isPresented: Binding(get: { document.clash != nil }, set: { if !$0 { document.clash = nil } })) {
             Button("Keep my text", role: .destructive) { Task { await document.write(force: true) } }
             Button("Take the file's text") { document.takeClash() }
@@ -64,6 +63,7 @@ struct DocumentScreen: View {
                 .lineLimit(1).truncationMode(.head)
             Spacer()
             if document.saving { ProgressView().controlSize(.small) }
+            if document.dirty { Text("Edited").font(.ui(Metric.small)).foregroundStyle(flavour(.subtext0)) }
             Picker("Mode", selection: $editing) {
                 Text("Read").tag(false)
                 Text("Edit").tag(true)

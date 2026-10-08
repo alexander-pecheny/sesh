@@ -6,6 +6,13 @@ struct Sidebar: View {
     @EnvironmentObject private var library: Library
     @State private var adding = false
     @State private var naming: Naming?
+    @State private var closing: Closing?
+
+    struct Closing: Identifiable {
+        let vault: Vault
+        let task: Record
+        var id: String { task.id }
+    }
 
     /// What the name sheet is for.
     struct Naming: Identifiable {
@@ -48,6 +55,19 @@ struct Sidebar: View {
         .sheet(item: $naming) { naming in
             NameSheet(naming: naming)
         }
+        .sheet(item: $closing) { CloseTaskSheet(vault: $0.vault, task: $0.task) }
+        .onDeleteCommand {
+            guard let id = library.selection, let vault = library.vault(of: id), let task = vault.records[id],
+                  task.kind == .task, task.body.archived != true else { return }
+            closing = Closing(vault: vault, task: task)
+        }
+        .onReceive(NotificationCenter.default.publisher(for: .newTask)) { _ in
+            // Beside the chosen Task, in its folder, or at the top of the first Vault.
+            let chosen = library.selection.flatMap { id in library.vault(of: id).map { ($0, $0.records[id]) } }
+            guard let vault = chosen?.0 ?? library.vaults.first else { return adding = true }
+            let record = chosen?.1
+            naming = .init(goal: .task, vault: vault, parent: record?.kind == .folder ? record?.id : record?.body.parent)
+        }
     }
 }
 
@@ -55,7 +75,13 @@ private struct VaultSection: View {
     @EnvironmentObject private var library: Library
     @ObservedObject var vault: Vault
     @Binding var naming: Sidebar.Naming?
-    @State private var open = true
+    @AppStorage private var open: Bool
+
+    init(vault: Vault, naming: Binding<Sidebar.Naming?>) {
+        self.vault = vault
+        _naming = naming
+        _open = AppStorage(wrappedValue: true, "open." + vault.name)
+    }
 
     var body: some View {
         // The sidebar's own fold shows its chevron only on hover; this one always shows.
@@ -81,7 +107,7 @@ private struct VaultSection: View {
                     .contentShape(Rectangle())
                 }
                 .buttonStyle(.plain)
-                Circle().fill(vault.online ? .green : .secondary).frame(width: 6, height: 6)
+                Circle().fill(vault.problem != nil ? .orange : vault.online ? .green : .secondary).frame(width: 6, height: 6)
                     .help(vault.problem ?? (vault.online ? "Up to date with \(vault.machine.title)" : "Offline"))
                 if vault.pending > 0 { Text("\(vault.pending)").font(.caption2).foregroundStyle(.secondary) }
                 Spacer()
@@ -92,6 +118,7 @@ private struct VaultSection: View {
                     .menuStyle(.borderlessButton)
                     .menuIndicator(.hidden)
                     .fixedSize()
+                    .help("New Task or Folder in \(vault.name)")
             }
             .dropDestination(for: String.self) { ids, _ in move(ids, into: nil) }
         }
@@ -129,7 +156,14 @@ private struct FolderRow: View {
     @ObservedObject var vault: Vault
     let folder: Record
     @Binding var naming: Sidebar.Naming?
-    @State private var open = true
+    @AppStorage private var open: Bool
+
+    init(vault: Vault, folder: Record, naming: Binding<Sidebar.Naming?>) {
+        self.vault = vault
+        self.folder = folder
+        _naming = naming
+        _open = AppStorage(wrappedValue: true, "open." + folder.id)
+    }
 
     var body: some View {
         DisclosureGroup(isExpanded: $open) {
@@ -144,7 +178,8 @@ private struct FolderRow: View {
                     Button("Rename") { naming = .init(goal: .rename(folder), vault: vault, parent: nil) }
                     Divider()
                     Button("Delete Folder", role: .destructive) { Tree.deleteFolder(folder, in: vault) }
-                        .disabled(!Tree.children(of: folder.id, in: vault).isEmpty)
+                        .disabled(!Tree.children(of: folder.id, in: vault).isEmpty || Tree.holdsArchived(folder.id, in: vault))
+                        .help("Only an empty folder can be deleted, archived Tasks included")
                 }
         }
     }
@@ -167,16 +202,24 @@ private struct TaskRow: View {
             .contentShape(.rect)
             .draggable(task.id)
             .dropDestination(for: String.self) { ids, _ in
-                for id in ids { library.receive(id, into: task.id) }
-                return !ids.isEmpty
+                ids.map { library.receive($0, into: task.id) }.contains(true)
             }
             .contextMenu {
                 Button("Rename") { naming = .init(goal: .rename(task), vault: vault, parent: nil) }
+                if let branch = task.body.branch { Button("Copy Branch Name") { Pasteboard.copy(branch) } }
+                if let path = task.body.path {
+                    Button("Copy Worktree Path") { Pasteboard.copy(path) }
+                    if task.body.machine == nil {
+                        Button("Show Worktree in Finder") { NSWorkspace.shared.activateFileViewerSelecting([URL(filePath: path)]) }
+                    }
+                }
                 Divider()
                 if task.body.archived == true {
                     Button("Reopen") {
                         var record = vault.records[task.id] ?? task
                         record.body.archived = false
+                        // Its folder may have gone while it was archived; it comes back at the top.
+                        if let parent = record.body.parent, vault.records[parent]?.deleted != false { record.body.parent = nil }
                         vault.write(record)
                     }
                 } else {
@@ -187,7 +230,7 @@ private struct TaskRow: View {
     }
 }
 
-private struct NameSheet: View {
+struct NameSheet: View {
     @Environment(\.dismiss) private var dismiss
     @EnvironmentObject private var library: Library
     let naming: Sidebar.Naming
@@ -211,8 +254,11 @@ private struct NameSheet: View {
     }
 
     private var prompt: String {
-        if case .folder = naming.goal { return "Folder name" }
-        return "What is this Task about, in plain words?"
+        switch naming.goal {
+        case .folder: "Folder name"
+        case .rename(let record) where record.kind != .task: "Name"
+        default: "What is this Task about, in plain words?"
+        }
     }
 
     private var trimmed: String { name.trimmingCharacters(in: .whitespacesAndNewlines) }
@@ -244,8 +290,8 @@ private struct AddVault: View {
         Form {
             TextField("Name", text: $name, prompt: Text("hobby"))
             TextField("Host", text: $alias, prompt: Text("ssh alias, empty for this Mac"))
-            Text("The Vault lives on that Host under ~/.sesh/vaults, and this Mac keeps a copy.")
-                .font(.caption).foregroundStyle(.secondary)
+            Text(taken ? "There is a Vault named \(Names.slug(name)) already." : "The Vault lives on that Host under ~/.sesh/vaults, and this Mac keeps a copy.")
+                .font(.caption).foregroundStyle(taken ? .red : .secondary)
         }
         .padding()
         .frame(width: 380)
@@ -257,10 +303,12 @@ private struct AddVault: View {
                     library.add(.init(name: Names.slug(name), alias: host.isEmpty ? nil : host))
                     dismiss()
                 }
-                .disabled(Names.slug(name).isEmpty)
+                .disabled(Names.slug(name).isEmpty || taken)
             }
         }
     }
+
+    private var taken: Bool { library.vaults.contains { $0.name == Names.slug(name) } }
 }
 
 /// The Agent sessions on the Mac that no Task has adopted, under every Vault.

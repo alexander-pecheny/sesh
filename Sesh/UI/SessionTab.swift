@@ -123,6 +123,7 @@ struct AuthSheet: View {
     @Binding var savePassword: Bool
     let answer: ([String]?) -> Void
     @State private var values: [String]
+    @FocusState private var focused: Int?
 
     init(question: SeshSession.AuthQuestion, savePassword: Binding<Bool>, answer: @escaping ([String]?) -> Void) {
         self.question = question
@@ -138,11 +139,16 @@ struct AuthSheet: View {
                     Text(question.instruction).font(.ui(13))
                 }
                 ForEach(Array(question.prompts.enumerated()), id: \.offset) { index, prompt in
-                    if prompt.echo {
-                        TextField(prompt.text, text: $values[index]).autocorrectionDisabled()
-                    } else {
-                        SecureField(prompt.text, text: $values[index])
+                    Group {
+                        if prompt.echo {
+                            TextField(prompt.text, text: $values[index]).autocorrectionDisabled()
+                        } else {
+                            SecureField(prompt.text, text: $values[index])
+                        }
                     }
+                    .focused($focused, equals: index)
+                    .submitLabel(index == question.prompts.count - 1 ? .send : .next)
+                    .onSubmit { if index == question.prompts.count - 1 { answer(values) } else { focused = index + 1 } }
                 }
                 Toggle("Save password", isOn: $savePassword)
             }
@@ -156,5 +162,6 @@ struct AuthSheet: View {
             }
         }
         .interactiveDismissDisabled()
+        .onAppear { focused = 0 }
     }
 }

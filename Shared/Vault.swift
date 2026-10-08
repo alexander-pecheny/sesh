@@ -180,6 +180,13 @@ final class Vault: ObservableObject, Identifiable {
         following = nil
     }
 
+    /// Connects again now, rather than at the next try, when offline.
+    func retry() {
+        guard !online else { return }
+        stop()
+        start()
+    }
+
     private func connect() async {
         let ready = await machine.prepare()
         guard ready == nil else { return problem = ready }

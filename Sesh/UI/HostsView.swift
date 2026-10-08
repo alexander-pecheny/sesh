@@ -5,6 +5,7 @@ struct HostsView: View {
     @EnvironmentObject private var store: Store
     @Environment(\.colorScheme) private var colorScheme
     @State private var editing: Host?
+    @State private var removing: Host?
 
     private var flavour: Catppuccin.Flavour { colorScheme == .dark ? .mocha : .latte }
 
@@ -20,8 +21,8 @@ struct HostsView: View {
                 .contextMenu {
                     Button("Edit") { editing = host }
                 }
-                .swipeActions {
-                    Button("Delete", role: .destructive) { store.remove(host) }
+                .swipeActions(allowsFullSwipe: false) {
+                    Button("Delete", role: .destructive) { removing = host }
                 }
             }
             if store.hosts.isEmpty {
@@ -35,5 +36,11 @@ struct HostsView: View {
             }
         }
         .sheet(item: $editing) { HostFormView(host: $0) }
+        .confirmationDialog("Delete \(removing?.title ?? "this Host")?", isPresented: Binding(get: { removing != nil }, set: { if !$0 { removing = nil } }),
+                            presenting: removing) { host in
+            Button("Delete Host", role: .destructive) { store.remove(host) }
+        } message: { _ in
+            Text("Vaults and Agent sessions on this Host can no longer be reached from the phone until you add it again.")
+        }
     }
 }

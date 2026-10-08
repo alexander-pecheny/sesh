@@ -567,25 +567,29 @@ final class Library: ObservableObject {
     }
 
     /// Something dropped on a Task: an Unfiled Agent session, or an Agent session or Document
-    /// of another Task.
-    func receive(_ dropped: String, into task: String) {
+    /// of another Task. Whether it was taken.
+    @discardableResult
+    func receive(_ dropped: String, into task: String) -> Bool {
         if dropped.hasPrefix(Self.unfiledPrefix) {
             let id = String(dropped.dropFirst(Self.unfiledPrefix.count))
-            if let item = unfiled.values.joined().first(where: { $0.id == id }) { adopt(item, into: task) }
-        } else {
-            move(dropped, to: task)
+            guard let item = unfiled.values.joined().first(where: { $0.id == id }) else { return false }
+            adopt(item, into: task)
+            return true
         }
+        return move(dropped, to: task)
     }
 
     /// Moves an Agent session or Document to another Task of the same Vault, Tab and all.
-    func move(_ id: String, to task: String) {
-        guard let vault = vault(of: id), var record = vault.records[id], let from = record.body.task, from != task,
-              vault.records[task] != nil else { return }
+    @discardableResult
+    func move(_ id: String, to task: String) -> Bool {
+        guard let vault = vault(of: id), var record = vault.records[id], record.kind == .session || record.kind == .document,
+              let from = record.body.task, from != task, vault.records[task] != nil else { return false }
         record.body.task = task
         vault.write(record)
         let tab: TabItem = record.kind == .session ? .session(id) : .document(id)
-        close(tab, in: from)
+        remove(tab, from: from)
         open(tab, in: task)
+        return true
     }
 
     func open(_ tab: TabItem, in task: String) {
@@ -600,10 +604,61 @@ final class Library: ObservableObject {
         close(tab, in: task)
     }
 
-    func close(_ tab: TabItem, in task: String) {
-        if case .terminal(let id) = tab { closeTerminal(id) }
-        tabs[task]?.removeAll { $0 == tab }
-        if current[task] == tab { current[task] = tabs[task]?.last ?? .journal }
+    /// Moves to the selected Task's next or previous Tab, round from the last to the Journal.
+    func cycle(by step: Int) {
+        guard let task = selection else { return }
+        let all = [TabItem.journal] + (tabs[task] ?? [])
+        let index = all.firstIndex(of: current[task] ?? .journal) ?? 0
+        current[task] = all[(index + step + all.count) % all.count]
+    }
+
+    /// A Tab whose closing would lose something, held until the user confirms.
+    struct Closing: Identifiable {
+        let tab: TabItem
+        let task: String
+        let loss: String
+        var id: TabItem { tab }
+    }
+
+    @Published var closing: Closing?
+
+    /// Closes a Tab; one holding unsaved edits or a shell asks first, unless `confirmed`.
+    func close(_ tab: TabItem, in task: String, confirmed: Bool = false) {
+        if !confirmed, let loss = loss(closing: tab) { return closing = Closing(tab: tab, task: task, loss: loss) }
+        switch tab {
+        case .terminal(let id): closeTerminal(id)
+        case .document(let id): documents[id] = nil
+        default: break
+        }
+        remove(tab, from: task)
+    }
+
+    private func loss(closing tab: TabItem) -> String? {
+        switch tab {
+        case .terminal: "The shell in this Terminal stops, and anything running in it."
+        case .document(let id) where documents[id]?.dirty == true:
+            "Your edits to \(vault(of: id)?.records[id]?.body.title ?? "this Document") are not saved."
+        default: nil
+        }
+    }
+
+    /// Takes a Tab off the strip, the one after it chosen in its place, as a browser does.
+    private func remove(_ tab: TabItem, from task: String) {
+        guard let index = tabs[task]?.firstIndex(of: tab) else { return }
+        tabs[task]?.remove(at: index)
+        guard current[task] == tab else { return }
+        let left = tabs[task] ?? []
+        current[task] = left.isEmpty ? .journal : left[min(index, left.count - 1)]
+    }
+
+    /// Documents being read or edited, kept while the app runs so a switch of Tab keeps the edits.
+    private var documents: [String: DocumentText] = [:]
+
+    func document(_ id: String, in vault: Vault) -> DocumentText {
+        if let known = documents[id] { return known }
+        let document = DocumentText(vault: vault, id: id)
+        documents[id] = document
+        return document
     }
 }
 

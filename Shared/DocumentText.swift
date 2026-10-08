@@ -39,6 +39,7 @@ final class DocumentText: ObservableObject {
         if ran.ok {
             text = ran.out
             base = ran.out
+            unreachable = nil
             remember(ran.out)
         } else {
             text = record.body.text ?? ""
@@ -62,6 +63,7 @@ final class DocumentText: ObservableObject {
         }
         let put = await machine.put(Data(text.utf8), to: path)
         guard put.ok else { return unreachable = "Not saved: \(put.problem)" }
+        unreachable = nil
         base = text
         remember(text)
     }

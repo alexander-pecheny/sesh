@@ -19,6 +19,9 @@ struct ChatList: NSViewRepresentable {
     let jumps: Int
     /// The row to bring to the top, for a link or a search result.
     let reveal: String?
+    /// Changes when the reader opens or closes a card, which keeps the rows in view where they
+    /// are, even at the end, so the card opens under the pointer rather than scrolling away.
+    var hold = 0
     let spacing: CGFloat
     let inset: CGFloat
 
@@ -72,6 +75,7 @@ struct ChatList: NSViewRepresentable {
         /// Measures rows laid out as a cell lays them out, so a cached height is the height drawn.
         private let sizer = NSHostingController(rootView: AnyView(EmptyView()))
         private var jumps = 0
+        private var held = 0
         private var revealed: String?
         private var atBottom = true
         private var adjusting = false
@@ -97,7 +101,9 @@ struct ChatList: NSViewRepresentable {
         func update() {
             guard let parent, let table, let scroll else { return }
             if width != measured { resized() }
-            let anchor = atBottom ? nil : topRow()
+            let holding = parent.hold != held
+            held = parent.hold
+            let anchor = atBottom && !holding ? nil : topRow()
             let old = items
             items = parent.items
             let change = Change(old: old.map { ($0.id, $0.version) }, new: items.map { ($0.id, $0.version) })
@@ -105,15 +111,15 @@ struct ChatList: NSViewRepresentable {
             adjusting = true
             switch change {
             case .none: break
-            case .rows(let changed, let added):
+            case .rows(let changed, let added, let removed):
                 table.beginUpdates()
+                if !removed.isEmpty { table.removeRows(at: removed, withAnimation: []) }
                 if !added.isEmpty { table.insertRows(at: added, withAnimation: []) }
+                table.endUpdates()
                 if !changed.isEmpty {
                     table.reloadData(forRowIndexes: changed, columnIndexes: [0])
                     table.noteHeightOfRows(withIndexesChanged: changed)
                 }
-                table.endUpdates()
-            case .all: table.reloadData()
             }
             // The frame takes the new rows' heights only on layout; a scroll before it is clamped.
             table.tile()
@@ -126,7 +132,7 @@ struct ChatList: NSViewRepresentable {
                 revealed = reveal
                 atBottom = false
                 place(row: row, offset: 0)
-            } else if atBottom {
+            } else if atBottom && !holding {
                 toEnd()
             } else if let anchor, let row = items.firstIndex(where: { $0.id == anchor.id }) {
                 place(row: row, offset: anchor.offset)
@@ -306,6 +312,7 @@ struct ChatList: UIViewRepresentable {
     @Binding var nearTop: Bool
     let jumps: Int
     let reveal: String?
+    var hold = 0
     let spacing: CGFloat
     let inset: CGFloat
 
@@ -345,6 +352,7 @@ struct ChatList: UIViewRepresentable {
         private var heights: [String: (version: Int, width: CGFloat, height: CGFloat)] = [:]
         private let sizer = UIHostingController(rootView: AnyView(EmptyView()))
         private var jumps = 0
+        private var held = 0
         private var revealed: String?
         private var atBottom = true
         private var adjusting = false
@@ -354,11 +362,30 @@ struct ChatList: UIViewRepresentable {
             self.table = table
             table.dataSource = self
             table.delegate = self
+            sizing = table.observe(\.bounds) { [weak self] table, _ in
+                MainActor.assumeIsolated { self?.sized(table.bounds.height) }
+            }
+        }
+
+        private var sizing: NSKeyValueObservation?
+        private var height: CGFloat = 0
+
+        /// The keyboard or a growing message box took some of the height: the end stays in view.
+        private func sized(_ height: CGFloat) {
+            guard height != self.height else { return }
+            self.height = height
+            if atBottom { toEnd() }
+        }
+
+        func scrollViewDidChangeAdjustedContentInset(_ scrollView: UIScrollView) {
+            if atBottom { toEnd() }
         }
 
         func update() {
             guard let parent, let table else { return }
-            let anchor = atBottom ? nil : topRow()
+            let holding = parent.hold != held
+            held = parent.hold
+            let anchor = atBottom && !holding ? nil : topRow()
             let old = items
             items = parent.items
             let change = Change(old: old.map { ($0.id, $0.version) }, new: items.map { ($0.id, $0.version) })
@@ -366,7 +393,7 @@ struct ChatList: UIViewRepresentable {
             adjusting = true
             switch change {
             case .none: break
-            case .rows(let changed, let added):
+            case .rows(let changed, let added, let removed):
                 // UIKit aborts the app on a batch that does not add up, so anything it may not
                 // have counted the way the old rows did is reloaded whole instead.
                 guard table.window != nil, table.numberOfRows(inSection: 0) == old.count else {
@@ -374,15 +401,17 @@ struct ChatList: UIViewRepresentable {
                     break
                 }
                 UIView.performWithoutAnimation {
-                    if !added.isEmpty {
-                        table.performBatchUpdates { table.insertRows(at: added.map { IndexPath(row: $0, section: 0) }, with: .none) }
+                    if !added.isEmpty || !removed.isEmpty {
+                        table.performBatchUpdates {
+                            table.deleteRows(at: removed.map { IndexPath(row: $0, section: 0) }, with: .none)
+                            table.insertRows(at: added.map { IndexPath(row: $0, section: 0) }, with: .none)
+                        }
                     }
                     // Numbered after the insert, and refreshed in place, keeping their cells.
                     if !changed.isEmpty {
                         table.performBatchUpdates { table.reconfigureRows(at: changed.map { IndexPath(row: $0, section: 0) }) }
                     }
                 }
-            case .all: table.reloadData()
             }
             table.layoutIfNeeded()
             adjusting = false
@@ -394,7 +423,7 @@ struct ChatList: UIViewRepresentable {
                 revealed = reveal
                 atBottom = false
                 place(row: row, offset: 0)
-            } else if atBottom {
+            } else if atBottom && !holding {
                 toEnd()
             } else if let anchor, let row = items.firstIndex(where: { $0.id == anchor.id }) {
                 place(row: row, offset: anchor.offset)
@@ -524,30 +553,25 @@ struct ChatList: UIViewRepresentable {
 }
 #endif
 
-/// What a list must redo for new rows: nothing, some rows reloaded and some added at either
-/// end, or everything.
+/// What a list must redo for new rows: nothing, or rows removed (by their old place), added
+/// and redrawn (by their new place). Only those rows' cells are touched, so the others keep
+/// their views, and with them a selection or a scroll inside them.
 enum Change {
     case none
-    case rows(changed: IndexSet, added: IndexSet)
-    case all
+    case rows(changed: IndexSet, added: IndexSet, removed: IndexSet)
 
     init(old: [(String, Int)], new: [(String, Int)]) {
-        let oldIDs = old.map(\.0), newIDs = new.map(\.0)
-        // Rows added at the end, as replies arrive, or at the top, as pages load.
-        let start: Int
-        if newIDs.starts(with: oldIDs) {
-            start = 0
-        } else if newIDs.count >= oldIDs.count, Array(newIDs.suffix(oldIDs.count)) == oldIDs {
-            start = newIDs.count - oldIDs.count
-        } else {
-            self = .all
-            return
+        var added = IndexSet(), removed = IndexSet()
+        for step in new.map(\.0).difference(from: old.map(\.0)) {
+            switch step {
+            case .insert(let offset, _, _): added.insert(offset)
+            case .remove(let offset, _, _): removed.insert(offset)
+            }
         }
+        let versions = Dictionary(old.map { ($0.0, $0.1) }, uniquingKeysWith: { $1 })
         var changed = IndexSet()
-        for (offset, row) in old.enumerated() where new[start + offset].1 != row.1 { changed.insert(start + offset) }
-        var added = IndexSet(integersIn: 0..<start)
-        added.formUnion(IndexSet(integersIn: (start + old.count)..<new.count))
-        self = changed.isEmpty && added.isEmpty ? .none : .rows(changed: changed, added: added)
+        for (index, row) in new.enumerated() where !added.contains(index) && versions[row.0] != row.1 { changed.insert(index) }
+        self = changed.isEmpty && added.isEmpty && removed.isEmpty ? .none : .rows(changed: changed, added: added, removed: removed)
     }
 }
 

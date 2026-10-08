@@ -39,6 +39,12 @@ enum Tree {
         return false
     }
 
+    /// Whether an archived Task still sits in the folder, which `children` leaves out.
+    @MainActor
+    static func holdsArchived(_ folder: String, in vault: Vault) -> Bool {
+        vault.all(.task).contains { $0.body.parent == folder && $0.body.archived == true }
+    }
+
     @MainActor
     static func deleteFolder(_ folder: Record, in vault: Vault) {
         guard children(of: folder.id, in: vault).isEmpty else { return }

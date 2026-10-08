@@ -4,6 +4,7 @@ import SwiftUI
 struct RootView: View {
     @EnvironmentObject private var library: Library
     @StateObject private var search = Search()
+    @FocusState private var searching: Bool
 
     var body: some View {
         NavigationSplitView {
@@ -21,6 +22,11 @@ struct RootView: View {
             }
         }
         .searchable(text: $search.query, placement: .toolbar, prompt: "Tasks, Journals, Documents, Conversations")
+        .searchFocused($searching)
+        .onSubmit(of: .search) { search.openFirst = true }
+        .onReceive(NotificationCenter.default.publisher(for: .searchAll)) { _ in searching = true }
+        // A Task picked in the sidebar is what the user wants to see, not the results.
+        .onChange(of: library.selection) { if library.selection != nil { search.query = "" } }
         .onAppear { search.library = library }
         #if DEBUG
         // `-newtask TITLE` makes a Task in the first Vault, as the New Task sheet does.

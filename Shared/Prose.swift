@@ -74,6 +74,15 @@ struct Prose: NSViewRepresentable {
 private final class LinkTextView: NSTextView {
     private var lit: NSRange?
 
+    /// The renderer breaks lines with U+2028, which other apps paste as a stray character.
+    override func writeSelection(to board: NSPasteboard, types: [NSPasteboard.PasteboardType]) -> Bool {
+        guard super.writeSelection(to: board, types: types) else { return false }
+        if let text = board.string(forType: .string) {
+            board.setString(text.replacingOccurrences(of: "\u{2028}", with: "\n"), forType: .string)
+        }
+        return true
+    }
+
     override func updateTrackingAreas() {
         trackingAreas.forEach(removeTrackingArea)
         addTrackingArea(NSTrackingArea(rect: bounds, options: [.mouseMoved, .mouseEnteredAndExited, .activeInActiveApp, .inVisibleRect], owner: self))

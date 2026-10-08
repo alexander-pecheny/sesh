@@ -8,6 +8,15 @@ struct TasksView: View {
     @StateObject private var search = Search()
     @State private var sheet: TaskSheet?
     @State private var settings = false
+    @State private var order: [String: Int] = [:]
+
+    /// Every Task and folder by how recently it changed, taken when the screen shows.
+    private func freeze() {
+        let all = library.vaults.flatMap { vault in
+            (vault.all(.task) + vault.all(.folder)).map { ($0.id, library.changed($0, in: vault)) }
+        }
+        order = Dictionary(all.sorted { $0.1 > $1.1 }.enumerated().map { ($1.0, $0) }, uniquingKeysWith: { a, _ in a })
+    }
 
     private var flavour: Catppuccin.Flavour { colorScheme == .dark ? .mocha : .latte }
     private var searching: Bool { !search.query.trimmingCharacters(in: .whitespaces).isEmpty }
@@ -22,6 +31,13 @@ struct TasksView: View {
                 List {
                     ForEach(library.vaults) { VaultSection(vault: $0, sheet: $sheet) }
                 }
+                .refreshable {
+                    library.vaults.forEach { $0.retry() }
+                    try? await Task.sleep(for: .seconds(1))
+                    freeze()
+                }
+                .environment(\.taskOrder, order)
+                .onAppear(perform: freeze)
             }
         }
         .scrollContentBackground(.hidden)
@@ -99,18 +115,27 @@ private struct VaultSection: View {
     }
 }
 
-/// The folders and Tasks directly inside `parent`, the most recently changed first.
+/// The folders and Tasks directly inside `parent`, the most recently changed first, in the
+/// order they had when the screen appeared: a Task moving up as its Agent writes would move
+/// under the finger about to tap it. New ones come first.
 private struct Children: View {
     @EnvironmentObject private var library: Library
     @ObservedObject var vault: Vault
     let parent: String?
     @Binding var sheet: TaskSheet?
+    @Environment(\.taskOrder) private var order
 
-    var body: some View {
-        let rows = Tree.children(of: parent, in: vault)
+    private var recent: [Record] {
+        Tree.children(of: parent, in: vault)
             .map { ($0, library.changed($0, in: vault)) }
             .sorted { $0.1 > $1.1 }
             .map(\.0)
+    }
+
+    var body: some View {
+        let rows = recent.enumerated()
+            .sorted { (order[$0.element.id] ?? -1, $0.offset) < (order[$1.element.id] ?? -1, $1.offset) }
+            .map(\.element)
         ForEach(rows) { record in
             if record.kind == .folder {
                 FolderRow(vault: vault, folder: record, sheet: $sheet)
@@ -304,4 +329,8 @@ private struct UnfiledRow: View {
             Text("The Agent is interrupted and its herdr pane closed. Nothing of it is kept in a Vault, as it was never adopted.")
         }
     }
+}
+
+extension EnvironmentValues {
+    @Entry var taskOrder: [String: Int] = [:]
 }

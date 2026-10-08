@@ -99,6 +99,18 @@ enum Herdr {
 
     /// The id `herdr terminal attach` takes for a pane, or nil when the pane is gone.
     static func terminal(of pane: String, on runner: Runner) async -> String? {
+        if case .found(let terminal) = await look(for: pane, on: runner) { terminal } else { nil }
+    }
+
+    enum Lookup {
+        case found(String)
+        /// herdr answered that it has no such pane.
+        case gone
+        /// The machine or herdr did not answer, which says nothing of the pane.
+        case unreachable(String)
+    }
+
+    static func look(for pane: String, on runner: Runner) async -> Lookup {
         struct Pane: Decodable {
             struct Result: Decodable {
                 struct Info: Decodable { let terminal_id: String }
@@ -107,7 +119,8 @@ enum Herdr {
             let result: Result
         }
         let ran = await runner.run("herdr pane get \(quote(pane))")
-        return (try? JSONDecoder().decode(Pane.self, from: Data(ran.out.utf8)))?.result.pane.terminal_id
+        if let found = try? JSONDecoder().decode(Pane.self, from: Data(ran.out.utf8)) { return .found(found.result.pane.terminal_id) }
+        return (ran.err + ran.out).contains("pane_not_found") ? .gone : .unreachable(ran.problem)
     }
 
     static func rename(_ workspace: String, to label: String, on runner: Runner) async {

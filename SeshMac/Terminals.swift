@@ -13,10 +13,18 @@ extension Library {
     /// shared ssh connection.
     func surface(for key: String, pane: String, on machine: Machine, gone: @escaping () -> Void) async -> Ghostty.TerminalSurface? {
         if let known = terminals.surfaces[key] { return known }
-        guard let terminal = await Herdr.terminal(of: pane, on: machine) else {
-            gone()
-            return nil
+        // Only herdr saying the pane is gone closes its Tab; an unreachable machine is asked again.
+        var terminal: String?
+        while terminal == nil, !Task.isCancelled {
+            switch await Herdr.look(for: pane, on: machine) {
+            case .found(let found): terminal = found
+            case .gone:
+                gone()
+                return nil
+            case .unreachable: try? await Task.sleep(for: .seconds(3))
+            }
         }
+        guard let terminal else { return nil }
         let attach = "herdr terminal attach \(quote(terminal)) --takeover"
         let command: String
         if let alias = machine.alias {
@@ -37,8 +45,7 @@ extension Library {
         surface.onClose = { [weak self] in
             self?.terminals.surfaces[key] = nil
             Task {
-                let still = await machine.run("herdr pane get \(quote(pane))")
-                if !still.ok { gone() }
+                if case .gone = await Herdr.look(for: pane, on: machine) { gone() }
                 self?.objectWillChange.send()
             }
         }
