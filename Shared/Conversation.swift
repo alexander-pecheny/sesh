@@ -417,16 +417,18 @@ final class Conversation: ObservableObject {
         return message.text
     }
 
-    /// Stops the Agent's turn and sends the queue once it has. A message Claude already held is
-    /// dropped with the turn, so it goes again; herdr can go on reporting "working" while Claude
-    /// only waits on its background agents, so the queue goes anyway.
+    /// Stops the Agent's turn and has it read the queue at once. Claude does that itself for a
+    /// message it holds, on ctrl+enter, so the message lands once; otherwise the queue goes after
+    /// the stop, even while herdr reports "working" for Claude only waiting on its background agents.
     func interrupt() async {
-        let text = queued.map(\.text).joined(separator: "\n\n")
+        guard let pane else { return }
+        if agent == .claude, queued.contains(where: \.handed) {
+            problem = await run("herdr agent send-keys \(quote(pane)) ctrl+enter")
+            return
+        }
         await stop()
         try? await Task.sleep(for: .milliseconds(1500))
-        queued.removeAll()
-        guard let pane, !text.isEmpty else { return }
-        if let failed = await run("herdr agent prompt \(quote(pane)) \(quote(text))") { problem = failed }
+        await sendNow()
     }
 
     /// Picks a choice in a menu read off the Agent's screen.
