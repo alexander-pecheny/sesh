@@ -232,7 +232,7 @@ private struct Renderer {
                 let style = NSMutableParagraphStyle()
                 style.textBlocks = [block]
                 style.lineSpacing = 2
-                let font: NSFont = row == 0 ? .boldSystemFont(ofSize: Metric.label) : .systemFont(ofSize: Metric.label)
+                let font = NSFont.monospacedDigitSystemFont(ofSize: Metric.label, weight: row == 0 ? .bold : .regular)
                 let base = attributes(font: font, style: style)
                 out.append(inlines(cell, base))
                 out.append(NSAttributedString(string: "\n", attributes: base))

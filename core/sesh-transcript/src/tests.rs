@@ -29,7 +29,8 @@ fn claude_lines() -> Vec<Value> {
         json!({"type":"user","timestamp":at,"origin":{"kind":"human"},"message":{"role":"user","content":"Fix the greeting in /home/u/shot.png please"}}),
         json!({"type":"user","timestamp":at,"isMeta":true,"message":{"role":"user","content":[{"type":"text","text":"[Image: source: /home/u/shot.png]"}]}}),
         json!({"type":"user","timestamp":at,"origin":{"kind":"task-notification"},"message":{"role":"user","content":"<task-notification>done</task-notification>"}}),
-        json!({"type":"user","timestamp":at,"message":{"role":"user","content":"<command-name>/compact</command-name>\n<command-message>compact</command-message>\n<command-args></command-args>"}}),
+        json!({"type":"user","timestamp":at,"promptId":"p2","message":{"role":"user","content":"/compact"}}),
+        json!({"type":"user","timestamp":at,"promptId":"p2","message":{"role":"user","content":"<command-name>/compact</command-name>\n<command-message>compact</command-message>\n<command-args></command-args>"}}),
         json!({"type":"user","timestamp":at,"message":{"role":"user","content":"<local-command-stdout>Compacted</local-command-stdout>"}}),
         json!({"type":"assistant","timestamp":at,"message":{"content":[{"type":"thinking","thinking":"","signature":"x"}]}}),
         json!({"type":"assistant","timestamp":at,"message":{"content":[{"type":"thinking","thinking":"Read it first."},{"type":"text","text":"Let me edit notes.txt."}]}}),
@@ -114,7 +115,7 @@ fn claude_transcript_becomes_entries() {
     assert_eq!(entries[12].call.as_deref(), Some(question.id.as_str()));
     assert_eq!(entries[12].answers, Some(vec!["Coffee".to_string()]));
 
-    let hooked = transcript.open_question(&claude_lines()[16]["message"]["content"][0]["input"]);
+    let hooked = transcript.open_question(&claude_lines()[17]["message"]["content"][0]["input"]);
     assert_eq!(hooked.id, question.id);
     assert_eq!(hooked.questions, question.questions);
 }

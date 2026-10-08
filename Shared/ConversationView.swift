@@ -865,7 +865,10 @@ struct Markdown: View {
             }
             .tableCell { cell in
                 cell.label
-                    .markdownTextStyle { if cell.row == 0 { FontWeight(.semibold) } }
+                    .markdownTextStyle {
+                        FontDigitVariant(.monospaced)
+                        if cell.row == 0 { FontWeight(.semibold) }
+                    }
                     .padding(.vertical, Metric.tiny)
                     .padding(.horizontal, Metric.gap)
             }
@@ -932,7 +935,7 @@ private struct WorkingRow: View {
                         .mask { Text(label) }
                     }
             }
-            .font(.ui(Metric.label))
+            .font(.ui(Metric.label).monospacedDigit())
         }
         .accessibilityElement(children: .ignore)
         .accessibilityLabel(label)

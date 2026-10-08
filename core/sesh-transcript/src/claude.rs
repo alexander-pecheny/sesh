@@ -37,6 +37,8 @@ pub(super) struct Parser {
     /// Whether Claude's last reply ended its turn, so what herdr calls working is only Claude
     /// waiting on its background work.
     pub(super) turn_over: bool,
+    /// Claude writes a slash command twice, plain and wrapped, under one prompt.
+    prompt: Option<String>,
     questions: HashMap<String, String>,
     hidden_results: HashSet<String>,
     tasks: Vec<(String, String)>,
@@ -94,8 +96,13 @@ impl Parser {
                         return;
                     }
                 }
+                let prompt = line["promptId"].as_str().map(str::to_string);
+                if prompt.is_some() && prompt == self.prompt {
+                    return;
+                }
                 if let Some(text) = typed_text(&block_text(content)) {
                     self.turn_over = false;
+                    self.prompt = prompt;
                     out.push(Entry::user(ids.next(), at, text, Vec::new()));
                 }
             }
