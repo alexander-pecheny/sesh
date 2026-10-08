@@ -141,7 +141,6 @@ struct ConversationView: View {
     }
 
     @ViewBuilder private var chat: some View {
-        #if os(macOS)
         if Conversation.useLog {
             ChatList(items: listItems, atBottom: $atBottom, nearTop: $nearTop, jumps: jumps, reveal: revealedRow,
                      spacing: Self.rowSpacing, inset: Metric.wide)
@@ -149,9 +148,6 @@ struct ConversationView: View {
         } else {
             scrolling
         }
-        #else
-        scrolling
-        #endif
     }
 
     private var scrolling: some View {
@@ -241,7 +237,6 @@ struct ConversationView: View {
                           copy: confirmed(conversation.copyLink, "Link copied"), column: row.prose ? Metric.proseColumn : nil)
     }
 
-    #if os(macOS)
     /// The row the focused entry is in, for the native list to bring to the top.
     private var revealedRow: String? {
         guard let focus = conversation.focus else { return nil }
@@ -282,7 +277,6 @@ struct ConversationView: View {
         }
         return items
     }
-    #endif
 
     private var links: OpenURLAction {
         OpenURLAction { url in

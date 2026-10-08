@@ -280,4 +280,233 @@ struct ChatList: NSViewRepresentable {
         }
     }
 }
+#else
+import SwiftUI
+import UIKit
+
+/// The Conversation as a native list (ADR 0013): a table whose rows host the chat's SwiftUI
+/// views, each measured once at the table's width and kept, and scrolled by rules of its own.
+struct ChatList: UIViewRepresentable {
+    struct Item: Identifiable {
+        let id: String
+        /// Changes whenever what the row shows changes, so its height is measured again.
+        let version: Int
+        let view: AnyView
+    }
+
+    let items: [Item]
+    @Binding var atBottom: Bool
+    @Binding var nearTop: Bool
+    let jumps: Int
+    let reveal: String?
+    let spacing: CGFloat
+    let inset: CGFloat
+
+    static let earlier = "earlier"
+
+    func makeCoordinator() -> Coordinator { Coordinator() }
+
+    func makeUIView(context: Context) -> UITableView {
+        let table = UITableView(frame: .zero, style: .plain)
+        table.separatorStyle = .none
+        table.backgroundColor = .clear
+        table.allowsSelection = false
+        table.estimatedRowHeight = 0
+        table.estimatedSectionHeaderHeight = 0
+        table.estimatedSectionFooterHeight = 0
+        table.keyboardDismissMode = .interactive
+        table.contentInset = UIEdgeInsets(top: inset, left: 0, bottom: inset, right: 0)
+        table.register(Cell.self, forCellReuseIdentifier: Coordinator.cell)
+        context.coordinator.attach(table)
+        return table
+    }
+
+    func updateUIView(_ table: UITableView, context: Context) {
+        context.coordinator.parent = self
+        context.coordinator.update()
+    }
+
+    @MainActor
+    final class Coordinator: NSObject, UITableViewDataSource, UITableViewDelegate {
+        static let cell = "cell"
+        private static let edge: CGFloat = 40
+        private static let top: CGFloat = 400
+
+        var parent: ChatList?
+        private weak var table: UITableView?
+        private var items: [Item] = []
+        private var heights: [String: (version: Int, width: CGFloat, height: CGFloat)] = [:]
+        private let sizer = UIHostingController(rootView: AnyView(EmptyView()))
+        private var jumps = 0
+        private var revealed: String?
+        private var atBottom = true
+        private var adjusting = false
+        private var width: CGFloat = 0
+
+        func attach(_ table: UITableView) {
+            self.table = table
+            table.dataSource = self
+            table.delegate = self
+        }
+
+        func update() {
+            guard let parent, let table else { return }
+            let anchor = atBottom ? nil : topRow()
+            items = parent.items
+            adjusting = true
+            table.reloadData()
+            table.layoutIfNeeded()
+            adjusting = false
+            if parent.jumps != jumps {
+                jumps = parent.jumps
+                atBottom = true
+            }
+            if let reveal = parent.reveal, reveal != revealed, let row = items.firstIndex(where: { $0.id == reveal }) {
+                revealed = reveal
+                atBottom = false
+                place(row: row, offset: 0)
+            } else if atBottom {
+                toEnd()
+            } else if let anchor, let row = items.firstIndex(where: { $0.id == anchor.id }) {
+                place(row: row, offset: anchor.offset)
+            }
+            if parent.reveal == nil { revealed = nil }
+            report()
+        }
+
+        /// The first message in view and how far its top sits below the view's.
+        private func topRow() -> (id: String, offset: CGFloat)? {
+            guard let table else { return nil }
+            let top = table.contentOffset.y + table.adjustedContentInset.top
+            let visible = CGRect(x: 0, y: top, width: table.bounds.width, height: table.bounds.height)
+            let rows = (table.indexPathsForRows(in: visible) ?? []).map(\.row).sorted()
+            guard let row = rows.first(where: { $0 < items.count && items[$0].id != ChatList.earlier }) else { return nil }
+            return (items[row].id, table.rectForRow(at: IndexPath(row: row, section: 0)).minY - top)
+        }
+
+        private func place(row: Int, offset: CGFloat) {
+            guard let table else { return }
+            let y = table.rectForRow(at: IndexPath(row: row, section: 0)).minY - offset - table.adjustedContentInset.top
+            set(y)
+        }
+
+        private func toEnd() {
+            guard let table else { return }
+            set(table.contentSize.height + table.adjustedContentInset.bottom - table.bounds.height)
+        }
+
+        private func set(_ y: CGFloat) {
+            guard let table else { return }
+            let lowest = -table.adjustedContentInset.top
+            let highest = max(lowest, table.contentSize.height + table.adjustedContentInset.bottom - table.bounds.height)
+            adjusting = true
+            table.contentOffset = CGPoint(x: 0, y: min(max(y, lowest), highest))
+            adjusting = false
+        }
+
+        func scrollViewDidScroll(_ scrollView: UIScrollView) {
+            guard !adjusting else { return }
+            report()
+        }
+
+        private func report() {
+            guard let table, let parent else { return }
+            let bottom = table.contentOffset.y + table.bounds.height >= table.contentSize.height + table.adjustedContentInset.bottom - Self.edge
+            let top = table.contentOffset.y + table.adjustedContentInset.top < Self.top
+            atBottom = bottom
+            if parent.atBottom != bottom || parent.nearTop != top {
+                DispatchQueue.main.async {
+                    if parent.atBottom != bottom { parent.atBottom = bottom }
+                    if parent.nearTop != top { parent.nearTop = top }
+                }
+            }
+        }
+
+        // MARK: rows
+
+        func tableView(_ tableView: UITableView, numberOfRowsInSection section: Int) -> Int { items.count }
+
+        func tableView(_ tableView: UITableView, heightForRowAt indexPath: IndexPath) -> CGFloat {
+            guard indexPath.row < items.count else { return 1 }
+            let item = items[indexPath.row]
+            let width = tableView.bounds.width
+            if width != self.width { self.width = width }
+            if let known = heights[item.id], known.version == item.version, known.width == width { return known.height + spacing }
+            sizer.rootView = item.view
+            let height = max(1, ceil(sizer.sizeThatFits(in: CGSize(width: width, height: .greatestFiniteMagnitude)).height))
+            heights[item.id] = (item.version, width, height)
+            return height + spacing
+        }
+
+        private var spacing: CGFloat { parent?.spacing ?? 0 }
+
+        func tableView(_ tableView: UITableView, cellForRowAt indexPath: IndexPath) -> UITableViewCell {
+            let cell = tableView.dequeueReusableCell(withIdentifier: Self.cell, for: indexPath)
+            guard let cell = cell as? Cell, indexPath.row < items.count else { return cell }
+            let item = items[indexPath.row]
+            cell.show(item.view) { [weak self] height in self?.grew(item.id, to: height) }
+            return cell
+        }
+
+        /// A row that changed its own size, such as a card opened, keeps the size it took.
+        private func grew(_ id: String, to height: CGFloat) {
+            guard let table, let known = heights[id], abs(known.height - height) > 0.5 else { return }
+            let anchor = atBottom ? nil : topRow()
+            heights[id] = (known.version, known.width, height)
+            adjusting = true
+            UIView.performWithoutAnimation {
+                table.beginUpdates()
+                table.endUpdates()
+            }
+            adjusting = false
+            if atBottom {
+                toEnd()
+            } else if let anchor, let top = items.firstIndex(where: { $0.id == anchor.id }) {
+                place(row: top, offset: anchor.offset)
+            }
+        }
+    }
+
+    /// A row's SwiftUI view, which says when its content wants another height.
+    final class Cell: UITableViewCell {
+        private let host = UIHostingController(rootView: AnyView(EmptyView()))
+        private var grew: ((CGFloat) -> Void)?
+        private var reported: CGFloat = 0
+
+        override init(style: UITableViewCell.CellStyle, reuseIdentifier: String?) {
+            super.init(style: style, reuseIdentifier: reuseIdentifier)
+            backgroundColor = .clear
+            host.view.backgroundColor = .clear
+            host.sizingOptions = [.intrinsicContentSize]
+            host.view.translatesAutoresizingMaskIntoConstraints = false
+            contentView.addSubview(host.view)
+            NSLayoutConstraint.activate([
+                host.view.leadingAnchor.constraint(equalTo: contentView.leadingAnchor),
+                host.view.trailingAnchor.constraint(equalTo: contentView.trailingAnchor),
+                host.view.topAnchor.constraint(equalTo: contentView.topAnchor),
+            ])
+        }
+
+        required init?(coder: NSCoder) { fatalError("not from a nib") }
+
+        func show(_ view: AnyView, grew: @escaping (CGFloat) -> Void) {
+            host.rootView = view
+            reported = 0
+            self.grew = grew
+        }
+
+        /// The content asked for another size, which lays the cell out again: measure it.
+        override func layoutSubviews() {
+            super.layoutSubviews()
+            let height = ceil(host.sizeThatFits(in: CGSize(width: contentView.bounds.width, height: .greatestFiniteMagnitude)).height)
+            if reported == 0 {
+                reported = height
+            } else if abs(height - reported) > 0.5 {
+                reported = height
+                let grew = grew
+                DispatchQueue.main.async { grew?(height) }
+            }
+        }
+    }
+}
 #endif
