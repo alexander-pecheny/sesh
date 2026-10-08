@@ -164,13 +164,23 @@ struct ConversationView: View {
         var items: [ChatList.Item] = []
         if conversation.earlier { items.append(item(ChatList.earlier, 0, ProgressView().frame(maxWidth: .infinity))) }
         for row in Row.rows(conversation.shown, key: conversation.rowKey) {
+            // A fingerprint, not the whole text: this runs on every keystroke and screen update.
             var hasher = Hasher()
+            func mark(_ entry: Conversation.Entry) {
+                hasher.combine(entry.id)
+                hasher.combine(entry.kind)
+                hasher.combine(entry.text?.utf8.count)
+                hasher.combine(entry.summary.utf8.count)
+                if let result = entry.call.flatMap({ conversation.results[$0] }) {
+                    hasher.combine(result.id)
+                    hasher.combine(result.text?.utf8.count)
+                    hasher.combine(result.truncated)
+                }
+            }
             switch row.content {
-            case .item(.entry(let entry)):
-                hasher.combine(entry)
-                hasher.combine(entry.call.flatMap { conversation.results[$0] })
+            case .item(.entry(let entry)): mark(entry)
             case .item(.switched(_, let reason)): hasher.combine(reason)
-            case .lookups(let entries): hasher.combine(entries)
+            case .lookups(let entries): entries.forEach(mark)
             }
             hasher.combine(conversation.focus.map(row.contains))
             items.append(item(row.id, hasher.finalize(), rowView(row)))
@@ -185,7 +195,7 @@ struct ConversationView: View {
             items.append(item("queued." + message.id.uuidString, hasher.finalize(), QueuedBubble(message: message, conversation: conversation, edit: takeBack)))
         }
         if working || conversation.state == "background" && !conversation.status.isEmpty {
-            items.append(item("working", 0, WorkingRow(status: conversation.status)))
+            items.append(item("working", conversation.status.hashValue, WorkingRow(status: conversation.status)))
         }
         return items
     }

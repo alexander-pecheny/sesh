@@ -91,9 +91,23 @@ struct ChatList: NSViewRepresentable {
         func update() {
             guard let parent, let table, let scroll else { return }
             let anchor = atBottom ? nil : topRow()
+            let old = items
             items = parent.items
+            let change = Change(old: old.map { ($0.id, $0.version) }, new: items.map { ($0.id, $0.version) })
+            if case .none = change, parent.jumps == jumps, parent.reveal == revealed { return }
             adjusting = true
-            table.reloadData()
+            switch change {
+            case .none: break
+            case .rows(let changed, let added):
+                table.beginUpdates()
+                if !added.isEmpty { table.insertRows(at: added, withAnimation: []) }
+                if !changed.isEmpty {
+                    table.reloadData(forRowIndexes: changed, columnIndexes: [0])
+                    table.noteHeightOfRows(withIndexesChanged: changed)
+                }
+                table.endUpdates()
+            case .all: table.reloadData()
+            }
             // The frame takes the new rows' heights only on layout; a scroll before it is clamped.
             table.tile()
             adjusting = false
@@ -352,9 +366,22 @@ struct ChatList: UIViewRepresentable {
         func update() {
             guard let parent, let table else { return }
             let anchor = atBottom ? nil : topRow()
+            let old = items
             items = parent.items
+            let change = Change(old: old.map { ($0.id, $0.version) }, new: items.map { ($0.id, $0.version) })
+            if case .none = change, parent.jumps == jumps, parent.reveal == revealed { return }
             adjusting = true
-            table.reloadData()
+            switch change {
+            case .none: break
+            case .rows(let changed, let added):
+                UIView.performWithoutAnimation {
+                    table.performBatchUpdates {
+                        table.insertRows(at: added.map { IndexPath(row: $0, section: 0) }, with: .none)
+                        table.reloadRows(at: changed.map { IndexPath(row: $0, section: 0) }, with: .none)
+                    }
+                }
+            case .all: table.reloadData()
+            }
             table.layoutIfNeeded()
             adjusting = false
             if parent.jumps != jumps {
@@ -510,3 +537,30 @@ struct ChatList: UIViewRepresentable {
     }
 }
 #endif
+
+/// What a list must redo for new rows: nothing, some rows reloaded and some added at either
+/// end, or everything.
+enum Change {
+    case none
+    case rows(changed: IndexSet, added: IndexSet)
+    case all
+
+    init(old: [(String, Int)], new: [(String, Int)]) {
+        let oldIDs = old.map(\.0), newIDs = new.map(\.0)
+        // Rows added at the end, as replies arrive, or at the top, as pages load.
+        let start: Int
+        if newIDs.starts(with: oldIDs) {
+            start = 0
+        } else if newIDs.count >= oldIDs.count, Array(newIDs.suffix(oldIDs.count)) == oldIDs {
+            start = newIDs.count - oldIDs.count
+        } else {
+            self = .all
+            return
+        }
+        var changed = IndexSet()
+        for (offset, row) in old.enumerated() where new[start + offset].1 != row.1 { changed.insert(start + offset) }
+        var added = IndexSet(integersIn: 0..<start)
+        added.formUnion(IndexSet(integersIn: (start + old.count)..<new.count))
+        self = changed.isEmpty && added.isEmpty ? .none : .rows(changed: changed, added: added)
+    }
+}
