@@ -38,14 +38,22 @@ struct Prose: NSViewRepresentable {
         guard let container = view.textContainer, let layout = view.layoutManager else { return nil }
         // Asked for its ideal size, the text is as wide as its longest line, up to the measure.
         let width = proposal.width.flatMap { $0.isFinite && $0 > 0 ? $0 : nil } ?? Metric.measure
+        // A table sizes its columns by the text view's frame, not the container's.
+        if view.frame.width != width { view.setFrameSize(NSSize(width: width, height: view.frame.height)) }
         container.containerSize = NSSize(width: width, height: .greatestFiniteMagnitude)
         layout.ensureLayout(for: container)
         let used = layout.usedRect(for: container)
-        // As wide as the longest line, so a short message makes a small bubble; the layout
-        // manager reports the container's width here, the string its own.
-        let lines = view.textStorage?.boundingRect(
-            with: NSSize(width: width, height: .greatestFiniteMagnitude), options: [.usesLineFragmentOrigin, .usesFontLeading])
-        return CGSize(width: min(width, ceil(lines?.width ?? width)), height: ceil(used.height))
+        // As wide as the longest line, so a short message makes a small bubble. Text that wraps,
+        // or holds a table, keeps the whole width: narrower, it would wrap onto more lines than
+        // the height measured here.
+        var longest: CGFloat = 0, lines = 0
+        layout.enumerateLineFragments(forGlyphRange: layout.glyphRange(for: container)) { _, line, _, _, _ in
+            longest = max(longest, line.maxX)
+            lines += 1
+        }
+        let paragraphs = view.string.utf16.reduce(1) { $1 == 10 ? $0 + 1 : $0 }
+        let full = lines > paragraphs || Cmark.hasTable(text)
+        return CGSize(width: full ? width : min(width, ceil(longest)), height: ceil(used.height))
     }
 
     func makeCoordinator() -> Coordinator { Coordinator() }

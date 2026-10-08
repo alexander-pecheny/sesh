@@ -68,6 +68,7 @@ struct ChatList: NSViewRepresentable {
         private weak var table: NSTableView?
         private var items: [Item] = []
         private var heights: [String: (version: Int, width: CGFloat, height: CGFloat)] = [:]
+        /// Measures rows laid out as a cell lays them out, so a cached height is the height drawn.
         private let sizer = NSHostingController(rootView: AnyView(EmptyView()))
         private var jumps = 0
         private var revealed: String?
@@ -215,7 +216,7 @@ struct ChatList: NSViewRepresentable {
             let item = items[row]
             let width = width
             if let known = heights[item.id], known.version == item.version, known.width == width { return known.height }
-            sizer.rootView = item.view
+            sizer.rootView = ChatList.laidOut(item.view, report: nil)
             let height = max(1, ceil(sizer.sizeThatFits(in: CGSize(width: width, height: .greatestFiniteMagnitude)).height))
             heights[item.id] = (item.version, width, height)
             return height
@@ -226,7 +227,7 @@ struct ChatList: NSViewRepresentable {
             let item = items[row]
             let cell = tableView.makeView(withIdentifier: Self.cell, owner: self) as? Cell ?? Cell()
             cell.identifier = Self.cell
-            cell.show(item.view, width: width) { [weak self] height in self?.grew(item.id, to: height) }
+            cell.show(ChatList.laidOut(item.view) { [weak self] height in self?.grew(item.id, to: height) })
             return cell
         }
 
@@ -248,50 +249,26 @@ struct ChatList: NSViewRepresentable {
         }
     }
 
-    /// A row's SwiftUI view, which says when its content wants another height.
+    /// A row's SwiftUI view, filling the row the list measured for it.
     final class Cell: NSView {
-        private let host = Host(rootView: AnyView(EmptyView()))
-        /// The table's width, held on the view itself so its fitting size answers for it.
-        private lazy var width = host.widthAnchor.constraint(equalToConstant: 1)
+        private let host = NSHostingView(rootView: AnyView(EmptyView()))
 
         override init(frame: NSRect) {
             super.init(frame: frame)
+            host.sizingOptions = []
             host.translatesAutoresizingMaskIntoConstraints = false
             addSubview(host)
             NSLayoutConstraint.activate([
                 host.leadingAnchor.constraint(equalTo: leadingAnchor),
+                host.trailingAnchor.constraint(equalTo: trailingAnchor),
                 host.topAnchor.constraint(equalTo: topAnchor),
-                width,
+                host.bottomAnchor.constraint(equalTo: bottomAnchor),
             ])
         }
 
         required init?(coder: NSCoder) { fatalError("not from a nib") }
 
-        func show(_ view: AnyView, width: CGFloat, grew: @escaping (CGFloat) -> Void) {
-            self.width.constant = width
-            host.rootView = view
-            host.grew = { [weak self] in
-                guard let self else { return }
-                grew(ceil(self.host.fittingSize.height))
-            }
-        }
-    }
-
-    final class Host: NSHostingView<AnyView> {
-        var grew: (() -> Void)?
-
-        required init(rootView: AnyView) {
-            super.init(rootView: rootView)
-            sizingOptions = [.intrinsicContentSize]
-        }
-
-        @MainActor required init?(coder: NSCoder) { fatalError("not from a nib") }
-
-        override func invalidateIntrinsicContentSize() {
-            super.invalidateIntrinsicContentSize()
-            let grew = grew
-            DispatchQueue.main.async { grew?() }
-        }
+        func show(_ view: AnyView) { host.rootView = view }
     }
 }
 #else
@@ -459,7 +436,7 @@ struct ChatList: UIViewRepresentable {
             let width = tableView.bounds.width
             if width != self.width { self.width = width }
             if let known = heights[item.id], known.version == item.version, known.width == width { return known.height + spacing }
-            sizer.rootView = item.view
+            sizer.rootView = ChatList.laidOut(item.view, report: nil)
             let height = max(1, ceil(sizer.sizeThatFits(in: CGSize(width: width, height: .greatestFiniteMagnitude)).height))
             heights[item.id] = (item.version, width, height)
             return height + spacing
@@ -471,7 +448,7 @@ struct ChatList: UIViewRepresentable {
             let cell = tableView.dequeueReusableCell(withIdentifier: Self.cell, for: indexPath)
             guard let cell = cell as? Cell, indexPath.row < items.count else { return cell }
             let item = items[indexPath.row]
-            cell.show(item.view) { [weak self] height in self?.grew(item.id, to: height) }
+            cell.show(ChatList.laidOut(item.view) { [weak self] height in self?.grew(item.id, to: height) })
             return cell
         }
 
@@ -494,46 +471,28 @@ struct ChatList: UIViewRepresentable {
         }
     }
 
-    /// A row's SwiftUI view, which says when its content wants another height.
+    /// A row's SwiftUI view, filling the row the list measured for it.
     final class Cell: UITableViewCell {
         private let host = UIHostingController(rootView: AnyView(EmptyView()))
-        private var grew: ((CGFloat) -> Void)?
-        private var reported: CGFloat = 0
 
         override init(style: UITableViewCell.CellStyle, reuseIdentifier: String?) {
             super.init(style: style, reuseIdentifier: reuseIdentifier)
             backgroundColor = .clear
             host.view.backgroundColor = .clear
-            host.sizingOptions = [.intrinsicContentSize]
+            host.sizingOptions = []
             host.view.translatesAutoresizingMaskIntoConstraints = false
             contentView.addSubview(host.view)
             NSLayoutConstraint.activate([
                 host.view.leadingAnchor.constraint(equalTo: contentView.leadingAnchor),
                 host.view.trailingAnchor.constraint(equalTo: contentView.trailingAnchor),
                 host.view.topAnchor.constraint(equalTo: contentView.topAnchor),
+                host.view.bottomAnchor.constraint(equalTo: contentView.bottomAnchor),
             ])
         }
 
         required init?(coder: NSCoder) { fatalError("not from a nib") }
 
-        func show(_ view: AnyView, grew: @escaping (CGFloat) -> Void) {
-            host.rootView = view
-            reported = 0
-            self.grew = grew
-        }
-
-        /// The content asked for another size, which lays the cell out again: measure it.
-        override func layoutSubviews() {
-            super.layoutSubviews()
-            let height = ceil(host.sizeThatFits(in: CGSize(width: contentView.bounds.width, height: .greatestFiniteMagnitude)).height)
-            if reported == 0 {
-                reported = height
-            } else if abs(height - reported) > 0.5 {
-                reported = height
-                let grew = grew
-                DispatchQueue.main.async { grew?(height) }
-            }
-        }
+        func show(_ view: AnyView) { host.rootView = view }
     }
 }
 #endif
@@ -562,5 +521,19 @@ enum Change {
         var added = IndexSet(integersIn: 0..<start)
         added.formUnion(IndexSet(integersIn: (start + old.count)..<new.count))
         self = changed.isEmpty && added.isEmpty ? .none : .rows(changed: changed, added: added)
+    }
+}
+
+extension ChatList {
+    /// A row as both the measuring and the shown copy lay it out: the list's width, its own
+    /// height, from the top. The shown copy reports the height it takes, which changes when a
+    /// card opens or an image loads.
+    static func laidOut(_ view: AnyView, report: ((CGFloat) -> Void)?) -> AnyView {
+        let fixed = view.fixedSize(horizontal: false, vertical: true)
+        guard let report else { return AnyView(fixed) }
+        return AnyView(
+            fixed
+                .onGeometryChange(for: CGFloat.self) { $0.size.height } action: { height in report(ceil(height)) }
+                .frame(maxHeight: .infinity, alignment: .top))
     }
 }
