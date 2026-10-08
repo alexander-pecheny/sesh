@@ -15,23 +15,6 @@ enum TaskActions {
     /// The branch a title suggests, under the user's name as herdr's own branches are.
     static func branch(for title: String, user: String) -> String { "\(user)/\(Names.slug(title))" }
 
-    /// Makes the Worktree a new Task asked for and records it on the Task.
-    static func makeWorktree(for task: Record, repo: String, branch: String, on machine: Machine, in vault: Vault) async -> String? {
-        if let problem = await machine.prepare() { return problem }
-        switch await Herdr.worktree(repo, branch: branch, label: task.body.title ?? branch, on: machine) {
-        case .failure(let failure): return failure.message
-        case .success(let opened):
-            var record = vault.records[task.id] ?? task
-            record.body.machine = machine.alias
-            record.body.repo = repo
-            record.body.path = opened.path
-            record.body.branch = opened.branch ?? branch
-            record.body.workspace = opened.workspace
-            vault.write(record)
-            return nil
-        }
-    }
-
     /// The Task's Workspace on `machine`, made if herdr has none, and a fresh pane in it.
     static func pane(for task: Record, on machine: Machine, label: String, folder wanted: String? = nil) async -> Result<(Herdr.Opened, String), Herdr.Failure> {
         let title = task.body.title ?? "Task"
@@ -50,23 +33,135 @@ enum TaskActions {
         return await Herdr.tab(in: workspace, folder: folder, label: label, on: machine).map { ($0, folder) }
     }
 
-    /// Starts `agent` for the Task and adopts the new Agent session from birth.
-    static func startSession(_ agent: Agent, for task: Record, on machine: Machine, in vault: Vault) async -> Result<Record, Herdr.Failure> {
+    /// Starts `agent` for the Task, in its Worktree of `repo` when one is given, and adopts the
+    /// new Agent session from birth. The session is made, and `made` told, once its pane is;
+    /// an Agent that then fails to start takes its session with it.
+    static func startSession(_ agent: Agent, for task: Record, on machine: Machine, repo: String?, in vault: Vault,
+                             made: (Record) -> Void) async -> Result<Record, Herdr.Failure> {
         if let problem = await machine.prepare() { return .failure(Herdr.Failure(problem)) }
-        let name = Names.slug("\(task.body.title ?? "task")-\(agent.rawValue)")
-        let opened: Herdr.Opened, folder: String
-        switch await pane(for: task, on: machine, label: agent.title) {
-        case .failure(let failure): return .failure(failure)
-        case .success(let value): (opened, folder) = value
+        var folder: String?, fresh: String?
+        if let repo {
+            switch await worktree(for: task, repo: repo, on: machine, in: vault) {
+            case .failure(let failure): return .failure(failure)
+            case .success(let made): (folder, fresh) = made
+            }
         }
-        if let problem = await Herdr.launch(agent, name: name, pane: opened.pane, on: machine) {
-            return .failure(Herdr.Failure(problem))
+        let current = vault.records[task.id] ?? task
+        let pane: String
+        if let fresh {
+            pane = fresh
+        } else {
+            switch await self.pane(for: current, on: machine, label: agent.title, folder: folder) {
+            case .failure(let failure): return .failure(failure)
+            case .success(let value): (pane, folder) = (value.0.pane, value.1)
+            }
         }
         let count = vault.children(.session, task: task.id).filter { $0.body.agent == agent.rawValue }.count
-        let session = vault.create(.session, .init(
+        var body = Record.Body(
             title: count == 0 ? agent.title : "\(agent.title) \(count + 1)", task: task.id,
-            position: Double(Date().timeIntervalSince1970), machine: machine.alias, path: folder, pane: opened.pane, agent: agent.rawValue))
-        return .success(session)
+            position: Double(Date().timeIntervalSince1970), machine: machine.alias, path: folder, pane: pane, agent: agent.rawValue)
+        body.repo = repo
+        let session = vault.create(.session, body)
+        made(session)
+        let name = Names.slug("\(current.body.title ?? "task")-\(agent.rawValue)")
+        if let problem = await Herdr.launch(agent, name: name, pane: pane, on: machine) {
+            vault.delete(vault.records[session.id] ?? session)
+            return .failure(Herdr.Failure(problem))
+        }
+        return .success(vault.records[session.id] ?? session)
+    }
+
+    /// The Task's Worktree of `repo` on `machine`, made on first use with the Task's branch, and
+    /// the fresh Workspace's own pane when it was made just now.
+    static func worktree(for task: Record, repo given: String, on machine: Machine, in vault: Vault) async -> Result<(String, String?), Herdr.Failure> {
+        let repo = given.hasPrefix("~/") ? (await machine.run("printf %s \"$HOME\"")).out + given.dropFirst(1) : given
+        let current = vault.records[task.id] ?? task
+        if let path = current.body.path, current.body.repo == repo, current.body.machine == machine.alias { return .success((path, nil)) }
+        let known = vault.children(.session, task: task.id)
+            .first { $0.body.repo == repo && $0.body.machine == machine.alias && $0.body.path != nil && $0.body.path != repo }
+        if let path = known?.body.path { return .success((path, nil)) }
+        let title = current.body.title ?? "Task"
+        let branch = current.body.branch ?? branch(for: title, user: user(on: machine))
+        guard current.body.path == nil else {
+            return await Herdr.worktree(repo, branch: branch, label: title, on: machine).map { ($0.path ?? repo, $0.pane) }
+        }
+        switch await Herdr.worktree(repo, branch: branch, label: title, on: machine) {
+        case .failure(let failure): return .failure(failure)
+        case .success(let opened):
+            var record = vault.records[task.id] ?? current
+            record.body.machine = machine.alias
+            record.body.repo = repo
+            record.body.path = opened.path
+            record.body.branch = opened.branch ?? branch
+            record.body.workspace = opened.workspace
+            vault.write(record)
+            return .success((opened.path ?? repo, opened.pane))
+        }
+    }
+
+    /// The repositories a new session of the Task may want on `machine`, the Task's own last
+    /// used first, then the newest used anywhere.
+    static func recentRepos(for task: Record, on machine: String?, library: Library) -> [String] {
+        let sessions = library.vaults.flatMap { $0.all(.session) }.filter { $0.body.machine == machine }
+            .sorted { ($0.body.position ?? 0) > ($1.body.position ?? 0) }
+        let mine = sessions.filter { $0.body.task == task.id }.compactMap(\.body.repo)
+        let tasks = library.vaults.flatMap { $0.all(.task) }.filter { $0.body.machine == machine }
+        let own = task.body.machine == machine ? [task.body.repo].compactMap { $0 } : []
+        var seen = Set<String>()
+        return (mine + own + sessions.compactMap(\.body.repo) + tasks.compactMap(\.body.repo))
+            .filter { seen.insert($0).inserted }
+            .prefix(8).map { $0 }
+    }
+
+    /// Gives a new Task a branch named by a model from its title, so starting work later asks
+    /// for nothing; a slug of the title when no model answers.
+    static func nameBranch(of task: Record, in vault: Vault) {
+        Task {
+            let user = user(on: vault.machine)
+            let title = task.body.title ?? "task"
+            let named = await suggestBranch(for: title, user: user, in: vault)
+            var record = vault.records[task.id] ?? task
+            guard record.body.branch == nil else { return }
+            record.body.branch = named ?? branch(for: title, user: user)
+            vault.write(record)
+        }
+    }
+
+    private static func suggestBranch(for title: String, user: String, in vault: Vault) async -> String? {
+        #if os(macOS)
+        let key = try? String(contentsOfFile: NSHomeDirectory() + "/.openrouter_key", encoding: .utf8)
+        #else
+        let key = Optional((await vault.machine.run("cat ~/.openrouter_key")).out)
+        #endif
+        guard let key = key?.trimmingCharacters(in: .whitespacesAndNewlines), !key.isEmpty,
+              let url = URL(string: "https://openrouter.ai/api/v1/chat/completions") else { return nil }
+        var request = URLRequest(url: url, timeoutInterval: 20)
+        request.httpMethod = "POST"
+        request.setValue("Bearer \(key)", forHTTPHeaderField: "Authorization")
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        let prompt = "Generate a branch name \(user)/... from natural language short task description: \(title). Reply with only the branch name"
+        request.httpBody = try? JSONSerialization.data(withJSONObject: [
+            "model": "anthropic/claude-haiku-5.5", "max_tokens": 40, "messages": [["role": "user", "content": prompt]],
+        ])
+        struct Reply: Decodable {
+            struct Choice: Decodable { struct Message: Decodable { let content: String }; let message: Message }
+            let choices: [Choice]
+        }
+        guard let (data, _) = try? await URLSession.shared.data(for: request),
+              let text = (try? JSONDecoder().decode(Reply.self, from: data))?.choices.first?.message.content else { return nil }
+        let branch = text.trimmingCharacters(in: .whitespacesAndNewlines.union(CharacterSet(charactersIn: "`\"'")))
+        let allowed = CharacterSet.alphanumerics.union(CharacterSet(charactersIn: "/-_."))
+        guard branch.hasPrefix(user + "/"), branch.count < 80, branch.unicodeScalars.allSatisfy(allowed.contains) else { return nil }
+        return branch
+    }
+
+    /// The user herdr's own branches are named for: the Mac's, or the Host's ssh user.
+    static func user(on machine: Machine) -> String {
+        #if os(macOS)
+        return NSUserName()
+        #else
+        return machine.host?.user ?? "sesh"
+        #endif
     }
 
     /// Starts a session's Agent again on its last Transcript, in a fresh pane in its folder.
@@ -140,6 +235,16 @@ enum TaskActions {
             guard ran.ok else { return "The Worktree is still there: \(ran.problem)" }
         } else if let workspace {
             _ = await home.run("herdr workspace close \(quote(workspace))")
+        }
+        // Worktrees made later in other repositories carry the Task's branch too.
+        let others = Set(sessions.compactMap { session -> [String?]? in
+            guard let repo = session.body.repo, let path = session.body.path, path != repo, path != task.body.path else { return nil }
+            return [session.body.machine, repo, path]
+        })
+        for other in others {
+            let force = discard ? " --force" : ""
+            let ran = await machine(other[0]).run("git -C \(quote(other[1] ?? "")) worktree remove \(quote(other[2] ?? ""))\(force)")
+            guard ran.ok else { return "The Worktree at \(other[2] ?? "") is still there: \(ran.problem)" }
         }
         var record = vault.records[task.id] ?? task
         record.body.archived = true

@@ -26,7 +26,7 @@ struct TaskView: View {
                 }
                 if let task = vault.records[id] { AddMenu(vault: vault, task: task) }
                 Spacer()
-                if let task = vault.records[id], let branch = task.body.branch {
+                if let task = vault.records[id], task.body.path != nil, let branch = task.body.branch {
                     Label("\(branch) on \(TaskActions.machine(task.body.machine).title)", systemImage: "arrow.triangle.branch")
                         .font(.caption).foregroundStyle(.secondary).lineLimit(1)
                         .help(task.body.path ?? "")
@@ -69,7 +69,8 @@ struct TaskView: View {
             guard let agent = UserDefaults.standard.string(forKey: "start").flatMap(Agent.init) else { return }
             for _ in 0..<40 where vault.records[id] == nil || !vault.online { try? await Task.sleep(for: .milliseconds(500)) }
             guard let task = vault.records[id] else { return }
-            library.start(agent, for: task, on: TaskActions.machines(for: task, in: vault)[0]) { Ghostty.logger.error("start failed: \($0, privacy: .public)") }
+            library.start(agent, for: task, on: TaskActions.machines(for: task, in: vault)[0],
+                          repo: UserDefaults.standard.string(forKey: "repo")) { Ghostty.logger.error("start failed: \($0, privacy: .public)") }
         }
         #endif
     }
@@ -168,15 +169,17 @@ private struct AddMenu: View {
     @ObservedObject var vault: Vault
     let task: Record
     @State private var problem: String?
+    @State private var agent: Agent?
 
     var body: some View {
         Menu {
-            ForEach(TaskActions.machines(for: task, in: vault)) { machine in
-                Section(machine.title) {
-                    ForEach(Agent.allCases) { agent in
-                        Button("New \(agent.title) session") { start(agent, on: machine) }
-                    }
-                    Button("New Terminal") {
+            Section {
+                ForEach(Agent.allCases) { agent in
+                    Button("New \(agent.title) session…") { self.agent = agent }
+                }
+                let machines = TaskActions.machines(for: task, in: vault)
+                ForEach(machines) { machine in
+                    Button(machines.count > 1 ? "New Terminal on \(machine.title)" : "New Terminal") {
                         Task { problem = await library.openTerminal(in: task, on: machine) }
                     }
                 }
@@ -206,14 +209,14 @@ private struct AddMenu: View {
         .fixedSize()
         .padding(.horizontal, Metric.gap)
         .help("New Tab")
+        .sheet(item: $agent) { agent in
+            StartSessionSheet(vault: vault, task: task, agent: agent) { problem = $0 }
+        }
         .alert("Sesh could not start it", isPresented: Binding(get: { problem != nil }, set: { if !$0 { problem = nil } })) {
             Button("OK", role: .cancel) {}
         } message: { Text(problem ?? "") }
     }
 
-    private func start(_ agent: Agent, on machine: Machine) {
-        library.start(agent, for: task, on: machine) { problem = $0 }
-    }
 }
 
 /// What the current Tab shows, apart so the Task view stays simple to type-check.

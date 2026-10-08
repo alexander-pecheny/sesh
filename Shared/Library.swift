@@ -22,21 +22,49 @@ final class Library: ObservableObject {
         let machine: String
     }
 
-    /// Opens a Tab for the new session at once, and swaps in its Conversation once the Agent
-    /// can take a prompt; starting one takes tens of seconds.
-    func start(_ agent: Agent, for task: Record, on machine: Machine, problem: @escaping (String) -> Void) {
+    /// A Task from its title alone, selected at once; its branch is named in the background.
+    @discardableResult
+    func newTask(_ title: String, in vault: Vault, parent: String?) -> Record {
+        let task = vault.create(.task, .init(
+            title: title, parent: parent, position: Tree.next(in: parent, of: vault), edited: Int64(Date().timeIntervalSince1970 * 1000)))
+        TaskActions.nameBranch(of: task, in: vault)
+        selection = task.id
+        return task
+    }
+
+    /// Opens the new session's Tab as soon as its pane exists; what the user writes before the
+    /// Agent can take a prompt waits in its queue.
+    func start(_ agent: Agent, for task: Record, on machine: Machine, repo: String? = nil, problem: @escaping (String) -> Void) {
         guard let vault = vault(of: task.id) else { return }
         let pending = Starting(agent: agent, machine: machine.title)
         starting[task.id, default: []].append(pending)
         Task {
-            let result = await TaskActions.startSession(agent, for: task, on: machine, in: vault)
+            var shown: Record?
+            let result = await TaskActions.startSession(agent, for: task, on: machine, repo: repo, in: vault) { session in
+                shown = session
+                starting[task.id]?.removeAll { $0 == pending }
+                launching.insert(session.id)
+                open(.session(session.id), in: task.id)
+            }
             starting[task.id]?.removeAll { $0 == pending }
+            guard let shown else {
+                if case .failure(let failure) = result { problem(failure.message) }
+                return
+            }
+            launching.remove(shown.id)
+            let conversation = conversations[shown.id]
+            conversation?.starting = false
             switch result {
-            case .success(let session): open(.session(session.id), in: task.id)
-            case .failure(let failure): problem(failure.message)
+            case .success: await conversation?.sendQueued()
+            case .failure(let failure):
+                close(.session(shown.id), in: task.id)
+                problem(failure.message)
             }
         }
     }
+
+    /// Sessions whose pane exists but whose Agent cannot take a prompt yet.
+    private var launching: Set<String> = []
 
     private struct Kept: Codable {
         var selection: String?
@@ -78,6 +106,7 @@ final class Library: ObservableObject {
             }
         }
         if let cached = conversations[session.id] { return cached }
+        conversation.starting = launching.contains(session.id)
         conversation.bookmark = { [weak self] entry in self?.bookmark(entry, in: session.id) }
         conversation.copyLink = { [weak self] entry in self?.copyLink(entry, in: session.id) }
         conversation.draft = drafts[session.id] ?? ""

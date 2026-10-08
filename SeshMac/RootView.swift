@@ -22,5 +22,13 @@ struct RootView: View {
         }
         .searchable(text: $search.query, placement: .toolbar, prompt: "Tasks, Journals, Documents, Conversations")
         .onAppear { search.library = library }
+        #if DEBUG
+        // `-newtask TITLE` makes a Task in the first Vault, as the New Task sheet does.
+        .task {
+            guard let title = UserDefaults.standard.string(forKey: "newtask") else { return }
+            for _ in 0..<40 where library.vaults.first?.online != true { try? await Task.sleep(for: .milliseconds(500)) }
+            if let vault = library.vaults.first { library.newTask(title, in: vault, parent: nil) }
+        }
+        #endif
     }
 }

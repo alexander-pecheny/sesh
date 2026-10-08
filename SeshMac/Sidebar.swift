@@ -46,7 +46,7 @@ struct Sidebar: View {
         }
         .sheet(isPresented: $adding) { AddVault() }
         .sheet(item: $naming) { naming in
-            if case .task = naming.goal { NewTaskSheet(vault: naming.vault, parent: naming.parent) } else { NameSheet(naming: naming) }
+            NameSheet(naming: naming)
         }
     }
 }
@@ -197,6 +197,8 @@ private struct NameSheet: View {
         Form {
             TextField(naming.title, text: $name, prompt: Text(prompt))
                 .textFieldStyle(.roundedBorder)
+                .labelsHidden()
+                .multilineTextAlignment(.leading)
                 .onSubmit(save)
         }
         .padding()
@@ -220,8 +222,7 @@ private struct NameSheet: View {
         let vault = naming.vault
         switch naming.goal {
         case .task:
-            let task = vault.create(.task, .init(title: trimmed, parent: naming.parent, position: Tree.next(in: naming.parent, of: vault)))
-            library.selection = task.id
+            library.newTask(trimmed, in: vault, parent: naming.parent)
         case .folder:
             _ = vault.create(.folder, .init(title: trimmed, parent: naming.parent, position: Tree.next(in: naming.parent, of: vault)))
         case .rename(let record):

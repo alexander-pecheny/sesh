@@ -349,10 +349,15 @@ final class Conversation: ObservableObject {
         return ran.ok ? nil : ran.problem
     }
 
+    /// While the Agent starts up, which can take seconds, messages wait in the queue.
+    @Published var starting = false
+
     func send(_ text: String) async -> String? {
         guard let pane else { return "This Agent session is not running, so it cannot take a message." }
-        guard state != "working" else {
+        guard state != "working", !starting else {
             queued.append(Queued(text: text))
+            // As typed into its terminal: the Agent queues it itself and reads it at its next step.
+            if !starting, agent != .pi { await hand() }
             return nil
         }
         return await run("herdr agent prompt \(quote(pane)) \(quote(text))")
@@ -374,7 +379,7 @@ final class Conversation: ObservableObject {
 
     /// Also called by the Library while no view follows the Conversation.
     func sendQueued() async {
-        guard !sendingQueued, !waiting.isEmpty else { return }
+        guard !sendingQueued, !starting, !waiting.isEmpty else { return }
         sendingQueued = true
         defer { sendingQueued = false }
         await hand()

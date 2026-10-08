@@ -136,75 +136,32 @@ struct NameSheet: View {
     }
 }
 
-/// A title in plain words, and optionally a new Worktree on the Vault's Host with a branch
-/// suggested from it.
+/// A title in plain words and nothing else; the branch is named for it in the background and
+/// the repository asked for when an Agent session starts.
 struct NewTaskSheet: View {
     @Environment(\.dismiss) private var dismiss
     @EnvironmentObject private var library: Library
     @ObservedObject var vault: Vault
     let parent: String?
     @State private var title = ""
-    @State private var worktree = false
-    @State private var repo = ""
-    @State private var branch = ""
-    @State private var branchEdited = false
-    @State private var working = false
-    @State private var problem: String?
-    /// Kept so that a retry after a failed Worktree does not make a second Task.
-    @State private var made: Record?
     @FocusState private var focused: Bool
 
-    private var machine: Machine { vault.machine }
     private var trimmed: String { title.trimmingCharacters(in: .whitespacesAndNewlines) }
-    private var recentKey: String { "repo.\(vault.place.alias ?? "")" }
 
     var body: some View {
-        SheetForm(title: "New Task", action: "Create", enabled: !trimmed.isEmpty && (!worktree || (!repo.isEmpty && !branch.isEmpty)),
-                  working: working, perform: { Task { await create() } }) {
-            Section {
-                TextField("What is this Task about, in plain words?", text: $title, axis: .vertical)
-                    .focused($focused)
-            }
-            Section {
-                Toggle("Work in a new Worktree", isOn: $worktree)
-                if worktree {
-                    LabeledContent("Host", value: machine.title)
-                    LabeledField("Repository", "~/src/project", text: $repo)
-                    LabeledField("Branch", "", text: Binding(get: { branch }, set: { branch = $0; branchEdited = true }))
-                }
-            } footer: {
-                if worktree { Text("herdr makes the Worktree from the repository's main checkout, as a Workspace named after the Task.") }
-            }
-            if let problem {
-                Section { Text(problem).font(.system(size: Metric.caption, design: .monospaced)).foregroundStyle(.red) }
-            }
+        SheetForm(title: "New Task", action: "Create", enabled: !trimmed.isEmpty, working: false, perform: create) {
+            TextField("What is this Task about, in plain words?", text: $title)
+                .focused($focused)
+                .submitLabel(.done)
+                .onSubmit(create)
         }
-        .onAppear {
-            repo = UserDefaults.standard.string(forKey: recentKey) ?? ""
-            focused = true
-        }
-        .onChange(of: title) { if !branchEdited { branch = TaskActions.branch(for: title, user: machine.host?.user ?? "sesh") } }
+        .onAppear { focused = true }
     }
 
-    private func create() async {
-        working = true
-        defer { working = false }
-        let task = made ?? vault.create(.task, .init(
-            title: trimmed, parent: parent, position: Tree.next(in: parent, of: vault), edited: Int64(Date().timeIntervalSince1970 * 1000)))
-        made = task
-        guard worktree else { return finish(task) }
-        UserDefaults.standard.set(repo, forKey: recentKey)
-        let folder = repo.hasPrefix("~/") ? (await machine.run("printf %s \"$HOME\"")).out + repo.dropFirst(1) : repo
-        if let failed = await TaskActions.makeWorktree(for: task, repo: folder, branch: branch, on: machine, in: vault) {
-            problem = "The Task is made, but its Worktree is not: \(failed)"
-            return
-        }
-        finish(task)
-    }
-
-    private func finish(_ task: Record) {
+    private func create() {
+        guard !trimmed.isEmpty else { return }
         dismiss()
-        library.selection = task.id
+        library.newTask(trimmed, in: vault, parent: parent)
     }
 }
 

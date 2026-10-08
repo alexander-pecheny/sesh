@@ -24,10 +24,13 @@ enum Herdr {
             var answered = false
             for _ in menus.indices {
                 let screen = await runner.run("herdr pane read \(quote(pane)) --source visible")
-                guard let keys = menus.first(where: { screen.out.contains($0.prompt) })?.keys else { break }
-                _ = await runner.run("herdr agent send-keys \(quote(pane)) \(keys)")
+                guard let menu = menus.first(where: { screen.out.contains($0.prompt) }) else { break }
+                _ = await runner.run("herdr agent send-keys \(quote(pane)) \(menu.keys)")
                 answered = true
-                try? await Task.sleep(for: .seconds(2))
+                for _ in 0..<20 {
+                    try? await Task.sleep(for: .milliseconds(100))
+                    if !(await runner.run("herdr pane read \(quote(pane)) --source visible")).out.contains(menu.prompt) { break }
+                }
             }
             if answered || notReady {
                 ran = await runner.run("herdr agent wait \(quote(pane)) --until idle --until done --timeout 30000")

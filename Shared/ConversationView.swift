@@ -53,7 +53,15 @@ struct ConversationView: View {
         ScrollView {
             LazyVStack(alignment: .leading, spacing: Self.rowSpacing) {
                 if conversation.earlier { ProgressView().frame(maxWidth: .infinity) }
-                if conversation.loaded, conversation.items.isEmpty, conversation.pane != nil {
+                if conversation.starting {
+                    HStack(spacing: Metric.gap) {
+                        ProgressView().controlSize(.small)
+                        Text("Starting \(conversation.agent?.title ?? "the Agent")… Anything you send now goes once it is up.")
+                    }
+                    .font(.ui(Metric.label)).foregroundStyle(flavour(.overlay1))
+                    .frame(maxWidth: .infinity)
+                    .padding(.top, Metric.wide)
+                } else if conversation.loaded, conversation.items.isEmpty, conversation.pane != nil {
                     Text("\(conversation.agent?.title ?? "The Agent") is ready. Its Conversation starts with your first message.")
                         .font(.ui(Metric.label)).foregroundStyle(flavour(.overlay1))
                         .frame(maxWidth: .infinity)
@@ -225,6 +233,7 @@ struct ConversationView: View {
     private var stateLabel: String {
         let agent = conversation.agent?.title ?? "Agent"
         if resume != nil { return "Ended" }
+        if conversation.starting { return "Starting \(agent)" }
         switch conversation.state {
         case "working": return "\(agent) is working"
         case "background": return "\(agent) is waiting on background work"
@@ -616,6 +625,15 @@ private struct RowView: View {
 
 // MARK: Messages
 
+/// The user's messages, sent or still queued, share one shape.
+private enum Bubble {
+    static let spacing: CGFloat = 6
+    static let across: CGFloat = 14
+    static let down: CGFloat = 9
+    static let corner: CGFloat = 18
+    static let inset: CGFloat = 48
+}
+
 private struct UserBubble: View {
     @Environment(\.colorScheme) private var colorScheme
     let entry: Conversation.Entry
@@ -624,25 +642,25 @@ private struct UserBubble: View {
     private var flavour: Catppuccin.Flavour { colorScheme == .dark ? .mocha : .latte }
 
     var body: some View {
-        VStack(alignment: .trailing, spacing: 6) {
+        VStack(alignment: .trailing, spacing: Bubble.spacing) {
             if let images = entry.images, !images.isEmpty {
-                HStack(spacing: 6) {
+                HStack(spacing: Bubble.spacing) {
                     ForEach(images, id: \.self) { RemoteImage(path: $0, conversation: conversation) }
                 }
             }
             if let text = entry.text, !text.isEmpty {
                 message(text)
-                    .font(.ui(15))
+                    .font(.ui(Metric.body))
                     .foregroundStyle(flavour(.text))
-                    .padding(.horizontal, 14)
-                    .padding(.vertical, 9)
-                    .background(flavour(.surface0), in: .rect(cornerRadius: 18))
+                    .padding(.horizontal, Bubble.across)
+                    .padding(.vertical, Bubble.down)
+                    .background(flavour(.surface0), in: .rect(cornerRadius: Bubble.corner))
                     .textSelection(.enabled)
             }
             Stamp(at: entry.at)
         }
         .readable(alignment: .trailing)
-        .padding(.leading, 48)
+        .padding(.leading, Bubble.inset)
     }
 
     private func message(_ text: String) -> some View { UserText(text: text) }
@@ -694,16 +712,19 @@ private struct QueuedBubble: View {
     private var flavour: Catppuccin.Flavour { colorScheme == .dark ? .mocha : .latte }
 
     var body: some View {
-        VStack(alignment: .trailing, spacing: 6) {
+        VStack(alignment: .trailing, spacing: Bubble.spacing) {
             UserText(text: message.text)
-                .font(.ui(15))
+                .font(.ui(Metric.body))
                 .foregroundStyle(flavour(.subtext0))
-                .padding(.horizontal, 14)
-                .padding(.vertical, 9)
-                .overlay(RoundedRectangle(cornerRadius: 18).strokeBorder(flavour(.surface1), style: StrokeStyle(lineWidth: 1, dash: [4, 3])))
+                .padding(.horizontal, Bubble.across)
+                .padding(.vertical, Bubble.down)
+                .overlay(RoundedRectangle(cornerRadius: Bubble.corner).strokeBorder(flavour(.surface1), style: Self.dashes))
             HStack(spacing: Metric.pad) {
                 if message.handed {
-                    Text("Sent; \(conversation.agent?.title ?? "the Agent") reads it at its next step").foregroundStyle(flavour(.overlay1))
+                    Text("Queued; \(conversation.agent?.title ?? "the Agent") reads it at its next step").foregroundStyle(flavour(.overlay1))
+                } else if conversation.starting {
+                    Text("Sent once \(conversation.agent?.title ?? "the Agent") is up").foregroundStyle(flavour(.overlay1))
+                    Button("Edit") { edit(conversation.unqueue(message)) }
                 } else {
                     Text("Sent when \(conversation.agent?.title ?? "the Agent") finishes").foregroundStyle(flavour(.overlay1))
                     Button("Edit") { edit(conversation.unqueue(message)) }
@@ -718,8 +739,10 @@ private struct QueuedBubble: View {
             .tint(flavour(.mauve))
         }
         .readable(alignment: .trailing)
-        .padding(.leading, 48)
+        .padding(.leading, Bubble.inset)
     }
+
+    private static let dashes = StrokeStyle(lineWidth: 1, dash: [Metric.tiny, 3])
 }
 
 /// The whole screen for a long message, on the same text as the message box.

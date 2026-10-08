@@ -50,7 +50,7 @@ struct TaskScreen: View {
             if let task = vault.records[id] {
                 ToolbarItem(placement: .topBarTrailing) {
                     Menu {
-                        if let branch = task.body.branch {
+                        if task.body.path != nil, let branch = task.body.branch {
                             Section("\(branch) on \(TaskActions.machine(task.body.machine).title)") {}
                         }
                         Button("Rename") { sheet = .rename(vault, task) }
@@ -172,17 +172,19 @@ private struct AddMenu: View {
     @ObservedObject var vault: Vault
     let task: Record
     @State private var problem: String?
+    @State private var agent: Agent?
 
     private var flavour: Catppuccin.Flavour { colorScheme == .dark ? .mocha : .latte }
 
     var body: some View {
         Menu {
-            ForEach(TaskActions.machines(for: task, in: vault)) { machine in
-                Section(machine.title) {
-                    ForEach(Agent.allCases) { agent in
-                        Button("New \(agent.title) session") { library.start(agent, for: task, on: machine) { problem = $0 } }
-                    }
-                    Button("New Terminal") {
+            Section {
+                ForEach(Agent.allCases) { agent in
+                    Button("New \(agent.title) session…") { self.agent = agent }
+                }
+                let machines = TaskActions.machines(for: task, in: vault)
+                ForEach(machines) { machine in
+                    Button(machines.count > 1 ? "New Terminal on \(machine.title)" : "New Terminal") {
                         Task { problem = await library.openTerminal(in: task, on: machine) }
                     }
                 }
@@ -218,6 +220,9 @@ private struct AddMenu: View {
                 .frame(width: Metric.control, height: Metric.control)
         }
         .accessibilityLabel("New Tab")
+        .sheet(item: $agent) { agent in
+            StartSessionSheet(vault: vault, task: task, agent: agent) { problem = $0 }
+        }
         .alert("Sesh could not start it", isPresented: Binding(get: { problem != nil }, set: { if !$0 { problem = nil } })) {
             Button("OK", role: .cancel) {}
         } message: { Text(problem ?? "") }

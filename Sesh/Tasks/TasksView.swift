@@ -200,7 +200,7 @@ private struct TaskRow: View {
         HStack(spacing: Metric.gap) {
             VStack(alignment: .leading, spacing: 2) {
                 Text(task.body.title ?? "Untitled").font(.ui(Metric.title)).foregroundStyle(flavour(.text)).lineLimit(2)
-                if let branch = task.body.branch {
+                if task.body.path != nil, let branch = task.body.branch {
                     Text(branch).font(.ui(Metric.small)).foregroundStyle(flavour(.subtext0)).lineLimit(1)
                 }
             }
