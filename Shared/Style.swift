@@ -10,6 +10,8 @@ extension Image {
 extension View {
     func inlineTitle() -> some View { navigationBarTitleDisplayMode(.inline) }
 
+    func fitWidth() -> some View { containerRelativeFrame(.horizontal) }
+
     func readable(alignment: Alignment = .leading, wide: Bool = false) -> some View { frame(maxWidth: .infinity, alignment: alignment) }
 
     /// The whole screen on the phone; a sheet on the Mac, where nothing covers the window.
@@ -26,6 +28,9 @@ extension Image {
 
 extension View {
     func inlineTitle() -> some View { self }
+
+    /// The window is the container on the Mac, wider than a split view's column.
+    func fitWidth() -> some View { frame(maxWidth: .infinity) }
 
     /// Prose no wider than `Metric.measure`, which is hard to read beyond that on a wide
     /// window: the Agent's on the left, the user's on the right, as in a chat.
