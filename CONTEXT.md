@@ -83,6 +83,12 @@ of the Agent session's Task keeps its own copy of every Transcript, so the Conve
 be read when its Host is off and survives the Agent deleting old Transcripts.
 _Avoid_: log, history
 
+**Session log**:
+The ordered record of everything a Conversation shows for one Agent session, kept on the
+machine the Agent runs on and written there once, from its Transcript and its screen. Every
+device shows the same Session log; the Vault keeps a copy for search and offline reading.
+_Avoid_: event stream, feed
+
 **Conversation**:
 The screen that shows one Agent session as chat and takes the user's messages. It is one
 face of an Agent session Tab; the other face is the Agent's own terminal, switched by one
