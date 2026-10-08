@@ -51,6 +51,7 @@ targets:
         embed: false
       - framework: Frameworks/SeshCore.xcframework
         embed: false
+      - package: Highlightr
       - package: MarkdownUI
       - package: cmark
         product: cmark-gfm

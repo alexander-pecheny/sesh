@@ -1,6 +1,6 @@
-#if os(macOS) && canImport(Highlightr)
-import AppKit
+#if canImport(Highlightr)
 import Highlightr
+import SwiftUI
 
 /// Code coloured by highlight.js, in the app's monospaced font, for Documents and code blocks.
 @MainActor

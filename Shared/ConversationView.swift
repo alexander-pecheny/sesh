@@ -349,12 +349,13 @@ struct ConversationView: View {
 /// An Agent's reply: one selectable text on the Mac, so a copy can span paragraphs.
 private struct AgentText: View {
     let text: String
+    var table = false
 
     var body: some View {
         #if os(macOS)
         Prose(text: text)
         #else
-        Markdown(text: text)
+        if table { ProseTable(text: text) } else { Prose(text: text) }
         #endif
     }
 }
@@ -565,7 +566,7 @@ private struct RowView: View {
                 let pieces = Cmark.pieces(text)
                 VStack(alignment: .leading, spacing: Metric.tiny) {
                     ForEach(pieces.indices, id: \.self) { index in
-                        AgentText(text: pieces[index].text).readable(wide: pieces[index].table)
+                        AgentText(text: pieces[index].text, table: pieces[index].table).readable(wide: pieces[index].table)
                     }
                     Stamp(at: entry.at).readable()
                 }
