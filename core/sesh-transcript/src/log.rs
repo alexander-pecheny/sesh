@@ -278,7 +278,7 @@ impl Writer {
             "switch" => {
                 self.switches += 1;
                 let id = format!("switch.{}.{}", log.head()?, self.switches);
-                let body = json!({"kind": "switch", "reason": line["reason"], "transcript": line["transcript"]});
+                let body = json!({"id": id, "kind": "switch", "summary": line["reason"], "transcript": line["transcript"]});
                 self.place_final(log, &id, None, &body)?;
                 self.summary["transcript"] = line["transcript"].clone();
             }

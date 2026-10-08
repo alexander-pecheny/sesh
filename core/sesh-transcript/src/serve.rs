@@ -241,15 +241,18 @@ struct Client {
     read: Vec<u8>,
     write: Vec<u8>,
     open: bool,
-    /// The last sequence number this device has of the summaries, and of each watched session.
-    summaries: Option<i64>,
+    /// The last summary this device has, and whether it wants every session's or only those
+    /// it watches; and the last item it has of each watched session.
+    summaries: i64,
+    all: bool,
     watched: HashMap<String, i64>,
     pinged: Instant,
+    done_asking: bool,
 }
 
 impl Client {
     fn new(stream: UnixStream) -> Self {
-        Client { stream, read: Vec::new(), write: Vec::new(), open: true, summaries: None, watched: HashMap::new(), pinged: Instant::now() }
+        Client { stream, read: Vec::new(), write: Vec::new(), open: true, summaries: 0, all: false, watched: HashMap::new(), pinged: Instant::now(), done_asking: false }
     }
 
     fn send(&mut self, line: &Value) {
@@ -259,9 +262,10 @@ impl Client {
 
     fn serve(&mut self, machine: &mut Machine) {
         let mut buffer = [0u8; 4096];
-        loop {
+        while !self.done_asking {
             match self.stream.read(&mut buffer) {
-                Ok(0) => return self.open = false,
+                // A device that has said all it wants still listens.
+                Ok(0) => self.done_asking = true,
                 Ok(count) => self.read.extend_from_slice(&buffer[..count]),
                 Err(err) if err.kind() == ErrorKind::WouldBlock => break,
                 Err(_) => return self.open = false,
@@ -297,9 +301,14 @@ impl Client {
         match request["op"].as_str().unwrap_or_default() {
             "hello" => {
                 self.send(&json!({"t": "hello", "protocol": PROTOCOL, "version": crate::VERSION}));
-                self.summaries = Some(0);
+                self.all = request["sessions"] == true;
             }
             "watch" => {
+                if let Some(mut summary) = machine.log.session(&session)? {
+                    summary["t"] = "session".into();
+                    summary["session"] = session.clone().into();
+                    self.send(&summary);
+                }
                 let since = request["since"].as_i64().unwrap_or(0);
                 if since > 0 {
                     self.watched.insert(session, since);
@@ -328,12 +337,13 @@ impl Client {
     }
 
     fn push(&mut self, machine: &Machine) -> Result<()> {
-        if let Some(seen) = self.summaries {
-            let lines = machine.log.sessions_since(seen)?;
-            if let Some(last) = lines.last() {
-                self.summaries = last["seq"].as_i64();
-            }
-            for line in &lines {
+        let lines = machine.log.sessions_since(self.summaries)?;
+        if let Some(last) = lines.last().and_then(|line| line["seq"].as_i64()) {
+            self.summaries = last;
+        }
+        for line in &lines {
+            let key = line["session"].as_str().unwrap_or_default();
+            if self.all || self.watched.contains_key(key) {
                 self.send(line);
             }
         }
@@ -354,11 +364,15 @@ impl Client {
 // MARK: attach
 
 /// Joins stdin and stdout to the follower's socket, starting the follower first if need be.
-pub fn attach() -> Result<i32> {
-    serve(false, None)?;
-    let stream = UnixStream::connect(socket()).map_err(|err| format!("the follower does not answer: {err}"))?;
+/// `requests` go first, so a device that cannot write to a running command's stdin can still
+/// say what it wants: every session's summary, or sessions to watch from a sequence number.
+pub fn attach(requests: &[Value]) -> Result<i32> {
+    let stream = connect()?;
     let mut reader = stream.try_clone().map_err(|err| err.to_string())?;
     let mut writer = stream;
+    for request in requests {
+        writeln!(writer, "{request}").map_err(|err| err.to_string())?;
+    }
     std::thread::spawn(move || {
         let _ = std::io::copy(&mut std::io::stdin().lock(), &mut writer);
         let _ = writer.shutdown(std::net::Shutdown::Write);
@@ -375,6 +389,28 @@ pub fn attach() -> Result<i32> {
             }
         }
     }
+}
+
+/// `page KEY --before ORD --limit N`: one page of a session's earlier items, for a device
+/// that reads it with a command of its own.
+pub fn page(session: &str, before: i64, limit: u64) -> Result<i32> {
+    let mut stream = connect()?;
+    writeln!(stream, "{}", json!({"op": "page", "session": session, "before": before, "limit": limit})).map_err(|err| err.to_string())?;
+    let mut out = std::io::stdout().lock();
+    for line in BufReader::new(stream).lines() {
+        let line = line.map_err(|err| err.to_string())?;
+        writeln!(out, "{line}").map_err(|err| err.to_string())?;
+        let value: Value = serde_json::from_str(&line).unwrap_or_default();
+        if value["t"] == "page_done" || value["t"] == "error" {
+            break;
+        }
+    }
+    Ok(0)
+}
+
+fn connect() -> Result<UnixStream> {
+    serve(false, None)?;
+    UnixStream::connect(socket()).map_err(|err| format!("the follower does not answer: {err}"))
 }
 
 // MARK: recording

@@ -19,7 +19,8 @@ const AGENT_GONE_AFTER: Duration = Duration::from_secs(2);
 const PING: Duration = Duration::from_secs(30);
 const DEFAULT_LAST: usize = 50;
 const USAGE: &str = "usage: sesh-transcript --version | follow --protocol | follow <pane> [--since CURSOR] [--last N]
-       | serve [--foreground] [--record DIR --pane PANE] | attach | replay FILE
+       | serve [--foreground] [--record DIR --pane PANE] | attach [--sessions] [--watch KEY[:SEQ]]...
+       | page KEY --before ORD [--limit N] | replay FILE
        | history <pane> --before ID [--last N] | entry <pane> ID
        | answer <pane> --json ANSWERS | permit <pane> allow|deny | background <pane>...
        | vault init DIR | vault pull|follow DIR [--since SEQ] | vault push DIR FILE
@@ -40,7 +41,8 @@ fn main() {
         }
         Some("follow") => follow(rest),
         Some("serve") => serve_command(rest),
-        Some("attach") => serve::attach(),
+        Some("attach") => attach(rest),
+        Some("page") => page(rest),
         Some("replay") => match rest {
             [file] => replay::print(std::path::Path::new(file)),
             _ => usage(),
@@ -74,6 +76,29 @@ fn serve_command(args: &[String]) -> Exit {
         return usage();
     }
     serve::serve(foreground, record)
+}
+
+/// `--sessions` asks for every session's summary; each `--watch KEY[:SEQ]` for a session's
+/// items, all of them from SEQ or its last ones when none is given.
+fn attach(args: &[String]) -> Exit {
+    let mut requests = vec![json!({"op": "hello", "protocol": serve::PROTOCOL, "sessions": args.iter().any(|arg| arg == "--sessions")})];
+    let mut args = args.iter().filter(|arg| *arg != "--sessions");
+    while let Some(arg) = args.next() {
+        let (Some("--watch"), Some(target)) = (Some(arg.as_str()), args.next()) else { return usage() };
+        let (key, since) = match target.rsplit_once(':').and_then(|(key, seq)| Some((key, seq.parse::<i64>().ok()?))) {
+            Some((key, seq)) if key.contains(':') => (key, seq),
+            _ => (target.as_str(), 0),
+        };
+        requests.push(json!({"op": "watch", "session": key, "since": since}));
+    }
+    serve::attach(&requests)
+}
+
+fn page(args: &[String]) -> Exit {
+    let Some((rest, options)) = parse_args(args, &["before", "limit"]) else { return usage() };
+    let ([session], Some(before)) = (rest.as_slice(), options.get("before").and_then(|ord| ord.parse().ok())) else { return usage() };
+    let limit = options.get("limit").and_then(|limit| limit.parse().ok()).unwrap_or(50);
+    serve::page(session, before, limit)
 }
 
 fn usage() -> Exit {
