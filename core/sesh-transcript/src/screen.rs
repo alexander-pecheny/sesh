@@ -887,6 +887,9 @@ fn duration(word: &str) -> bool {
 pub fn words(markdown: &str) -> String {
     let mut out = String::new();
     for line in markdown.lines() {
+        // Claude's screen spells a link `text (url)` where the Transcript has `[text](url)`,
+        // so addresses count on neither side.
+        let line = without_urls(line);
         let line = line.trim_start();
         if line.starts_with("```") {
             continue;
@@ -902,6 +905,18 @@ pub fn words(markdown: &str) -> String {
         }
         out.extend(rest.chars().filter(|c| c.is_alphanumeric()).flat_map(char::to_lowercase));
     }
+    out
+}
+
+fn without_urls(line: &str) -> String {
+    let mut out = String::new();
+    let mut rest = line;
+    while let Some(at) = ["https://", "http://"].iter().filter_map(|scheme| rest.find(scheme)).min() {
+        out.push_str(&rest[..at]);
+        let end = rest[at..].find(|c: char| c.is_whitespace() || c == ')').map_or(rest.len(), |end| at + end);
+        rest = &rest[end..];
+    }
+    out.push_str(rest);
     out
 }
 

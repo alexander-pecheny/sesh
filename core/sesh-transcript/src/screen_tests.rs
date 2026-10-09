@@ -315,3 +315,11 @@ fn a_menu_no_hook_reported_is_read_off_the_screen() {
     assert_eq!(menu.options, vec![("1".into(), "Yes".into()), ("2".into(), "No, and tell Claude what to do differently (esc)".into())]);
     assert_eq!(Menu::read("────────────────\n❯ \n────────────────\n"), None);
 }
+
+#[test]
+fn a_link_reads_the_same_on_screen_as_in_the_transcript() {
+    let transcript = "The PR is open: [#239290](https://github.com/ppl-ai/agi/pull/239290), \"Flag friction\".";
+    let screen = "The PR is open: #239290 (https://github.com/ppl-ai/agi/pull/239290), \"Flag friction\".";
+    assert_eq!(words(transcript), words(screen));
+    assert_eq!(words("see https://example.com/a now"), words("see now"));
+}
