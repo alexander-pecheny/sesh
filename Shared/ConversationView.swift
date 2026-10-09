@@ -148,7 +148,8 @@ struct ConversationView: View {
     }
 
     private var chat: some View {
-        ChatList(items: listItems, atBottom: $atBottom, nearTop: $nearTop, jumps: jumps, reveal: revealedRow, hold: conversation.opened.hashValue,
+        ChatList(items: listItems, atBottom: $atBottom, nearTop: $nearTop, jumps: jumps, reveal: revealedRow, spot: conversation.spot,
+                 hold: conversation.opened.hashValue,
                  spacing: Self.rowSpacing, inset: Metric.wide)
             .onChange(of: nearTop) { if nearTop { Task { await loadEarlier() } } }
             .onChange(of: conversation.items.count) { if nearTop { Task { await loadEarlier() } } }

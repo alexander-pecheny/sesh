@@ -197,6 +197,8 @@ final class Conversation: ObservableObject {
     /// What is typed and not sent; it outlives the view, which goes with every switch of Task.
     var draft = "" { didSet { if draft != oldValue { saveDraft?(draft) } } }
     var saveDraft: ((String) -> Void)?
+    /// Where the reader left the chat, kept while the app runs.
+    let spot = ChatList.Spot()
     /// The entry a link or a search result asked to see, scrolled to and marked.
     /// The item a link pointed at, highlighted until it fades three seconds later.
     @Published var focus: String? {
