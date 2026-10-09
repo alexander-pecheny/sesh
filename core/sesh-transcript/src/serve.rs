@@ -10,6 +10,7 @@ use std::os::unix::process::CommandExt as _;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 use std::rc::Rc;
+use std::sync::{mpsc, Arc};
 use std::time::{Duration, Instant};
 
 use serde_json::{json, Value};
@@ -65,6 +66,11 @@ impl Source for Shared {
     }
 }
 
+/// Makes the Source an act plays through on a thread of its own.
+pub type Hands = Arc<dyn Fn() -> Box<dyn Source + Send> + Send + Sync>;
+/// One act for a pane's thread: the request, the pane as last listed, and where its reply goes.
+type Job = (Value, Option<Value>, mpsc::Sender<Value>);
+
 struct Followed {
     follower: Follower,
     writer: Writer,
@@ -78,11 +84,18 @@ pub struct Machine {
     sessions: HashMap<String, Followed>,
     /// The panes as herdr last listed them, which answers and permissions are checked against.
     panes: Vec<Value>,
+    hands: Hands,
+    /// Each pane's queue of acts, played in order on the pane's own thread.
+    acts: HashMap<String, mpsc::Sender<Job>>,
 }
 
 impl Machine {
     pub fn new(log: Log, source: Shared) -> Self {
-        Machine { log, source, sessions: HashMap::new(), panes: Vec::new() }
+        Machine { log, source, sessions: HashMap::new(), panes: Vec::new(), hands: Arc::new(|| Box::new(Herdr)), acts: HashMap::new() }
+    }
+
+    pub fn with_hands(self, hands: Hands) -> Self {
+        Machine { hands, ..self }
     }
 
     pub fn source(&self) -> Shared {
@@ -96,6 +109,8 @@ impl Machine {
     /// One look at every pane: new Agents are met, known ones followed, gone ones ended.
     pub fn tick(&mut self, panes: &[Value], now: Instant) -> Result<()> {
         self.panes = panes.to_vec();
+        // A queue let go of ends its thread once the acts already in it are played.
+        self.acts.retain(|key, _| panes.iter().any(|pane| pane["pane_id"] == key.as_str()));
         for pane in panes {
             let (Some(key), Some(agent)) = (pane["pane_id"].as_str(), pane["agent"].as_str()) else { continue };
             if !AGENTS.contains(&agent) {
@@ -130,10 +145,26 @@ impl Machine {
         Ok(())
     }
 
-    /// Plays what a device asked into the session's pane.
-    pub fn act(&mut self, session: &str, request: &Value) -> Result<()> {
-        let pane = self.panes.iter().find(|pane| pane["pane_id"] == session);
-        crate::act::act(&mut self.source, session, pane, request)
+    /// Plays what a device asked into the session's pane off the follower's loop, since a stop
+    /// or an answer takes seconds; `reply` gets the `done` or `error` line once it is played.
+    pub fn act(&mut self, session: &str, request: Value, reply: mpsc::Sender<Value>) {
+        let pane = self.panes.iter().find(|pane| pane["pane_id"] == session).cloned();
+        let hands = &self.hands;
+        let queue = self.acts.entry(session.to_string()).or_insert_with(|| {
+            let (queue, jobs) = mpsc::channel::<Job>();
+            let (mut source, session) = (hands(), session.to_string());
+            std::thread::spawn(move || {
+                for (request, pane, reply) in jobs {
+                    let line = match crate::act::act(source.as_mut(), &session, pane.as_ref(), &request) {
+                        Ok(()) => json!({"t": "done", "op": request["op"], "session": session}),
+                        Err(err) => json!({"t": "error", "op": request["op"], "message": err}),
+                    };
+                    let _ = reply.send(line);
+                }
+            });
+            queue
+        });
+        let _ = queue.send((request, pane, reply));
     }
 
     /// Items before `ord`, read from the Transcript when the log holds too few.
@@ -264,11 +295,13 @@ struct Client {
     watched: HashMap<String, i64>,
     pinged: Instant,
     done_asking: bool,
+    /// Replies to this device's acts, as their threads finish them.
+    replies: (mpsc::Sender<Value>, mpsc::Receiver<Value>),
 }
 
 impl Client {
     fn new(stream: UnixStream) -> Self {
-        Client { stream, read: Vec::new(), write: Vec::new(), open: true, summaries: 0, all: false, watched: HashMap::new(), pinged: Instant::now(), done_asking: false }
+        Client { stream, read: Vec::new(), write: Vec::new(), open: true, summaries: 0, all: false, watched: HashMap::new(), pinged: Instant::now(), done_asking: false, replies: mpsc::channel() }
     }
 
     fn send(&mut self, line: &Value) {
@@ -294,6 +327,9 @@ impl Client {
                     self.send(&json!({"t": "error", "op": request["op"], "message": err}));
                 }
             }
+        }
+        while let Ok(reply) = self.replies.1.try_recv() {
+            self.send(&reply);
         }
         if let Err(err) = self.push(machine) {
             self.send(&json!({"t": "error", "message": err}));
@@ -347,10 +383,7 @@ impl Client {
                 }
                 self.send(&json!({"t": "page_done", "session": session, "before": before, "more": more}));
             }
-            op if crate::act::OPS.contains(&op) => {
-                machine.act(&session, request)?;
-                self.send(&json!({"t": "done", "op": op, "session": session}));
-            }
+            op if crate::act::OPS.contains(&op) => machine.act(&session, request.clone(), self.replies.0.clone()),
             other => return Err(format!("unknown op {other:?}")),
         }
         Ok(())
@@ -530,5 +563,85 @@ impl Source for Recorder {
 
     fn recorder(&mut self) -> Option<&mut Recorder> {
         Some(self)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::sync::Mutex;
+
+    use super::*;
+    use crate::follower::Input;
+
+    /// herdr with nothing to list or read; the test hands it the panes itself.
+    struct Quiet;
+
+    impl Source for Quiet {
+        fn panes(&mut self) -> Result<Vec<Value>> {
+            Ok(Vec::new())
+        }
+
+        fn read(&mut self, _: &str, _: bool) -> Result<String> {
+            Err("nothing on screen".into())
+        }
+
+        fn input(&mut self, _: &str, _: &Input) -> Result<()> {
+            Err("the follower's own Source takes no input".into())
+        }
+    }
+
+    /// herdr taking its time over every input.
+    struct Slow(Arc<Mutex<Vec<Input>>>);
+
+    impl Source for Slow {
+        fn panes(&mut self) -> Result<Vec<Value>> {
+            Ok(Vec::new())
+        }
+
+        fn read(&mut self, _: &str, _: bool) -> Result<String> {
+            Ok(String::new())
+        }
+
+        fn input(&mut self, _: &str, input: &Input) -> Result<()> {
+            std::thread::sleep(Duration::from_millis(500));
+            self.0.lock().unwrap().push(input.clone());
+            Ok(())
+        }
+    }
+
+    #[test]
+    fn a_slow_act_holds_up_neither_the_log_nor_the_acts_order() {
+        let dir = std::env::temp_dir().join(format!("sesh-act-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let transcript = dir.join("t.jsonl");
+        let say = |text: &str| {
+            let line = json!({"type": "user", "timestamp": "2026-10-09T10:00:00Z", "origin": {"kind": "human"}, "message": {"role": "user", "content": text}});
+            let mut file = OpenOptions::new().create(true).append(true).open(&transcript).unwrap();
+            writeln!(file, "{line}").unwrap();
+        };
+        say("first");
+        let panes = [json!({"pane_id": "w1:p1", "agent": "claude", "agent_status": "idle",
+            "agent_session": {"kind": "path", "value": transcript.to_str().unwrap()}})];
+        let played = Arc::new(Mutex::new(Vec::new()));
+        let hands = played.clone();
+        let mut machine = Machine::new(Log::open(&dir.join("sessions.db")).unwrap(), Shared(Rc::new(RefCell::new(Quiet))))
+            .with_hands(Arc::new(move || Box::new(Slow(hands.clone()))));
+        let start = Instant::now();
+        machine.tick(&panes, start).unwrap();
+        let seen = machine.log.head().unwrap();
+
+        let (reply, replies) = mpsc::channel();
+        machine.act("w1:p1", json!({"op": "keys", "keys": ["esc"]}), reply.clone());
+        machine.act("w1:p1", json!({"op": "send", "text": "second"}), reply);
+        say("second");
+        machine.tick(&panes, start + TICK).unwrap();
+        let items = machine.log.items_since("w1:p1", seen).unwrap();
+        assert!(items.iter().any(|item| item["entry"]["text"] == "second"), "{items:?}");
+        assert!(replies.try_recv().is_err(), "the act finished before the log moved on");
+
+        let ops: Vec<Value> = (0..2).map(|_| replies.recv_timeout(Duration::from_secs(5)).unwrap()["op"].clone()).collect();
+        std::fs::remove_dir_all(&dir).unwrap();
+        assert_eq!(ops, ["keys", "send"]);
+        assert_eq!(*played.lock().unwrap(), [Input::Keys(vec!["esc".into()]), Input::Prompt("second".into())]);
     }
 }
