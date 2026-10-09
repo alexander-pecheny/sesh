@@ -12,7 +12,8 @@ struct ConversationView: View {
     var resume: (() async -> Void)?
     @State private var draft = ""
     @State private var notice: String?
-    @State private var sending = false
+    /// Messages on their way to the follower.
+    @State private var sending = 0
     @State private var picking = false
     @State private var lost = false
     @StateObject private var field = PlainField()
@@ -151,9 +152,9 @@ struct ConversationView: View {
         }
         for message in conversation.queued {
             var hasher = Hasher()
-            hasher.combine(message.text)
-            hasher.combine(message.handed)
-            items.append(item("queued." + message.id.uuidString, hasher.finalize(), QueuedBubble(message: message, conversation: conversation, edit: takeBack)))
+            hasher.combine(message)
+            hasher.combine(conversation.starting)
+            items.append(item(message.id, hasher.finalize(), QueuedBubble(message: message, conversation: conversation, edit: takeBack, resend: resend)))
         }
         if working || conversation.state == "background" && !conversation.status.isEmpty {
             items.append(item("working", conversation.status.hashValue, WorkingRow(status: conversation.status)))
@@ -297,10 +298,10 @@ struct ConversationView: View {
         draft = draft.isEmpty ? text : text + "\n\n" + draft
     }
 
-    private var canSend: Bool { !sending && !empty }
+    private var canSend: Bool { !empty }
     private var empty: Bool { draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
     /// The button stops the Agent only for an empty box, never while a message is on its way.
-    private var stops: Bool { working && empty && !sending }
+    private var stops: Bool { working && empty && sending == 0 }
 
     /// While the Agent works, a written message queues and an empty box stops the Agent.
     private func sendOrStop() async {
@@ -308,17 +309,27 @@ struct ConversationView: View {
         await send()
     }
 
+    /// The message shows at once and the box empties; a failed one comes back into the box.
     private func send() async {
-        sending = true
         let text = draft.trimmingCharacters(in: .whitespacesAndNewlines)
-        if let problem = await conversation.send(text) { conversation.problem = problem } else {
-            // Words typed while the message was on its way stay in the box.
-            let now = draft.trimmingCharacters(in: .whitespacesAndNewlines)
-            draft = now.hasPrefix(text) ? String(now.dropFirst(text.count)).trimmingCharacters(in: .whitespacesAndNewlines) : draft
-            // Whoever sends wants to see the reply, wherever they had scrolled.
-            conversation.scroll.jump()
+        draft = ""
+        // Whoever sends wants to see the reply, wherever they had scrolled.
+        conversation.scroll.jump()
+        await deliver(text) { await conversation.send(text) }
+    }
+
+    /// Sends a message the Agent did not take again, under its own id.
+    private func resend(_ message: SessionLog.Entry) {
+        Task { await deliver(message.text ?? "") { await conversation.send(message.text ?? "", id: message.id) } }
+    }
+
+    private func deliver(_ text: String, _ send: () async -> String?) async {
+        sending += 1
+        if let problem = await send() {
+            conversation.problem = problem
+            takeBack(text)
         }
-        sending = false
+        sending -= 1
     }
 
     private func openInClaude() async {
@@ -609,11 +620,15 @@ private struct UserBubble: View {
             }
             Stamp(at: entry.at)
         }
+        // Sent, and not yet seen by the Agent.
+        .opacity(entry.state == "sent" ? Self.unseen : 1)
         .readable(alignment: .trailing)
         .padding(.leading, Bubble.inset)
     }
 
     private func message(_ text: String) -> some View { UserText(text: text) }
+
+    private static let unseen = 0.5
 }
 
 /// When a message was written: the time today, the date and time before.
@@ -652,35 +667,39 @@ private struct UserText: View {
     }
 }
 
-/// A message written while the Agent works: it waits, and can be taken back or pushed in.
+/// A message waiting to be taken (ADR 0015): it can be taken back, pushed in, or sent again.
 private struct QueuedBubble: View {
     @Environment(\.colorScheme) private var colorScheme
-    let message: Conversation.Queued
+    let message: SessionLog.Entry
     @ObservedObject var conversation: Conversation
     let edit: (String) -> Void
+    let resend: (SessionLog.Entry) -> Void
 
     private var flavour: Catppuccin.Flavour { colorScheme == .dark ? .mocha : .latte }
+    private var agent: String { conversation.agent?.title ?? "the Agent" }
 
     var body: some View {
         VStack(alignment: .trailing, spacing: Bubble.spacing) {
-            UserText(text: message.text)
+            UserText(text: message.text ?? "")
                 .font(.ui(Metric.body))
                 .foregroundStyle(flavour(.subtext0))
                 .padding(.horizontal, Bubble.across)
                 .padding(.vertical, Bubble.down)
                 .overlay(RoundedRectangle(cornerRadius: Bubble.corner).strokeBorder(flavour(.surface1), style: Self.dashes))
             HStack(spacing: Metric.pad) {
-                if message.handed {
-                    Text("Queued; \(conversation.agent?.title ?? "the Agent") reads it at its next step").foregroundStyle(flavour(.overlay1))
+                if message.state == "handed" {
+                    Text("Queued; \(agent) reads it at its next step").foregroundStyle(flavour(.overlay1))
                     Button("Interrupt and send now") { Task { await conversation.interrupt() } }
-                } else if conversation.starting {
-                    Text("Sent once \(conversation.agent?.title ?? "the Agent") is up").foregroundStyle(flavour(.overlay1))
-                    Button("Edit") { edit(conversation.unqueue(message)) }
-                    Button("Remove") { _ = conversation.unqueue(message) }
+                } else if message.state == "lost" {
+                    Text("\(agent) did not take it").foregroundStyle(flavour(.overlay1))
+                    Button("Send again") { resend(message) }
+                    takeBack
+                } else if conversation.isLocal(message) {
+                    Text(conversation.starting ? "Sent once \(agent) is up" : "Not sent").foregroundStyle(flavour(.overlay1))
+                    takeBack
                 } else {
-                    Text("Sent when \(conversation.agent?.title ?? "the Agent") finishes").foregroundStyle(flavour(.overlay1))
-                    Button("Edit") { edit(conversation.unqueue(message)) }
-                    Button("Remove") { _ = conversation.unqueue(message) }
+                    Text("Sent when \(agent) finishes").foregroundStyle(flavour(.overlay1))
+                    takeBack
                     Button("Interrupt") { Task { await conversation.interrupt() } }
                     if conversation.agent == .claude {
                         Button("Send now") { Task { await conversation.sendNow() } }
@@ -693,6 +712,11 @@ private struct QueuedBubble: View {
         }
         .readable(alignment: .trailing)
         .padding(.leading, Bubble.inset)
+    }
+
+    @ViewBuilder private var takeBack: some View {
+        Button("Edit") { Task { if let text = await conversation.unqueue(message) { edit(text) } } }
+        Button("Remove") { Task { _ = await conversation.unqueue(message) } }
     }
 
     private static let dashes = StrokeStyle(lineWidth: 1, dash: [Metric.tiny, 3])

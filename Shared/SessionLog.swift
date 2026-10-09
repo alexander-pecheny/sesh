@@ -33,6 +33,12 @@ struct SessionLog {
         var items: [Todo]?
         var questions: [Question]?
         var answers: [String]?
+        /// Where a message the user sent stands until the Transcript holds it (ADR 0015):
+        /// queued, handed, sent, shown or lost.
+        var state: String?
+
+        /// Held by Sesh or the Agent, not yet in the conversation: it can be taken back.
+        var waiting: Bool { ["queued", "handed", "lost"].contains(state) }
     }
 
     struct Todo: Codable, Equatable, Hashable {
@@ -143,6 +149,8 @@ struct SessionLog {
     /// Each tool call's result, by the call's entry.
     private(set) var results: [String: Entry] = [:]
     private(set) var todo: Entry?
+    /// The messages waiting to be taken, in the order they were sent.
+    private(set) var queued: [Entry] = []
     private(set) var permissions: [Permission] = []
     private(set) var background: [Background] = []
     /// The status line on the Agent's screen.
@@ -161,6 +169,8 @@ struct SessionLog {
     var earlier = false
     var problem: String?
     private var items: [String: Item] = [:]
+    /// The messages this device sent that the follower has not written yet.
+    private var local: Set<String> = []
     /// The row of each entry whose item has another id.
     private var rowKeys: [String: String] = [:]
     /// The items sent since the follower last said hello.
@@ -175,7 +185,11 @@ struct SessionLog {
         return dates
     }()
 
-    static func isLive(_ id: String) -> Bool { id.hasPrefix("live.") }
+    /// The start of the id a device gives a message it sends.
+    static let sent = "sent."
+
+    /// An item the Transcript does not hold yet, which cannot be bookmarked.
+    static func isLive(_ id: String) -> Bool { id.hasPrefix("live.") || id.hasPrefix(sent) }
 
     static func unknown(_ protocol: Int) -> String {
         "The Host's helper speaks protocol \(`protocol`), which this Sesh does not know. Update Sesh."
@@ -188,7 +202,31 @@ struct SessionLog {
     var first: Item? { items.values.min { $0.ord < $1.ord } }
 
     /// The last items held, to keep on the device.
-    func kept(_ count: Int) -> [Item] { Array(items.values.sorted { $0.ord < $1.ord }.suffix(count)) }
+    func kept(_ count: Int) -> [Item] {
+        Array(items.values.filter { !local.contains($0.id) }.sorted { $0.ord < $1.ord }.suffix(count))
+    }
+
+    /// A message this device sends, shown at once under the id it sends it with, until the
+    /// follower's item of that id takes its place; `held` while the Agent starts.
+    mutating func send(_ id: String, text: String, held: Bool = false) {
+        let ord = (items.values.map(\.ord).max() ?? 0) + 1
+        let first = text.split(separator: "\n", omittingEmptySubsequences: false).first.map(String.init) ?? text
+        let entry = Entry(id: id, kind: "user", summary: first, text: text, state: held ? "queued" : "sent")
+        local.insert(id)
+        put(Item(id: id, ord: items[id]?.ord ?? ord, final: false, entry: entry), now: Date())
+        rebuild()
+    }
+
+    /// Takes a message off the list, as when its send failed; its text, for the input box.
+    mutating func drop(_ id: String) -> String? {
+        local.remove(id)
+        let text = items.removeValue(forKey: id)?.entry.text
+        rebuild()
+        return text
+    }
+
+    /// Whether a message is only on this device, held while the Agent starts.
+    func isLocal(_ id: String) -> Bool { local.contains(id) }
 
     /// Takes the items kept on the device, until the follower says what changed since.
     mutating func restore(_ kept: [Item], seq: Int) {
@@ -213,6 +251,7 @@ struct SessionLog {
             guard let item = try? decoder.decode(Item.self, from: data) else { return }
             seq = max(seq, item.seq)
             fresh.insert(item.id)
+            local.remove(item.id)
             if item.gone { items[item.id] = nil } else { put(item, now: now) }
             rebuild()
         case "session":
@@ -224,7 +263,7 @@ struct SessionLog {
             permissions = line.permissions ?? []
         case "opened":
             // The follower sent its last items afresh, perhaps from a new log, so any others held are stale.
-            items = items.filter { fresh.contains($0.key) }
+            items = items.filter { fresh.contains($0.key) || local.contains($0.key) }
             seq = line.seq ?? seq
             loaded = true
             earlier = !items.isEmpty
@@ -321,7 +360,7 @@ struct SessionLog {
     private mutating func put(_ item: Item, now: Date) {
         var item = item
         if !item.final {
-            item.entry.at = item.entry.at ?? firstSeen[item.id] ?? Self.dates.string(from: now)
+            item.entry.at = item.entry.at.flatMap { $0.isEmpty ? nil : $0 } ?? firstSeen[item.id] ?? Self.dates.string(from: now)
             firstSeen[item.id] = item.entry.at
         }
         item.version = item.entry.hashValue
@@ -332,6 +371,7 @@ struct SessionLog {
         var finals: [Item] = []
         var live: [Item] = []
         var answers: [String: Item] = [:]
+        var waiting: [Entry] = []
         todo = nil
         rowKeys = [:]
         for item in items.values.sorted(by: { $0.ord < $1.ord }) {
@@ -339,6 +379,7 @@ struct SessionLog {
             switch item.entry.kind {
             case "result": if let call = item.entry.call { answers[call] = item }
             case "todo": todo = item.entry
+            case _ where item.entry.waiting: waiting.append(item.entry)
             case "switch":
                 todo = nil
                 finals.append(item)
@@ -346,6 +387,7 @@ struct SessionLog {
             }
         }
         results = answers.mapValues(\.entry)
+        queued = waiting
         var shown = finals + live
         if let question = finals.last, question.entry.kind == "question", answers[question.entry.id] == nil {
             shown.remove(at: finals.count - 1)

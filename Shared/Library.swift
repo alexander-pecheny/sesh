@@ -261,16 +261,6 @@ final class Library: ObservableObject {
         if busy != counts { busy = counts }
         turnOver = over
         markSeen()
-        sendQueued()
-    }
-
-    /// A queued message waits for the Agent's turn to end, which only an open Conversation
-    /// watches; one closed by a switch of Task is sent from here.
-    private func sendQueued() {
-        for (id, conversation) in conversations where !conversation.waiting.isEmpty {
-            guard let session = vault(of: id)?.records[id], let state = live[key(session)] else { continue }
-            if state.status != "working" || turnOver.contains(key(session)) { Task { await conversation.sendQueued() } }
-        }
     }
 
     // MARK: Marks

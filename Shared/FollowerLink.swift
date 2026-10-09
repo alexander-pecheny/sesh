@@ -6,7 +6,7 @@ import Foundation
 /// protocol.
 @MainActor
 final class FollowerLink {
-    nonisolated static let `protocol` = 4
+    nonisolated static let `protocol` = 5
 
     private unowned let machine: Runner
     private let pause: Duration
@@ -50,7 +50,12 @@ final class FollowerLink {
         await machine.run("\(Helper.path) page \(quote(session)) --before \(ord) --limit \(limit)")
     }
 
-    func send(_ text: String, to session: String) async -> String? { await ask("send", session, [text]) }
+    /// A message under the id the device gave it, which the follower's item for it keeps (ADR 0015).
+    func send(_ text: String, id: String, to session: String) async -> String? { await ask("send", session, [id, text]) }
+    /// Takes back a message the Agent was not given, or did not take.
+    func unqueue(_ id: String, in session: String) async -> String? { await ask("unqueue", session, [id]) }
+    /// Gives the queued messages to the Agent now.
+    func hand(_ session: String) async -> String? { await ask("hand", session, []) }
     func keys(_ keys: [String], to session: String) async -> String? { await ask("keys", session, keys) }
     /// One answer per question, as JSON: the labels picked, and any text typed instead.
     func answer(_ answers: String, in session: String) async -> String? { await ask("answer", session, ["--json", answers]) }

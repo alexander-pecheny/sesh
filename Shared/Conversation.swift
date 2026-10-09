@@ -9,6 +9,8 @@ final class Conversation: ObservableObject {
     @Published private(set) var rows: [SessionLog.Row] = []
     @Published private(set) var results: [String: SessionLog.Entry] = [:]
     @Published private(set) var todo: SessionLog.Entry?
+    /// Messages waiting to be taken: held by Sesh, handed to the Agent, or lost (ADR 0015).
+    @Published private(set) var queued: [SessionLog.Entry] = []
     @Published private(set) var permissions: [SessionLog.Permission] = []
     /// The status line on the Agent's screen.
     @Published private(set) var status = ""
@@ -146,6 +148,7 @@ final class Conversation: ObservableObject {
         if rows != log.rows { rows = log.rows }
         if results != log.results { results = log.results }
         if todo != log.todo { todo = log.todo }
+        if queued != log.queued { queued = log.queued }
         if permissions != log.permissions { permissions = log.permissions }
         if background != log.background { background = log.background }
         if status != log.status { status = log.status }
@@ -161,16 +164,7 @@ final class Conversation: ObservableObject {
             problem = failed
             log.problem = nil
         }
-        if state != log.state {
-            state = log.state
-            if state != "working", !waiting.isEmpty { Task { await sendQueued() } }
-        }
-        if queued.contains(where: \.handed) {
-            let said = rows.flatMap(\.entries).filter { $0.kind == "user" && !SessionLog.isLive($0.id) }.compactMap(\.text)
-            queued.removeAll { message in
-                message.handed && said.contains { $0.contains(message.text.trimmingCharacters(in: .whitespacesAndNewlines)) }
-            }
-        }
+        if state != log.state { state = log.state }
         if log.seq != savedSeq {
             savedSeq = log.seq
             saveCache()
@@ -248,77 +242,59 @@ final class Conversation: ObservableObject {
 
     private var follower: FollowerLink? { runner?.follower }
 
-    /// While the Agent starts up, which can take seconds, messages wait in the queue.
+    /// While the Agent starts up, which can take seconds, messages wait on this device.
     @Published var starting = false
 
-    func send(_ text: String) async -> String? {
+    /// Shows the message at once and sends it under its own id, which the follower's item for it
+    /// keeps (ADR 0015); a failed one goes, and its text is the problem's to give back.
+    func send(_ text: String, id: String = SessionLog.sent + UUID().uuidString) async -> String? {
         guard let pane else { return "This Agent session is not running, so it cannot take a message." }
-        guard state != "working", !starting else {
-            queued.append(Queued(text: text))
-            // As typed into its terminal: the Agent queues it itself and reads it at its next step.
-            if !starting, agent != .pi { await hand() }
+        log.send(id, text: text, held: starting)
+        publish()
+        guard !starting, let failed = await follower?.send(text, id: id, to: pane) else { return nil }
+        _ = log.drop(id)
+        publish()
+        return failed
+    }
+
+    /// Sends what was written while the Agent started, once it has.
+    func sendQueued() async {
+        guard let pane, !starting else { return }
+        for message in queued where log.isLocal(message.id) {
+            let text = message.text ?? ""
+            log.send(message.id, text: text)
+            publish()
+            if let failed = await follower?.send(text, id: message.id, to: pane) {
+                problem = failed
+                log.send(message.id, text: text, held: true)
+                publish()
+            }
+        }
+    }
+
+    /// Whether a message is held on this device, as one written while the Agent starts.
+    func isLocal(_ message: SessionLog.Entry) -> Bool { log.isLocal(message.id) }
+
+    /// Takes a waiting message back, for the input box; nil if the Agent has it already.
+    func unqueue(_ message: SessionLog.Entry) async -> String? {
+        if !log.isLocal(message.id), let pane, let failed = await follower?.unqueue(message.id, in: pane) {
+            problem = failed
             return nil
         }
-        return await follower?.send(text, to: pane)
+        defer { publish() }
+        return log.drop(message.id)
     }
 
-    /// A message written while the Agent works, held here until it finishes or the user
-    /// decides, so it can still be taken back.
-    struct Queued: Identifiable, Equatable {
-        let id = UUID()
-        let text: String
-        var handed = false
-    }
-
-    @Published private(set) var queued: [Queued] = []
-    private var sendingQueued = false
-
-    /// Messages not yet handed to the Agent.
-    var waiting: [Queued] { queued.filter { !$0.handed } }
-
-    /// Also called by the Library while no view follows the Conversation.
-    func sendQueued() async {
-        guard !sendingQueued, !starting, !waiting.isEmpty else { return }
-        sendingQueued = true
-        defer { sendingQueued = false }
-        await hand()
-    }
-
-    /// The Agent holds a handed message until it reads it, and only then writes it to the
-    /// Transcript; it stays shown, as handed, until it is there.
-    private func hand() async {
-        guard let pane, !waiting.isEmpty else { return }
-        let ids = Set(waiting.map(\.id))
-        let text = waiting.map(\.text).joined(separator: "\n\n")
-        mark(ids, handed: true)
-        if let failed = await follower?.send(text, to: pane) {
-            problem = failed
-            mark(ids, handed: false)
-        }
-    }
-
-    private func mark(_ ids: Set<UUID>, handed: Bool) {
-        for index in queued.indices where ids.contains(queued[index].id) { queued[index].handed = handed }
-    }
-
-    /// Takes a queued message back, for the input box.
-    func unqueue(_ message: Queued) -> String {
-        queued.removeAll { $0 == message }
-        return message.text
-    }
-
-    /// Stops the Agent's turn and has it read the queue at once. Claude does that itself for a
-    /// message it holds, on ctrl+enter, so the message lands once; otherwise the queue goes after
-    /// the stop, even while herdr reports "working" for Claude only waiting on its background agents.
+    /// Stops the Agent's turn so that it reads the queue at once. Claude does that itself for a
+    /// message it holds, on ctrl+enter, so the message lands once; otherwise the follower sends
+    /// the queue once the Agent has stopped.
     func interrupt() async {
         guard let pane else { return }
-        if agent == .claude, queued.contains(where: \.handed) {
+        if agent == .claude, queued.contains(where: { $0.state == "handed" }) {
             problem = await follower?.keys(["ctrl+enter"], to: pane)
             return
         }
         await stop()
-        try? await Task.sleep(for: .milliseconds(1500))
-        await sendNow()
     }
 
     /// Picks a choice in a menu read off the Agent's screen.
@@ -329,7 +305,10 @@ final class Conversation: ObservableObject {
 
     /// Hands the queue to the Agent at once; Claude takes a message mid-turn, or while it
     /// waits on background work, and reads it at its next step.
-    func sendNow() async { await hand() }
+    func sendNow() async {
+        guard let pane else { return }
+        problem = await follower?.hand(pane)
+    }
 
     func stop() async {
         guard let pane else { return }

@@ -36,7 +36,7 @@ private final class Scripted: Runner {
 
 @MainActor
 final class FollowerLinkTests: XCTestCase {
-    private let hello = #"{"protocol":4,"t":"hello","version":"test"}"#
+    private let hello = #"{"protocol":5,"t":"hello","version":"test"}"#
 
     private func item(seq: Int) -> String { #"{"t":"item","session":"w1:p1","id":"a","seq":\#(seq)}"# }
 
@@ -96,9 +96,9 @@ final class FollowerLinkTests: XCTestCase {
 
     func testSendsGoToTheFollowerQuotedAndSayWhyTheyFailed() async {
         let machine = Scripted([])
-        let sent = await machine.follower.send("it's done", to: "w1:p1")
+        let sent = await machine.follower.send("it's done", id: "sent.1", to: "w1:p1")
         XCTAssertNil(sent)
-        XCTAssertTrue(machine.commands[0].hasSuffix(#"send 'w1:p1' 'it'\''s done'"#), machine.commands[0])
+        XCTAssertTrue(machine.commands[0].hasSuffix(#"send 'w1:p1' 'sent.1' 'it'\''s done'"#), machine.commands[0])
         machine.answer = Ran(status: 1, out: "", err: "no menu is open in pane w1:p1")
         let failed = await machine.follower.permit(true, in: "w1:p1")
         XCTAssertEqual(failed, "no menu is open in pane w1:p1")

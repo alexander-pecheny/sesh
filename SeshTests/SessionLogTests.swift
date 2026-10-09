@@ -14,7 +14,7 @@ final class SessionLogTests: XCTestCase {
         return line(["t": "item", "session": "w1:p1", "id": id, "ord": ord, "seq": seq, "final": final, "gone": gone, "entry": body])
     }
 
-    private let hello = #"{"t":"hello","protocol":4,"version":"test"}"#
+    private let hello = #"{"t":"hello","protocol":5,"version":"test"}"#
 
     private func texts(_ log: SessionLog) -> [String] {
         log.rows.flatMap(\.entries).map { $0.text ?? $0.summary }
@@ -148,6 +148,58 @@ final class SessionLogTests: XCTestCase {
         XCTAssertEqual(log.agent, "claude")
         XCTAssertEqual(log.permissions.map(\.id), ["p"])
         XCTAssertEqual(log.background.map(\.call), ["c"])
+    }
+
+    /// A message shows the moment it is sent, and the follower's item of the same id takes its
+    /// row; the Transcript's entry then takes it over in place (ADR 0015).
+    func testASentMessagesRowIsTheFollowersItemOfTheSameId() {
+        var log = SessionLog()
+        [hello, item("a", ord: 1, seq: 1, text: "before")].forEach { log.feed($0) }
+        log.send("sent.1", text: "hello")
+        XCTAssertEqual(log.rows.map(\.id), ["a", "sent.1"])
+        XCTAssertEqual(log.rows.last?.entries.first?.state, "sent")
+        XCTAssertNotNil(log.rows.last?.entries.first?.at)
+        log.feed(item("sent.1", ord: 2, seq: 2, final: false, kind: "user", text: "hello", extra: ["state": "shown"]))
+        XCTAssertEqual(log.rows.map(\.id), ["a", "sent.1"])
+        XCTAssertEqual(log.rows.last?.entries.first?.state, "shown")
+        log.feed(item("sent.1", ord: 2, seq: 3, entry: "u1", kind: "user", text: "hello"))
+        XCTAssertEqual(log.rows.map(\.id), ["a", "sent.1"])
+        XCTAssertEqual(log.rowKey("u1"), "sent.1")
+        XCTAssertFalse(log.isLocal("sent.1"))
+        XCTAssertFalse(log.kept(10).isEmpty)
+    }
+
+    func testAFailedSendTakesItsRowAway() {
+        var log = SessionLog()
+        log.send("sent.1", text: "hello")
+        XCTAssertEqual(log.kept(10).count, 0, "a message only on the device is not cached")
+        XCTAssertEqual(log.drop("sent.1"), "hello")
+        XCTAssertTrue(log.rows.isEmpty)
+    }
+
+    func testPagingEarlierLeavesASentMessageAlone() {
+        var log = SessionLog()
+        [hello, item("b", ord: 5, seq: 1, text: "later")].forEach { log.feed($0) }
+        log.send("sent.1", text: "hello")
+        log.page(item("a", ord: 4, seq: 2, text: "earlier") + "\n" + #"{"t":"page_done","more":false}"#)
+        XCTAssertEqual(texts(log), ["earlier", "later", "hello"])
+        XCTAssertEqual(log.first?.id, "a")
+        XCTAssertTrue(log.isLocal("sent.1"))
+        log.feed(#"{"t":"opened","session":"w1:p1","seq":3}"#)
+        XCTAssertEqual(texts(log).last, "hello", "a reopened watch keeps it too")
+    }
+
+    /// Messages waiting to be taken sit apart from the rows, under the newest one.
+    func testWaitingMessagesAreQueuedNotRows() {
+        var log = SessionLog()
+        log.feed(item("sent.1", ord: 1, seq: 1, final: false, kind: "user", text: "next", extra: ["state": "handed"]))
+        log.feed(item("sent.2", ord: 2, seq: 2, final: false, kind: "user", text: "then", extra: ["state": "queued"]))
+        log.send("sent.3", text: "later", held: true)
+        XCTAssertTrue(log.rows.isEmpty)
+        XCTAssertEqual(log.queued.map(\.id), ["sent.1", "sent.2", "sent.3"])
+        log.feed(item("sent.1", ord: 3, seq: 3, final: false, kind: "user", text: "next", extra: ["state": "shown"]))
+        XCTAssertEqual(log.rows.map(\.id), ["sent.1"])
+        XCTAssertEqual(log.queued.map(\.id), ["sent.2", "sent.3"])
     }
 
     /// A Transcript file's entries, as `follow --file` prints them, go through the same rows.
