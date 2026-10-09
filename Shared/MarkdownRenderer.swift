@@ -15,6 +15,8 @@ typealias PlatformColor = UIColor
 @MainActor
 struct Renderer {
     let flavour: Catppuccin.Flavour
+    /// The width a table shares out among its columns.
+    var width: CGFloat?
     private var body: PlatformFont { .systemFont(ofSize: Metric.body) }
     private var mono: PlatformFont { .monospacedSystemFont(ofSize: Metric.note, weight: .regular) }
 
@@ -125,75 +127,107 @@ struct Renderer {
     }
 
     #if os(macOS)
-    /// A table as AppKit draws one: bordered cells whose text wraps and keeps its marks, the
-    /// header in bold, the whole width shared out by the cells' content.
+    /// A table as AppKit draws one: rules between the rows and none between the columns, cells
+    /// whose text wraps and keeps its marks, and the width shared out as a browser shares it.
     private func table(_ node: UnsafeMutablePointer<cmark_node>, indent: CGFloat) -> NSAttributedString {
-        let rows = children(node)
+        let rows = children(node).enumerated().map { row, cells in children(cells).map { cell($0, header: row == 0) } }
         let table = NSTextTable()
-        table.numberOfColumns = rows.map { children($0).count }.max() ?? 1
-        table.layoutAlgorithm = .automaticLayoutAlgorithm
+        table.numberOfColumns = rows.map(\.count).max() ?? 1
         table.collapsesBorders = true
-        let border = PlatformColor(flavour(.surface2))
-        // Each column gets the share of the width its longest text asks for, so a column of
-        // short labels stays narrow, as in Claude's own tables.
-        let longest = (0..<table.numberOfColumns).map { column in
-            let texts = rows.map { children($0) }.compactMap { $0.count > column ? plain($0[column]) : nil }
-            let text = texts.map(\.count).max() ?? 1
-            // Room for the longest word too, so no cell breaks one in half.
-            let word = texts.flatMap { $0.split(separator: " ") }.map(\.count).max() ?? 1
-            return max(min(text, 120), word * 2)
-        }
-        let total = Double(longest.reduce(0, +))
-        // A table that fits the measure on one line per cell is drawn that narrow; only a
-        // wider one shares out the whole width.
-        let bold = attributes(font: .systemFont(ofSize: Metric.label, weight: .bold), style: paragraph())
-        let natural: [CGFloat] = (0..<table.numberOfColumns).map { column in
-            let cells = rows.map { children($0) }.compactMap { $0.count > column ? $0[column] : nil }
-            let widest = cells.map { inlines($0, bold).size().width }.max() ?? 0
-            return ceil(widest) + 2 * Metric.gap + 1
-        }
-        let fits = natural.reduce(0, +) <= Metric.measure
-        if !fits { table.setContentWidth(100, type: .percentageValueType) }
+        let columns = (0..<table.numberOfColumns).map { column in rows.compactMap { $0.count > column ? $0[column] : nil } }
+        let edges = (0..<table.numberOfColumns).map { padding(column: $0, of: table.numberOfColumns) }
+        let room = edges.map { $0.left + $0.right }
+        let widths = Self.share((width ?? Metric.measure) - indent,
+                                least: zip(columns, room).map { ($0.map(\.word).max() ?? 0) + $1 },
+                                most: zip(columns, room).map { min($0.map(\.width).max() ?? 0, Metric.measure) + $1 },
+                                weight: columns.map { $0.map(\.width).reduce(0, +) })
         let out = NSMutableAttributedString()
-        for (row, cells) in rows.map(children).enumerated() {
+        for (row, cells) in rows.enumerated() {
             for (column, cell) in cells.enumerated() {
                 let block = NSTextTableBlock(table: table, startingRow: row, rowSpan: 1, startingColumn: column, columnSpan: 1)
-                if fits {
-                    block.setValue(natural[column], type: .absoluteValueType, for: .width)
-                } else {
-                    block.setValue(100 * Double(longest[column]) / max(total, 1), type: .percentageValueType, for: .width)
+                let edge = edges[column]
+                block.setValue(widths[column] - room[column], type: .absoluteValueType, for: .width)
+                block.setWidth(edge.left, type: .absoluteValueType, for: .padding, edge: .minX)
+                block.setWidth(edge.right, type: .absoluteValueType, for: .padding, edge: .maxX)
+                block.setWidth(Cell.down, type: .absoluteValueType, for: .padding, edge: .minY)
+                block.setWidth(Cell.down, type: .absoluteValueType, for: .padding, edge: .maxY)
+                if row < rows.count - 1 {
+                    block.setWidth(row == 0 ? 1 : Cell.hairline, type: .absoluteValueType, for: .border, edge: .maxY)
+                    block.setBorderColor(PlatformColor(flavour(row == 0 ? Cell.headerRule : Cell.rule)), for: .maxY)
                 }
-                // A cell, not the table, keeps the prose measure.
-                block.setValue(Metric.measure, type: .absoluteValueType, for: .maximumWidth)
-                block.setBorderColor(border)
-                block.setWidth(1, type: .absoluteValueType, for: .border)
-                block.setWidth(Metric.gap, type: .absoluteValueType, for: .padding)
-                if row == 0 { block.backgroundColor = PlatformColor(flavour(.mantle)) }
-                let style = NSMutableParagraphStyle()
+                let style = Cell.style
                 style.textBlocks = [block]
-                style.lineSpacing = 2
-                let font = PlatformFont.monospacedDigitSystemFont(ofSize: Metric.label, weight: row == 0 ? .bold : .regular)
-                let base = attributes(font: font, style: style)
-                out.append(inlines(cell, base))
-                out.append(NSAttributedString(string: "\n", attributes: base))
+                let text = NSMutableAttributedString(attributedString: cell.text)
+                text.append(NSAttributedString(string: "\n", attributes: [.font: PlatformFont.systemFont(ofSize: Metric.label)]))
+                text.addAttribute(.paragraphStyle, value: style, range: NSRange(location: 0, length: text.length))
+                out.append(text)
             }
         }
         out.append(NSAttributedString(string: "\n", attributes: attributes(font: .systemFont(ofSize: Metric.tiny), style: paragraph())))
         return out
     }
+
+    /// Columns' widths in `width`, as a browser's automatic table layout gives them: each at
+    /// least `least` (its longest word) and, while there is room, at most `most` (its widest
+    /// cell), the room between going to the columns with the most text, which keeps rows low.
+    static func share(_ width: CGFloat, least: [CGFloat], most: [CGFloat], weight: [CGFloat]) -> [CGFloat] {
+        if most.reduce(0, +) <= width { return most }
+        let floor = least.reduce(0, +)
+        if floor >= width { return least.map { $0 * width / max(floor, 1) } }
+        var widths = least
+        var left = width - floor
+        while left > 0.5 {
+            let open = widths.indices.filter { widths[$0] < most[$0] }
+            let total = open.map { max(weight[$0], 1) }.reduce(0, +)
+            guard total > 0 else { break }
+            var given: CGFloat = 0
+            for column in open {
+                let more = min(left * max(weight[column], 1) / total, most[column] - widths[column])
+                widths[column] += more
+                given += more
+            }
+            left -= given
+        }
+        return widths.map { $0.rounded(.down) }
+    }
+
+    /// The room around a cell's text: the first and last columns line up with the prose.
+    private func padding(column: Int, of count: Int) -> (left: CGFloat, right: CGFloat) {
+        (column == 0 ? 0 : Cell.across / 2, column == count - 1 ? 0 : Cell.across / 2)
+    }
     #endif
 
-    /// The first table's cells, each in the table's style: the header row bold, digits tabular.
+    /// How a table's cells are drawn on both platforms.
+    enum Cell {
+        static let across = Metric.pad * 2
+        static let down: CGFloat = 6
+        static let hairline: CGFloat = 0.5
+        static let rule = Catppuccin.Swatch.surface1
+        static let headerRule = Catppuccin.Swatch.surface2
+
+        static var style: NSMutableParagraphStyle {
+            let style = NSMutableParagraphStyle()
+            style.lineSpacing = 2
+            return style
+        }
+    }
+
+    /// One cell's text, the header's semibold and muted, with how wide it runs on one line and
+    /// how wide its longest word is.
+    private func cell(_ node: UnsafeMutablePointer<cmark_node>, header: Bool) -> (text: NSAttributedString, width: CGFloat, word: CGFloat) {
+        let font = PlatformFont.monospacedDigitSystemFont(ofSize: Metric.label, weight: header ? .semibold : .regular)
+        let text = inlines(node, attributes(font: font, style: Cell.style, colour: header ? .subtext1 : .text), chip: .mantle)
+        let words = (try? NSRegularExpression(pattern: "\\S+"))?.matches(in: text.string, range: NSRange(location: 0, length: text.length)) ?? []
+        let word = words.map { text.attributedSubstring(from: $0.range).size().width }.max() ?? 0
+        return (text, ceil(text.size().width), ceil(word))
+    }
+
+    /// The first table's cells, each in the table's style.
     func cells(_ markdown: String) -> [[NSAttributedString]] {
         guard let root = Cmark.parse(markdown) else { return [] }
         defer { cmark_node_free(root) }
         guard let table = children(root).first(where: { kind($0) == "table" }) else { return [] }
-        return children(table).enumerated().map { row, cells in
-            let font = PlatformFont.monospacedDigitSystemFont(ofSize: Metric.label, weight: row == 0 ? .bold : .regular)
-            let style = NSMutableParagraphStyle()
-            style.lineSpacing = 2
-            return children(cells).map { inlines($0, attributes(font: font, style: style)) }
-        }
+        return children(table).enumerated().map { row, cells in children(cells).map { cell($0, header: row == 0).text } }
     }
 
     private func plain(_ node: UnsafeMutablePointer<cmark_node>) -> String {
@@ -201,7 +235,7 @@ struct Renderer {
         return children(node).map { kind($0) == "softbreak" ? " " : plain($0) }.joined()
     }
 
-    private func inlines(_ node: UnsafeMutablePointer<cmark_node>, _ base: [NSAttributedString.Key: Any]) -> NSAttributedString {
+    private func inlines(_ node: UnsafeMutablePointer<cmark_node>, _ base: [NSAttributedString.Key: Any], chip: Catppuccin.Swatch = .surface0) -> NSAttributedString {
         let out = NSMutableAttributedString()
         for child in children(node) {
             var style = base
@@ -212,7 +246,7 @@ struct Renderer {
             case "linebreak": out.append(NSAttributedString(string: "\u{2028}", attributes: style))
             case "code":
                 style[.font] = mono
-                style[.backgroundColor] = PlatformColor(flavour(.surface0))
+                style[.backgroundColor] = PlatformColor(flavour(chip))
                 out.append(NSAttributedString(string: plain(child), attributes: style))
             case "emph", "strong", "strikethrough":
                 let font = style[.font] as? PlatformFont ?? body
@@ -221,10 +255,10 @@ struct Renderer {
                 } else {
                     style[.font] = font.adding(bold: kind(child) == "strong")
                 }
-                out.append(inlines(child, style))
+                out.append(inlines(child, style, chip: chip))
             case "link":
                 if let url = cmark_node_get_url(child).flatMap({ URL(string: String(cString: $0)) }) { style[.link] = url }
-                out.append(inlines(child, style))
+                out.append(inlines(child, style, chip: chip))
             case "image": out.append(NSAttributedString(string: plain(child), attributes: style))
             default: out.append(NSAttributedString(string: plain(child), attributes: style))
             }

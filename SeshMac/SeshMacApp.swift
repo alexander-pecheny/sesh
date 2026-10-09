@@ -6,7 +6,7 @@ struct SeshMacApp: App {
 
     var body: some Scene {
         WindowGroup(id: "main") {
-            RootView().environmentObject(library)
+            root
                 .onOpenURL { _ = library.follow($0) }
                 // A link opens in the window that is already there, not a new one.
                 .handlesExternalEvents(preferring: ["*"], allowing: ["*"])
@@ -46,6 +46,18 @@ struct SeshMacApp: App {
         }
     }
 
+    @ViewBuilder private var root: some View {
+        #if DEBUG
+        if let file = UserDefaults.standard.string(forKey: "markdown") {
+            MarkdownWindow(file: file)
+        } else {
+            RootView().environmentObject(library)
+        }
+        #else
+        RootView().environmentObject(library)
+        #endif
+    }
+
     private func find(_ action: NSTextFinder.Action) {
         let sender = NSMenuItem()
         sender.tag = action.rawValue
@@ -59,6 +71,26 @@ extension Notification.Name {
 }
 
 #if DEBUG
+/// `-markdown FILE` shows the file as an Agent's reply in a Conversation, `-width` points wide,
+/// so a reply's drawing can be checked with `-snapshot` and no Host.
+private struct MarkdownWindow: View {
+    @StateObject private var conversation = Conversation(pane: "markdown", agent: nil, runner: nil)
+    let file: String
+
+    var body: some View {
+        let width = UserDefaults.standard.double(forKey: "width")
+        ConversationView(conversation: conversation, title: file, fresh: false)
+            .frame(width: width > 0 ? width : 900, height: 1000)
+            .task {
+                let text = (try? String(contentsOfFile: file, encoding: .utf8)) ?? ""
+                let entry: [String: Any] = ["t": "entry", "id": "md", "kind": "text", "summary": "", "at": "2026-10-09T12:00:00Z", "text": text]
+                guard let data = try? JSONSerialization.data(withJSONObject: entry) else { return }
+                conversation.apply(String(decoding: data, as: UTF8.self))
+                conversation.apply(#"{"t": "cursor", "cursor": "0"}"#)
+            }
+    }
+}
+
 /// `-snapshot PATH` draws the window into a PNG every two seconds, or every
 /// `-snapshotEvery SECONDS`, so a test can look at an app launched hidden (`open -j`) without
 /// its window ever reaching the screen. A `{t}` in PATH becomes the time in milliseconds.

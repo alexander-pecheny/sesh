@@ -26,18 +26,32 @@ struct Prose: NSViewRepresentable {
 
     func updateNSView(_ view: NSTextView, context: Context) {
         context.coordinator.openURL = openURL
+        show(in: view, context.coordinator)
+    }
+
+    /// Renders the text again when it or the theme changes, or, for a table, the width its
+    /// columns share.
+    private func show(in view: NSTextView, _ coordinator: Coordinator) {
         let flavour: Catppuccin.Flavour = colorScheme == .dark ? .mocha : .latte
-        let key = "\(colorScheme)\(text)"
-        guard context.coordinator.shown != key else { return }
-        context.coordinator.shown = key
-        view.textStorage?.setAttributedString(Renderer(flavour: flavour).render(text))
+        let tables = Cmark.hasTable(text)
+        let width = tables ? coordinator.width : nil
+        let key = "\(colorScheme)\(width ?? 0)\(text)"
+        guard coordinator.shown != key else { return }
+        coordinator.shown = key
+        view.textStorage?.setAttributedString(Renderer(flavour: flavour, width: width).render(text))
+        (view as? LinkTextView)?.tables = tables
         view.linkTextAttributes = [.foregroundColor: NSColor(flavour(.blue)), .cursor: NSCursor.pointingHand]
     }
 
     func sizeThatFits(_ proposal: ProposedViewSize, nsView view: NSTextView, context: Context) -> CGSize? {
         guard let container = view.textContainer, let layout = view.layoutManager else { return nil }
+        let proposed = proposal.width.flatMap { $0.isFinite && $0 > 0 ? $0 : nil }
+        if let proposed, proposed != context.coordinator.width {
+            context.coordinator.width = proposed
+            show(in: view, context.coordinator)
+        }
         // Asked for its ideal size, the text is as wide as its longest line, up to the measure.
-        let width = proposal.width.flatMap { $0.isFinite && $0 > 0 ? $0 : nil } ?? Metric.measure
+        let width = proposed ?? Metric.measure
         // A table sizes its columns by the text view's frame, not the container's.
         if view.frame.width != width { view.setFrameSize(NSSize(width: width, height: view.frame.height)) }
         container.containerSize = NSSize(width: width, height: .greatestFiniteMagnitude)
@@ -60,6 +74,7 @@ struct Prose: NSViewRepresentable {
 
     final class Coordinator: NSObject, NSTextViewDelegate {
         var shown = ""
+        var width: CGFloat?
         var openURL: OpenURLAction?
 
         func textView(_ view: NSTextView, clickedOnLink link: Any, at index: Int) -> Bool {
@@ -73,6 +88,11 @@ struct Prose: NSViewRepresentable {
 /// A read-only text view whose links answer the pointer: a hand and an underline while over one.
 private final class LinkTextView: NSTextView {
     private var lit: NSRange?
+    var tables = false
+
+    /// A table cell's padding lies outside its lines, so a redraw of part of the view, such as
+    /// one tile of its layer, that starts inside the padding would leave that band undrawn.
+    override func draw(_ dirtyRect: NSRect) { super.draw(tables ? bounds : dirtyRect) }
 
     /// The renderer breaks lines with U+2028, which other apps paste as a stray character.
     override func writeSelection(to board: NSPasteboard, types: [NSPasteboard.PasteboardType]) -> Bool {
@@ -193,13 +213,16 @@ struct ProseTable: View {
                         ForEach(rows[row].indices, id: \.self) { column in
                             Cell(text: rows[row][column])
                                 .frame(maxWidth: Metric.measure, alignment: .leading)
-                                .padding(.vertical, Metric.tiny)
-                                .padding(.horizontal, Metric.gap)
-                                .frame(maxHeight: .infinity, alignment: .topLeading)
-                                .border(flavour(.surface1), width: 0.5)
+                                .padding(.vertical, Renderer.Cell.down)
+                                .padding(.leading, column == 0 ? 0 : Renderer.Cell.across / 2)
+                                .padding(.trailing, column == rows[row].count - 1 ? 0 : Renderer.Cell.across / 2)
                         }
                     }
-                    .background(row == 0 ? flavour(.mantle) : .clear)
+                    if row < rows.count - 1 {
+                        Rectangle()
+                            .fill(flavour(row == 0 ? Renderer.Cell.headerRule : Renderer.Cell.rule))
+                            .frame(height: row == 0 ? 1 : Renderer.Cell.hairline)
+                    }
                 }
             }
             .fixedSize(horizontal: false, vertical: true)
