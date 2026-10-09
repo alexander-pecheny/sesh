@@ -99,10 +99,12 @@ final class FollowerLinkTests: XCTestCase {
         let sent = await machine.follower.send("it's done", id: "sent.1", to: "w1:p1")
         XCTAssertNil(sent)
         XCTAssertTrue(machine.commands[0].hasSuffix(#"send 'w1:p1' 'sent.1' 'it'\''s done'"#), machine.commands[0])
+        _ = await machine.follower.send("\u{0439} \u{0438}\u{0306}", id: "sent.2", to: "w1:p1")
+        XCTAssertFalse(machine.commands[1].unicodeScalars.contains("\u{0306}"), "a decomposed й goes composed")
         machine.answer = Ran(status: 1, out: "", err: "no menu is open in pane w1:p1")
         let failed = await machine.follower.permit(true, in: "w1:p1")
         XCTAssertEqual(failed, "no menu is open in pane w1:p1")
-        XCTAssertTrue(machine.commands[1].hasSuffix("permit 'w1:p1' 'allow'"), machine.commands[1])
+        XCTAssertTrue(machine.commands[2].hasSuffix("permit 'w1:p1' 'allow'"), machine.commands[2])
     }
 }
 
