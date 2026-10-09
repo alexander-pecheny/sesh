@@ -586,6 +586,9 @@ pub fn ask(request: &Value) -> Result<i32> {
         if let Some(code) = ask_once(stream, request)? {
             return Ok(code);
         }
+        if Instant::now() > deadline {
+            return Err("the follower would not take it".into());
+        }
         stream = loop {
             std::thread::sleep(TICK);
             match UnixStream::connect(socket()) {
@@ -597,12 +600,17 @@ pub fn ask(request: &Value) -> Result<i32> {
     }
 }
 
-/// `request` asked once; nothing when the follower is leaving and took no act.
+/// `request` asked once; nothing when the follower is leaving and took no act, or left before
+/// it read the request, as one does that connected in its last tick.
 fn ask_once(mut stream: UnixStream, request: &Value) -> Result<Option<i32>> {
-    writeln!(stream, "{request}").map_err(|err| err.to_string())?;
+    if writeln!(stream, "{request}").is_err() {
+        return Ok(None);
+    }
     let page = request["op"] == "page";
     let mut out = std::io::stdout().lock();
+    let mut heard = false;
     for line in BufReader::new(stream).lines() {
+        heard = true;
         let line = line.map_err(|err| err.to_string())?;
         let value: Value = serde_json::from_str(&line).unwrap_or_default();
         if page {
@@ -615,12 +623,25 @@ fn ask_once(mut stream: UnixStream, request: &Value) -> Result<Option<i32>> {
             _ => {}
         }
     }
-    if page { Ok(Some(0)) } else { Err("the follower hung up".into()) }
+    match (page, heard) {
+        (true, _) => Ok(Some(0)),
+        (false, false) => Ok(None),
+        (false, true) => Err("the follower hung up".into()),
+    }
 }
 
+/// The follower's socket, once one answers on it: a follower that was answering may be handing
+/// over to a newer build, which binds the socket a moment after it leaves.
 fn connect() -> Result<UnixStream> {
     serve(false, None)?;
-    UnixStream::connect(socket()).map_err(|err| format!("the follower does not answer: {err}"))
+    let deadline = Instant::now() + START_WAIT;
+    loop {
+        match UnixStream::connect(socket()) {
+            Ok(stream) => return Ok(stream),
+            Err(_) if Instant::now() < deadline => std::thread::sleep(TICK),
+            Err(err) => return Err(format!("the follower does not answer: {err}")),
+        }
+    }
 }
 
 // MARK: recording

@@ -20,7 +20,8 @@ impl Host {
         let root = PathBuf::from(format!("/tmp/sesh-{name}-{}", std::process::id()));
         std::fs::create_dir_all(root.join("claude/projects/-work")).unwrap();
         let herdr = root.join("herdr");
-        // Answers what it is asked of the pane from files, and notes every input it is given.
+        // Answers what it is asked of the pane from files, and notes every input it is given;
+        // while a `hold` file exists, an input waits, having said in `playing` that it started.
         let script = r#"#!/bin/sh
 dir="$(dirname "$0")"
 case "$1 $2" in
@@ -28,7 +29,7 @@ case "$1 $2" in
 'pane list') exec cat "$dir/panes.json" ;;
 'agent list') echo '{"result":{"agents":[]}}' ;;
 'pane read') exec cat "$dir/screen.txt" ;;
-'pane send-keys'|'pane send-text'|'pane close'|'agent prompt') sleep "$(cat "$dir/slow" 2>/dev/null || echo 0)"; echo "$*" >> "$dir/inputs" ;;
+'pane send-keys'|'pane send-text'|'pane close'|'agent prompt') echo "$*" >> "$dir/playing"; while [ -e "$dir/hold" ]; do sleep 0.01; done; echo "$*" >> "$dir/inputs" ;;
 *) exit 1 ;;
 esac
 "#;
@@ -114,6 +115,13 @@ esac
         (child, lines)
     }
 
+    /// The first line the follower answering on this Host gives `request`.
+    fn ask(&self, request: &Value) -> Value {
+        let socket = UnixStream::connect(self.root.join(".sesh/follower").join(sesh_transcript::serve::follower()).join("follower.sock")).unwrap();
+        writeln!(&socket, "{request}").unwrap();
+        BufReader::new(&socket).lines().next().and_then(|line| serde_json::from_str(&line.ok()?).ok()).unwrap_or_default()
+    }
+
     fn inputs(&self) -> String {
         std::fs::read_to_string(self.root.join("inputs")).unwrap_or_default()
     }
@@ -122,6 +130,15 @@ esac
 impl Drop for Host {
     fn drop(&mut self) {
         let _ = std::fs::remove_dir_all(&self.root);
+    }
+}
+
+/// Waits for `done` to hold, for at most five seconds.
+fn wait(done: impl Fn() -> bool) {
+    let started = std::time::Instant::now();
+    while !done() {
+        assert!(started.elapsed() < Duration::from_secs(5), "waited five seconds");
+        std::thread::sleep(Duration::from_millis(10));
     }
 }
 
@@ -321,20 +338,22 @@ fn a_newer_build_takes_over_an_older_follower_and_keeps_its_log() {
 fn a_newer_build_takes_over_only_once_the_acts_in_flight_are_played_and_answered() {
     let host = Host::new("handoff");
     host.session("s1", "idle");
-    std::fs::write(host.root.join("slow"), "2").unwrap();
+    std::fs::write(host.root.join("hold"), "").unwrap();
     let mut older = host.follower(1);
     let send = |text: &str| host.command(&["send", "w1:p1", &format!("sent.{text}"), text]).env("SESH_BUILD", "1").stderr(Stdio::piped()).spawn().unwrap();
-    let slow = send("before the handoff");
-    std::thread::sleep(Duration::from_millis(300));
+    let held = send("before the handoff");
+    wait(|| host.root.join("playing").exists());
     let mut newer = host.command(&["serve", "--foreground"]).env("SESH_BUILD", "2").spawn().unwrap();
-    std::thread::sleep(Duration::from_millis(300));
+    // The older follower refuses acts once it was asked to leave.
+    wait(|| host.ask(&json!({"op": "unqueue", "session": "w1:p1", "id": "sent.none"}))["t"] == "leaving");
     let during = send("during the handoff");
-    let (slow, during) = (slow.wait_with_output().unwrap(), during.wait_with_output().unwrap());
+    std::fs::remove_file(host.root.join("hold")).unwrap();
+    let (held, during) = (held.wait_with_output().unwrap(), during.wait_with_output().unwrap());
     let left = older.wait().unwrap();
     let hello = host.hello();
     newer.kill().unwrap();
     newer.wait().unwrap();
-    assert!(slow.status.success(), "{}", String::from_utf8_lossy(&slow.stderr));
+    assert!(held.status.success(), "{}", String::from_utf8_lossy(&held.stderr));
     assert!(during.status.success(), "{}", String::from_utf8_lossy(&during.stderr));
     assert!(left.success());
     assert_eq!(hello.unwrap()["build"], 2);
