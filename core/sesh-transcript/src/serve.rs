@@ -10,6 +10,7 @@ use std::os::unix::process::CommandExt as _;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 use std::rc::Rc;
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{mpsc, Arc};
 use std::time::{Duration, Instant};
 
@@ -33,6 +34,8 @@ const FIRST: usize = 200;
 /// Items a device gets when it opens a session.
 const OPENING: usize = 80;
 const START_WAIT: Duration = Duration::from_secs(3);
+/// How long a follower asked to leave gives the acts it took to be played and answered.
+const LEAVE_WAIT: Duration = Duration::from_secs(5);
 
 type Result<T> = std::result::Result<T, String>;
 
@@ -98,11 +101,15 @@ pub struct Machine {
     hands: Hands,
     /// Each pane's queue of acts, played in order on the pane's own thread.
     acts: HashMap<String, mpsc::Sender<Job>>,
+    /// How many acts are taken and not yet answered.
+    playing: Arc<AtomicUsize>,
+    /// When a newer build asked this follower to leave, after which it takes no more acts.
+    leaving: Option<Instant>,
 }
 
 impl Machine {
     pub fn new(log: Log, source: Shared) -> Self {
-        Machine { log, source, sessions: HashMap::new(), panes: Vec::new(), hands: Arc::new(|| Box::new(Herdr)), acts: HashMap::new() }
+        Machine { log, source, sessions: HashMap::new(), panes: Vec::new(), hands: Arc::new(|| Box::new(Herdr)), acts: HashMap::new(), playing: Arc::default(), leaving: None }
     }
 
     pub fn with_hands(self, hands: Hands) -> Self {
@@ -157,11 +164,15 @@ impl Machine {
     /// Plays what a device asked into the session's pane off the follower's loop, since a stop
     /// or an answer takes seconds; `reply` gets the `done` or `error` line once it is played.
     pub fn act(&mut self, session: &str, request: Value, reply: mpsc::Sender<Value>) {
+        if self.leaving.is_some() {
+            let _ = reply.send(json!({"t": "leaving", "op": request["op"]}));
+            return;
+        }
         let pane = self.panes.iter().find(|pane| pane["pane_id"] == session).cloned();
-        let hands = &self.hands;
+        let (hands, playing) = (&self.hands, &self.playing);
         let queue = self.acts.entry(session.to_string()).or_insert_with(|| {
             let (queue, jobs) = mpsc::channel::<Job>();
-            let (mut source, session) = (hands(), session.to_string());
+            let (mut source, session, playing) = (hands(), session.to_string(), playing.clone());
             std::thread::spawn(move || {
                 for (request, pane, reply) in jobs {
                     let line = match crate::act::act(source.as_mut(), &session, pane.as_ref(), &request) {
@@ -169,11 +180,18 @@ impl Machine {
                         Err(err) => json!({"t": "error", "op": request["op"], "message": err}),
                     };
                     let _ = reply.send(line);
+                    playing.fetch_sub(1, Ordering::SeqCst);
                 }
             });
             queue
         });
+        self.playing.fetch_add(1, Ordering::SeqCst);
         let _ = queue.send((request, pane, reply));
+    }
+
+    /// Whether this follower was asked to leave and every act it took is answered.
+    fn left(&self) -> bool {
+        self.leaving.is_some() && self.playing.load(Ordering::SeqCst) == 0
     }
 
     /// Items before `ord`, read from the Transcript when the log holds too few.
@@ -249,6 +267,7 @@ fn took_over(running: UnixStream) -> bool {
         return false;
     }
     let _ = writeln!(&running, "{}", json!({"op": "leave", "build": build()}));
+    let _ = running.set_read_timeout(Some(LEAVE_WAIT + START_WAIT));
     lines.map_while(std::result::Result::ok).for_each(drop);
     true
 }
@@ -294,14 +313,17 @@ fn run(record: Option<(PathBuf, String)>) -> Result<i32> {
         if let Some(recorder) = source.borrow_mut().recorder() {
             recorder.transcripts(&panes);
         }
+        // Read before serving, so the replies to every act played go out below.
+        let left = machine.left();
         for client in &mut clients {
             client.serve(&mut machine);
         }
-        if clients.iter().any(|client| client.leave) {
+        clients.retain(|client| client.open);
+        let answered = left && clients.iter().all(|client| client.write.is_empty());
+        if answered || machine.leaving.is_some_and(|since| since.elapsed() > LEAVE_WAIT) {
             let _ = std::fs::remove_file(&path);
             return Ok(0);
         }
-        clients.retain(|client| client.open);
         if !clients.is_empty() {
             busy = Instant::now();
         } else if busy.elapsed() > IDLE_EXIT {
@@ -328,15 +350,13 @@ struct Client {
     watched: HashMap<String, i64>,
     pinged: Instant,
     done_asking: bool,
-    /// Whether a newer build asked this follower to leave.
-    leave: bool,
     /// Replies to this device's acts, as their threads finish them.
     replies: (mpsc::Sender<Value>, mpsc::Receiver<Value>),
 }
 
 impl Client {
     fn new(stream: UnixStream) -> Self {
-        Client { stream, read: Vec::new(), write: Vec::new(), open: true, summaries: 0, all: false, watched: HashMap::new(), pinged: Instant::now(), done_asking: false, leave: false, replies: mpsc::channel() }
+        Client { stream, read: Vec::new(), write: Vec::new(), open: true, summaries: 0, all: false, watched: HashMap::new(), pinged: Instant::now(), done_asking: false, replies: mpsc::channel() }
     }
 
     fn send(&mut self, line: &Value) {
@@ -390,7 +410,11 @@ impl Client {
                 self.send(&json!({"t": "hello", "protocol": PROTOCOL, "version": crate::version(), "build": build()}));
                 self.all = request["sessions"] == true;
             }
-            "leave" => self.leave = request["build"].as_u64().unwrap_or(0) > build(),
+            "leave" => {
+                if request["build"].as_u64().unwrap_or(0) > build() {
+                    machine.leaving.get_or_insert_with(Instant::now);
+                }
+            }
             "watch" => {
                 if let Some(mut summary) = machine.log.session(&session)? {
                     summary["t"] = "session".into();
@@ -482,8 +506,27 @@ pub fn attach(requests: &[Value]) -> Result<i32> {
 
 /// One request from a device that runs a command of its own for each, as the phone must
 /// (ADR 0012): `page` prints the page's lines, and an act fails with the follower's error.
+/// An act a leaving follower refuses goes to the newer one once it answers.
 pub fn ask(request: &Value) -> Result<i32> {
     let mut stream = connect()?;
+    let deadline = Instant::now() + LEAVE_WAIT + START_WAIT;
+    loop {
+        if let Some(code) = ask_once(stream, request)? {
+            return Ok(code);
+        }
+        stream = loop {
+            std::thread::sleep(TICK);
+            match UnixStream::connect(socket()) {
+                Ok(stream) => break stream,
+                Err(_) if Instant::now() < deadline => {}
+                Err(_) => break connect()?,
+            }
+        };
+    }
+}
+
+/// `request` asked once; nothing when the follower is leaving and took no act.
+fn ask_once(mut stream: UnixStream, request: &Value) -> Result<Option<i32>> {
     writeln!(stream, "{request}").map_err(|err| err.to_string())?;
     let page = request["op"] == "page";
     let mut out = std::io::stdout().lock();
@@ -494,12 +537,13 @@ pub fn ask(request: &Value) -> Result<i32> {
             writeln!(out, "{line}").map_err(|err| err.to_string())?;
         }
         match value["t"].as_str() {
+            Some("leaving") => return Ok(None),
             Some("error") if !page => return Err(value["message"].as_str().unwrap_or("the follower failed").to_string()),
-            Some("page_done" | "error" | "done") => return Ok(0),
+            Some("page_done" | "error" | "done") => return Ok(Some(0)),
             _ => {}
         }
     }
-    if page { Ok(0) } else { Err("the follower hung up".into()) }
+    if page { Ok(Some(0)) } else { Err("the follower hung up".into()) }
 }
 
 fn connect() -> Result<UnixStream> {

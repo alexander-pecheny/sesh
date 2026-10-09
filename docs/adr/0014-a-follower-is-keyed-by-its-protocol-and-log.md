@@ -14,7 +14,9 @@ devices and the follower say to each other bumps the protocol; a change to the l
 or to what their rows mean, bumps the schema, which the log also records and checks on open.
 
 When `serve` finds a follower from an older build in its folder, it asks it to leave over the
-socket, waits until it hangs up, and starts its own over the same log. An older build finds
+socket, waits until it hangs up, and starts its own over the same log. The old follower first
+stops taking acts, plays and answers those it took, for a few seconds at most, and a device whose
+act it refuses in that time sends it again to the new one. An older build finds
 a newer follower and simply uses it, since they speak the same protocol. Builds are ordered by
 the UTC time `build-helpers.sh` stamps into them, not by their hash, so two devices that pin
 different builds both end up on the newer one instead of taking it over in turn.

@@ -28,7 +28,7 @@ case "$1 $2" in
 'pane list') exec cat "$dir/panes.json" ;;
 'agent list') echo '{"result":{"agents":[]}}' ;;
 'pane read') exec cat "$dir/screen.txt" ;;
-'pane send-keys'|'pane send-text'|'pane close'|'agent prompt') echo "$*" >> "$dir/inputs" ;;
+'pane send-keys'|'pane send-text'|'pane close'|'agent prompt') sleep "$(cat "$dir/slow" 2>/dev/null || echo 0)"; echo "$*" >> "$dir/inputs" ;;
 *) exit 1 ;;
 esac
 "#;
@@ -315,6 +315,30 @@ fn a_newer_build_takes_over_an_older_follower_and_keeps_its_log() {
     assert_eq!(resumed[0]["build"], 2);
     assert!(resumed.iter().all(|line| line["t"] != "opened"), "{resumed:?}");
     assert!(resumed.last().unwrap()["seq"].as_i64().unwrap() > seq);
+}
+
+#[test]
+fn a_newer_build_takes_over_only_once_the_acts_in_flight_are_played_and_answered() {
+    let host = Host::new("handoff");
+    host.session("s1", "idle");
+    std::fs::write(host.root.join("slow"), "2").unwrap();
+    let mut older = host.follower(1);
+    let send = |text: &str| host.command(&["send", "w1:p1", text]).env("SESH_BUILD", "1").stderr(Stdio::piped()).spawn().unwrap();
+    let slow = send("before the handoff");
+    std::thread::sleep(Duration::from_millis(300));
+    let mut newer = host.command(&["serve", "--foreground"]).env("SESH_BUILD", "2").spawn().unwrap();
+    std::thread::sleep(Duration::from_millis(300));
+    let during = send("during the handoff");
+    let (slow, during) = (slow.wait_with_output().unwrap(), during.wait_with_output().unwrap());
+    let left = older.wait().unwrap();
+    let hello = host.hello();
+    newer.kill().unwrap();
+    newer.wait().unwrap();
+    assert!(slow.status.success(), "{}", String::from_utf8_lossy(&slow.stderr));
+    assert!(during.status.success(), "{}", String::from_utf8_lossy(&during.stderr));
+    assert!(left.success());
+    assert_eq!(hello.unwrap()["build"], 2);
+    assert_eq!(host.inputs(), "agent prompt w1:p1 before the handoff\nagent prompt w1:p1 during the handoff\n");
 }
 
 #[test]
