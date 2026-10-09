@@ -214,6 +214,12 @@ impl Log {
         }
     }
 
+    /// The provisional rows of `session`, as ids and bodies, in order.
+    fn provisional(&self, session: &str) -> Result<Vec<(String, Value)>> {
+        let rows = self.items("WHERE session = ?1 AND final = 0 AND gone = 0 ORDER BY ord", [session])?;
+        Ok(rows.into_iter().map(|row| (row["id"].as_str().unwrap_or_default().to_string(), row["entry"].clone())).collect())
+    }
+
     /// The Transcript entry of the first row that holds one, to read older entries before it.
     pub fn first_entry(&self, session: &str) -> Result<Option<String>> {
         self.db
@@ -289,7 +295,12 @@ pub struct Writer {
 impl Writer {
     pub fn new(session: &str, log: &Log) -> Result<Self> {
         let summary = log.session(session)?.unwrap_or_else(|| json!({"permissions": []}));
-        Ok(Writer { session: session.to_string(), rows: Rows::new(log.head()?), summary })
+        Ok(Writer { session: session.to_string(), rows: Rows::new(log.head()?, &log.provisional(session)?), summary })
+    }
+
+    /// The provisional items a follower before this one left, for this one to carry on.
+    pub fn adopted(&self) -> Vec<crate::Entry> {
+        self.rows.adopted()
     }
 
     /// The Transcript cursor the session was last read to, so a restart picks up there.

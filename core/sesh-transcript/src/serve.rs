@@ -133,6 +133,7 @@ impl Machine {
             }
             let writer = Writer::new(key, &self.log)?;
             let mut follower = Follower::new(agent, FIRST, Box::new(self.source.clone()));
+            follower.adopt(&writer.adopted(), now);
             let since = writer.cursor().map(str::to_string);
             follower.start(pane, since.as_deref())?;
             let mut followed = Followed { follower, writer, seen: now };

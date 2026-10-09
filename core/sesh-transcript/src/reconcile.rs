@@ -145,6 +145,21 @@ pub struct Reconciler {
 }
 
 impl Reconciler {
+    /// Takes over a previous run's provisional items, which keep their ids.
+    pub fn adopt(&mut self, items: &[Entry], now: Instant) {
+        for item in items {
+            let kind = if item.kind == "tool" { Kind::Tool } else { Kind::Reply };
+            let entry = Entry { id: String::new(), ..item.clone() };
+            let seen = now.checked_sub(TOOL_DELAY).unwrap_or(now);
+            self.items.push(Item { id: item.id.clone(), kind, rows: Vec::new(), seen, words: entry_words(&entry), entry });
+        }
+    }
+
+    /// Learns what the Transcript held before this run, which no item can be.
+    pub fn learn(&mut self, entry: &Entry) {
+        self.corpus.learn(entry);
+    }
+
     /// Adds an entry the Transcript delivered and returns the item it replaces, if one was shown.
     pub fn deliver(&mut self, entry: &Entry, now: Instant) -> Option<String> {
         self.corpus.learn(entry);
@@ -329,21 +344,35 @@ fn floor(text: &str, mut at: usize) -> usize {
 
 /// An item's entry, undated: Sesh dates it when it first shows it.
 fn entry(kind: Kind, rows: &[Row], width: usize) -> Entry {
-    let at = Value::Null;
     match kind {
         Kind::Tool => {
             let block = Block { kind, rows: rows.to_vec(), cut: false };
             let (command, description) = command(&block, width).unwrap_or_default();
-            let mut input = json!({"command": command});
-            if let Some(description) = description {
-                input["description"] = description.into();
-            }
-            Entry::tool(String::new(), &at, "Bash", &input)
+            item_entry(String::new(), kind, command, description)
         }
-        _ => {
-            let (markdown, _) = markdown(rows, width);
-            Entry::text_like(String::new(), "text", &at, markdown)
-        }
+        _ => item_entry(String::new(), kind, markdown(rows, width).0, None),
+    }
+}
+
+fn item_entry(id: String, kind: Kind, text: String, description: Option<String>) -> Entry {
+    let at = Value::Null;
+    if kind != Kind::Tool {
+        return Entry::text_like(id, "text", &at, text);
+    }
+    let mut input = json!({"command": text});
+    if let Some(description) = description {
+        input["description"] = description.into();
+    }
+    Entry::tool(id, &at, "Bash", &input)
+}
+
+/// A provisional row's entry as the Session log holds it, under the row's id.
+fn row_entry(id: &str, body: &Value) -> Option<Entry> {
+    let text = |key: &str| body[key].as_str().map(str::to_string);
+    match body["kind"].as_str()? {
+        "text" => Some(item_entry(id.into(), Kind::Reply, text("text")?, None)),
+        "tool" => Some(item_entry(id.into(), Kind::Tool, text("command")?, text("description"))),
+        _ => None,
     }
 }
 
@@ -373,12 +402,22 @@ pub struct Rows {
     /// The log's head when this follower began.
     epoch: i64,
     live: Vec<(String, Entry)>,
+    /// The provisional rows an earlier follower left, which this one carries on under their ids.
+    adopted: Vec<String>,
     switches: u64,
 }
 
 impl Rows {
-    pub fn new(epoch: i64) -> Self {
-        Rows { epoch, live: Vec::new(), switches: 0 }
+    /// `left` is the provisional rows an earlier follower left, as ids and bodies.
+    pub fn new(epoch: i64, left: &[(String, Value)]) -> Self {
+        let live: Vec<(String, Entry)> = left.iter().filter_map(|(id, body)| Some((id.clone(), row_entry(id, body)?))).collect();
+        let adopted = live.iter().map(|(id, _)| id.clone()).collect();
+        Rows { epoch, live, adopted, switches: 0 }
+    }
+
+    /// The provisional items an earlier follower left, each carrying its row's id.
+    pub fn adopted(&self) -> Vec<Entry> {
+        self.live.iter().map(|(_, entry)| entry.clone()).collect()
     }
 
     /// What the screen shows now, in place of what it showed before.
@@ -418,6 +457,9 @@ impl Rows {
     }
 
     fn own(&self, live: &str) -> String {
+        if self.adopted.iter().any(|id| id == live) {
+            return live.to_string();
+        }
         format!("{live}.{}", self.epoch)
     }
 }

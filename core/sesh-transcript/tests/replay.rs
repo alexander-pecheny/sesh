@@ -42,3 +42,16 @@ fn recorded_sessions_replay_to_their_expected_items() {
         assert_eq!(got, std::fs::read_to_string(&expected).unwrap_or_default(), "{name} ended with other items");
     }
 }
+
+#[test]
+fn a_reply_streaming_across_a_follower_restart_keeps_its_row() {
+    let recording = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/sessions/restart-while-a-reply-streams.jsonl");
+    let work = std::env::temp_dir().join(format!("sesh-replay-restart-{}", std::process::id()));
+    let outcome = replay(&recording, &work).unwrap();
+    let _ = std::fs::remove_dir_all(&work);
+    assert_eq!(outcome.doubles, Vec::<String>::new());
+    let replies: Vec<&serde_json::Value> = outcome.ticks.iter().flat_map(|tick| &tick.items).filter(|item| item["entry"]["kind"] == "text").collect();
+    let first = replies[0];
+    assert_eq!((&first["final"], &replies.last().unwrap()["final"]), (&false.into(), &true.into()));
+    assert!(replies.iter().all(|reply| reply["id"] == first["id"] && reply["ord"] == first["ord"]), "{replies:#?}");
+}

@@ -205,6 +205,12 @@ impl Follower {
         std::mem::take(&mut self.out)
     }
 
+    /// Carries on the provisional items a follower before this one left, from `now`.
+    pub fn adopt(&mut self, items: &[Entry], now: Instant) {
+        self.now = now;
+        self.live.adopt(items, now);
+    }
+
     pub fn start(&mut self, pane: &Value, since: Option<&str>) -> Result<(), String> {
         self.session = pane["agent_session"].clone();
         let found = transcript_path(pane);
@@ -222,9 +228,8 @@ impl Follower {
                         .map_err(|err| err.to_string())?;
                     transcript.scan_background().map_err(|err| err.to_string())?;
                     slim(&mut transcript.entries);
-                    let known = transcript.entries.clone();
+                    transcript.entries.iter().for_each(|entry| self.live.learn(entry));
                     self.transcript = Some(transcript);
-                    self.send(&known, &[])?;
                     self.read_new()?;
                 }
                 Some((_, cursor_path)) if !cursor_path.is_empty() => {
