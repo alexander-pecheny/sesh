@@ -60,6 +60,7 @@ struct Sidebar: View {
             NameSheet(naming: naming)
         }
         .sheet(item: $closing) { CloseTaskSheet(vault: $0.vault, task: $0.task) }
+        .environment(\.closeTask) { closing = Closing(vault: $0, task: $1) }
         .onDeleteCommand {
             guard let id = library.selection, let vault = library.vault(of: id), let task = vault.records[id],
                   task.kind == .task, task.body.archived != true else { return }
@@ -192,7 +193,7 @@ private struct TaskRow: View {
     @ObservedObject var vault: Vault
     let task: Record
     @Binding var naming: Sidebar.Naming?
-    @State private var closing = false
+    @Environment(\.closeTask) private var closeTask
 
     var body: some View {
         HStack(spacing: Metric.gap) {
@@ -219,10 +220,9 @@ private struct TaskRow: View {
                 if task.body.archived == true {
                     Button("Reopen") { Tree.reopen(task, in: vault) }
                 } else {
-                    Button("Close Task…") { closing = true }
+                    Button("Close Task…") { closeTask(vault, task) }
                 }
             }
-            .sheet(isPresented: $closing) { CloseTaskSheet(vault: vault, task: task) }
     }
 }
 
@@ -384,4 +384,10 @@ extension Library {
         adopt(item, into: task)
         return true
     }
+}
+
+extension EnvironmentValues {
+    /// Asks the sidebar to confirm closing a Task. The sheet hangs off the sidebar, not the row,
+    /// because closing moves the row to the Archive while the sheet is still going away.
+    @Entry var closeTask: (Vault, Record) -> Void = { _, _ in }
 }
