@@ -2,7 +2,7 @@ use std::collections::HashMap;
 
 use serde_json::Value;
 
-use super::{block_text, creation_diff, Entry, Ids};
+use crate::{block_text, creation_diff, Entry, Ids};
 
 struct Node {
     parent: Option<String>,
@@ -19,9 +19,8 @@ pub(super) struct Parser {
     writes: HashMap<String, String>,
 }
 
-impl Parser {
-    /// Returns true when the new entry starts another branch, so `out` was rebuilt.
-    pub(super) fn line(&mut self, line: &Value, ids: &mut Ids, out: &mut Vec<Entry>) -> bool {
+impl super::Parse for Parser {
+    fn line(&mut self, line: &Value, ids: &mut Ids, out: &mut Vec<Entry>) -> bool {
         let Some(id) = line["id"].as_str().filter(|_| line["type"] != "session") else {
             return false;
         };
@@ -42,6 +41,20 @@ impl Parser {
         !continues
     }
 
+    fn fresh(&self) -> Box<dyn super::Parse> {
+        Box::<Self>::default()
+    }
+
+    fn every(&self, _: Vec<Entry>) -> Vec<Entry> {
+        self.nodes.values().flat_map(|node| node.entries.iter().cloned()).collect()
+    }
+
+    fn find<'a>(&'a self, _: &'a [Entry], id: &str) -> Option<&'a Entry> {
+        self.nodes.values().flat_map(|node| &node.entries).find(|entry| entry.id == id)
+    }
+}
+
+impl Parser {
     fn branch(&self) -> Vec<Entry> {
         let mut path = Vec::new();
         let mut cursor = self.leaf.as_deref();
@@ -53,14 +66,6 @@ impl Parser {
             .rev()
             .flat_map(|node| node.entries.iter().cloned())
             .collect()
-    }
-
-    pub(super) fn find(&self, id: &str) -> Option<&Entry> {
-        self.all().find(|entry| entry.id == id)
-    }
-
-    pub(super) fn all(&self) -> impl Iterator<Item = &Entry> {
-        self.nodes.values().flat_map(|node| &node.entries)
     }
 
     fn message(&mut self, message: &Value, at: &Value, ids: &mut Ids) -> Vec<Entry> {

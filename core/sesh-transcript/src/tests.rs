@@ -5,8 +5,8 @@ use serde_json::json;
 use super::*;
 
 /// Anonymised excerpts of real Transcripts, one JSON value per line.
-fn parse(agent: &str, lines: &[Value]) -> Transcript {
-    let mut transcript = Transcript::new(agent, "/home/u/t.jsonl").unwrap();
+fn parse(agent: Agent, lines: &[Value]) -> Transcript {
+    let mut transcript = Transcript::new(agent, "/home/u/t.jsonl");
     let bytes: String = lines.iter().map(|line| format!("{line}\n")).collect();
     transcript.feed(bytes.as_bytes());
     transcript
@@ -53,7 +53,7 @@ fn claude_lines() -> Vec<Value> {
 
 #[test]
 fn claude_transcript_becomes_entries() {
-    let transcript = parse("claude", &claude_lines());
+    let transcript = parse(Agent::Claude, &claude_lines());
     assert_eq!(
         kinds(&transcript),
         [
@@ -124,7 +124,7 @@ fn claude_transcript_becomes_entries() {
 fn codex_response_items_become_entries() {
     let at = "2026-06-03T11:54:39.234Z";
     let transcript = parse(
-        "codex",
+        Agent::Codex,
         &[
             json!({"timestamp":at,"type":"response_item","payload":{"type":"message","role":"user","content":[{"type":"input_text","text":"# AGENTS.md instructions"}]}}),
             json!({"timestamp":at,"type":"event_msg","payload":{"type":"user_message","message":"Why is this here?","images":[],"local_images":["/home/u/a.png"]}}),
@@ -177,7 +177,7 @@ fn codex_completed_items_replace_response_items() {
     let at = "2026-10-05T14:58:54.424Z";
     let item = |item: Value| json!({"timestamp":at,"type":"event_msg","payload":{"type":"item_completed","item":item}});
     let transcript = parse(
-        "codex",
+        Agent::Codex,
         &[
             json!({"timestamp":at,"type":"response_item","payload":{"type":"message","role":"user","content":[{"type":"input_text","text":"Run ls"}]}}),
             item(
@@ -238,7 +238,7 @@ fn pi_follows_the_branch_ending_at_the_newest_entry() {
             "details":{"patch":"--- /home/u/stats.py\n+++ /home/u/stats.py\n@@ -1,1 +1,1 @@\n-x + 1\n+x\n"}}),
         ),
     ];
-    let mut transcript = parse("pi", &lines);
+    let mut transcript = parse(Agent::Pi, &lines);
     assert_eq!(
         kinds(&transcript),
         ["user", "thinking", "tool:edit", "result"]
@@ -290,7 +290,7 @@ fn reading_resumes_at_a_cursor_without_repeating_or_missing_entries() {
         .collect();
     std::fs::write(&path, lines[..6].concat()).unwrap();
 
-    let mut first = Transcript::new("claude", &path).unwrap();
+    let mut first = Transcript::new(Agent::Claude, &path);
     first.read(None).unwrap();
     let cursor = first.offset;
     let seen: Vec<String> = first.entries.iter().map(|entry| entry.id.clone()).collect();
@@ -301,7 +301,7 @@ fn reading_resumes_at_a_cursor_without_repeating_or_missing_entries() {
     assert_eq!(first.offset, cursor, "a partial line waits for its newline");
 
     std::fs::write(&path, lines.concat()).unwrap();
-    let mut resumed = Transcript::new("claude", &path).unwrap();
+    let mut resumed = Transcript::new(Agent::Claude, &path);
     resumed.read(Some(cursor)).unwrap();
     let mark = resumed.entries.len();
     resumed.read(None).unwrap();
@@ -310,7 +310,7 @@ fn reading_resumes_at_a_cursor_without_repeating_or_missing_entries() {
         .map(|entry| entry.id.clone())
         .collect();
 
-    let mut whole = Transcript::new("claude", &path).unwrap();
+    let mut whole = Transcript::new(Agent::Claude, &path);
     whole.read(None).unwrap();
     let all: Vec<String> = whole.entries.iter().map(|entry| entry.id.clone()).collect();
     assert_eq!([seen, new].concat(), all);
@@ -320,12 +320,12 @@ fn reading_resumes_at_a_cursor_without_repeating_or_missing_entries() {
 #[test]
 fn a_copy_gives_the_same_ids_as_its_source() {
     let lines = &claude_lines();
-    let source = parse("claude", lines);
-    let mut copy = Transcript::new("claude", "/vault/transcripts/s1/t.jsonl").unwrap();
+    let source = parse(Agent::Claude, lines);
+    let mut copy = Transcript::new(Agent::Claude, "/vault/transcripts/s1/t.jsonl");
     let bytes: String = lines.iter().map(|line| format!("{line}\n")).collect();
     copy.feed(bytes.as_bytes());
     assert_eq!(ids(&copy.entries), ids(&source.entries));
-    let mut other = Transcript::new("claude", "/home/u/u.jsonl").unwrap();
+    let mut other = Transcript::new(Agent::Claude, "/home/u/u.jsonl");
     other.feed(bytes.as_bytes());
     assert_ne!(ids(&other.entries), ids(&source.entries));
 }
@@ -348,37 +348,6 @@ fn results_are_clipped_to_their_ends() {
 
     let short = Entry::result("r".into(), &Value::Null, "c".into(), "ok".into(), false);
     assert_eq!(short.clipped().truncated, Some(false));
-}
-
-#[test]
-fn permission_lines_name_the_command_or_file() {
-    assert_eq!(
-        permission(
-            "claude",
-            "1",
-            "Bash",
-            &json!({"command": "touch probe.txt", "description": "Create probe.txt"})
-        ),
-        json!({"t": "permission", "id": "1", "tool": "Bash", "summary": "Bash: touch probe.txt", "command": "touch probe.txt"})
-    );
-    assert_eq!(
-        permission(
-            "codex",
-            "2",
-            "Bash",
-            &json!({"command": "touch probe.txt", "description": "The sandbox blocked it."})
-        ),
-        json!({"t": "permission", "id": "2", "tool": "Bash", "summary": "Bash: touch probe.txt", "command": "touch probe.txt", "reason": "The sandbox blocked it."})
-    );
-    assert_eq!(
-        permission(
-            "codex",
-            "3",
-            "apply_patch",
-            &json!({"command": "*** Begin Patch\n*** Update File: /home/u/notes.txt\n@@\n-a\n+b\n*** End Patch"})
-        )["file"],
-        "/home/u/notes.txt"
-    );
 }
 
 fn write_transcript(name: &str, lines: &[Value]) -> PathBuf {
@@ -412,11 +381,11 @@ fn claude_rounds(rounds: usize) -> Vec<Value> {
 #[test]
 fn a_tail_read_grows_its_window_until_it_holds_enough_entries() {
     let path = write_transcript("tail", &claude_rounds(20));
-    let mut whole = Transcript::new("claude", &path).unwrap();
+    let mut whole = Transcript::new(Agent::Claude, &path);
     whole.read(None).unwrap();
     assert_eq!(whole.entries.len(), 60);
 
-    let mut tail = Transcript::new("claude", &path).unwrap();
+    let mut tail = Transcript::new(Agent::Claude, &path);
     tail.window = 64;
     tail.read_tail(None, |entries| entries.len() >= 7).unwrap();
     assert!(tail.start > 0);
@@ -435,10 +404,10 @@ fn a_tail_read_grows_its_window_until_it_holds_enough_entries() {
 #[test]
 fn history_pages_back_to_the_start() {
     let path = write_transcript("history", &claude_rounds(10));
-    let mut whole = Transcript::new("claude", &path).unwrap();
+    let mut whole = Transcript::new(Agent::Claude, &path);
     whole.read(None).unwrap();
 
-    let mut transcript = Transcript::new("claude", &path).unwrap();
+    let mut transcript = Transcript::new(Agent::Claude, &path);
     transcript.window = 64;
     transcript
         .read_tail(None, |entries| entries.len() >= 4)
@@ -468,17 +437,17 @@ fn results_name_calls_outside_the_window() {
     let at = "2026-10-05T14:54:42.186Z";
     let cases = [
         (
-            "claude",
+            Agent::Claude,
             json!({"type":"assistant","timestamp":at,"message":{"content":[{"type":"tool_use","id":"toolu_1","name":"Bash","input":{"command":"ls"}}]}}),
             json!({"type":"user","timestamp":at,"message":{"role":"user","content":[{"type":"tool_result","tool_use_id":"toolu_1","content":"a"}]}}),
         ),
         (
-            "codex",
+            Agent::Codex,
             json!({"timestamp":at,"type":"response_item","payload":{"type":"function_call","name":"exec_command","arguments":"{\"cmd\":\"ls\"}","call_id":"call_1"}}),
             json!({"timestamp":at,"type":"response_item","payload":{"type":"function_call_output","call_id":"call_1","output":"Process exited with code 0\nOutput:\na\n"}}),
         ),
         (
-            "pi",
+            Agent::Pi,
             pi_line(
                 "a1",
                 None,
@@ -492,26 +461,26 @@ fn results_name_calls_outside_the_window() {
         ),
     ];
     for (agent, call, result) in cases {
-        let path = write_transcript(&format!("link-{agent}"), &[call, result.clone()]);
-        let mut whole = Transcript::new(agent, &path).unwrap();
+        let path = write_transcript(&format!("link-{}", agent.name()), &[call, result.clone()]);
+        let mut whole = Transcript::new(agent, &path);
         whole.read(None).unwrap();
-        assert_eq!(kinds(&whole), ["tool:bash", "result"], "{agent}");
+        assert_eq!(kinds(&whole), ["tool:bash", "result"], "{agent:?}");
 
-        let mut tail = Transcript::new(agent, &path).unwrap();
+        let mut tail = Transcript::new(agent, &path);
         tail.window = result.to_string().len() as u64 + 1;
         tail.read_tail(None, |entries| !entries.is_empty()).unwrap();
-        assert_eq!(kinds(&tail), ["result"], "{agent}");
+        assert_eq!(kinds(&tail), ["result"], "{agent:?}");
         assert_eq!(
             tail.entries[0].call.as_deref(),
             Some(whole.entries[0].id.as_str())
         );
-        assert!(whole.entries[0].id.ends_with(".call.call_1") || agent == "claude");
+        assert!(whole.entries[0].id.ends_with(".call.call_1") || agent == Agent::Claude);
 
         let (page, more) = tail.history(&whole.entries[1].id, 5).unwrap().unwrap();
         assert_eq!(
             (ids(&page), more),
             (ids(&whole.entries[..1]), false),
-            "{agent}"
+            "{agent:?}"
         );
         let _ = std::fs::remove_dir_all(path.parent().unwrap());
     }
@@ -535,7 +504,7 @@ fn pi_follows_its_branch_within_a_window() {
             .collect()
     };
 
-    let mut transcript = Transcript::new("pi", &path).unwrap();
+    let mut transcript = Transcript::new(Agent::Pi, &path);
     transcript.window = [&lines[1], &lines[2], &lines[3]]
         .iter()
         .map(|line| line.to_string().len() as u64 + 1)
@@ -570,7 +539,7 @@ fn claude_background_work_stays_listed_until_its_notification() {
     };
     let agent = json!({"type":"assistant","timestamp":at,"message":{"content":[{"type":"tool_use","id":"toolu_c","name":"Agent",
         "input":{"description":"Read the docs","prompt":"...","run_in_background":"true"}}]}});
-    let transcript = parse("claude", &[started("toolu_a", "Watch CI"), started("toolu_b", "Run the suite"), notified("toolu_a", "completed"), agent]);
+    let transcript = parse(Agent::Claude, &[started("toolu_a", "Watch CI"), started("toolu_b", "Run the suite"), notified("toolu_a", "completed"), agent]);
     assert_eq!(
         transcript.background(),
         [
@@ -596,12 +565,12 @@ fn an_agent_claude_sent_to_the_background_unasked_counts_until_its_notification(
         "content":"<task-notification>\n<tool-use-id>toolu_p</tool-use-id>\n<status>completed</status>\n</task-notification>"}});
     let [python, python_result] = launched("toolu_p", "Build Python chgksuite side");
     let [go, go_result] = launched("toolu_g", "Build Go dopesuite side");
-    let transcript = parse("claude", &[python, python_result, go, go_result.clone(), notified]);
+    let transcript = parse(Agent::Claude, &[python, python_result, go, go_result.clone(), notified]);
     assert_eq!(transcript.background(), [Background { call: "toolu_g".into(), label: "Build Go dopesuite side".into(), agent: true }]);
     let dir = std::env::temp_dir().join(format!("sesh-async-{}", std::process::id()));
     std::fs::create_dir_all(&dir).unwrap();
     std::fs::write(dir.join("t.jsonl"), format!("{go_result}\n")).unwrap();
-    let mut scanned = Transcript::new("claude", dir.join("t.jsonl")).unwrap();
+    let mut scanned = Transcript::new(Agent::Claude, dir.join("t.jsonl"));
     scanned.scan_background().unwrap();
     std::fs::remove_dir_all(&dir).unwrap();
     assert_eq!(scanned.background().len(), 1);
@@ -612,16 +581,16 @@ fn claude_turn_is_over_after_end_turn_until_the_user_speaks() {
     let at = "2026-10-05T14:54:42.186Z";
     let reply = |reason: &str| json!({"type":"assistant","timestamp":at,"message":{"stop_reason":reason,"content":[{"type":"text","text":"ok"}]}});
     let said = json!({"type":"user","timestamp":at,"origin":{"kind":"human"},"message":{"role":"user","content":"go on"}});
-    assert!(!parse("claude", &[reply("tool_use")]).turn_over());
-    assert!(parse("claude", &[reply("tool_use"), reply("end_turn")]).turn_over());
-    assert!(!parse("claude", &[reply("end_turn"), said]).turn_over());
+    assert!(!parse(Agent::Claude, &[reply("tool_use")]).turn_over());
+    assert!(parse(Agent::Claude, &[reply("tool_use"), reply("end_turn")]).turn_over());
+    assert!(!parse(Agent::Claude, &[reply("end_turn"), said]).turn_over());
 }
 
 #[test]
 fn a_pasted_message_reads_as_typed() {
     let text = "<pasted_content id=\"f8e7\">\ncheck the recording\n\n1. no shell\n</pasted_content id=\"f8e7\">";
-    assert_eq!(super::claude::unwrap_pastes(text), "check the recording\n\n1. no shell");
-    assert_eq!(super::claude::unwrap_pastes("before <pasted_content id=\"a\">x</pasted_content id=\"a\"> after"), "before x after");
+    assert_eq!(agent::claude::unwrap_pastes(text), "check the recording\n\n1. no shell");
+    assert_eq!(agent::claude::unwrap_pastes("before <pasted_content id=\"a\">x</pasted_content id=\"a\"> after"), "before x after");
 }
 
 #[test]
@@ -636,7 +605,7 @@ fn a_notice_queued_mid_turn_ends_background_work() {
             json!({"type":"assistant","timestamp":at,"message":{"content":[{"type":"tool_use","id":"toolu_9","name":"Bash","input":{"command":"sleep 9","description":"Wait","run_in_background":true}}]}}),
             done,
         ];
-        assert!(parse("claude", &lines).background().is_empty());
+        assert!(parse(Agent::Claude, &lines).background().is_empty());
     }
 }
 
@@ -646,7 +615,7 @@ fn a_message_sent_mid_turn_shows_where_claude_read_it() {
     let queued = |prompt: Value, origin: Value| {
         json!({"type":"attachment","timestamp":at,"attachment":{"type":"queued_command","prompt":prompt,"commandMode":"prompt","origin":origin}})
     };
-    let transcript = parse("claude", &[
+    let transcript = parse(Agent::Claude, &[
         json!({"type":"queue-operation","operation":"enqueue","timestamp":at,"content":"also it crashed"}),
         queued(json!("also it crashed"), json!({"kind":"human"})),
         queued(json!([{"type":"text","text":"[Image #1] and this"}]), Value::Null),
@@ -662,7 +631,7 @@ fn narration_sent_as_thinking_reads_as_text() {
     let thinking = |text: &str, signature: &str| {
         json!({"type":"assistant","timestamp":at,"message":{"content":[{"type":"thinking","thinking":text,"signature":signature}]}})
     };
-    let transcript = parse("claude", &[
+    let transcript = parse(Agent::Claude, &[
         thinking("", "CAQSkQ8KEAgSGAI4AUIIdGhpbmtpbmcSDG2jqnFU"),
         thinking("The runtime theory is ruled out.\n\n", "CAQSsAgKEQgSGAI4AUIJbmFycmF0aW9uEgyquZYm"),
         thinking("Weighing it up.", "CAQSnQYKEAgSGAI4AUIIdGhpbmtpbmcSDNlmFW"),

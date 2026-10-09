@@ -8,7 +8,7 @@ use rusqlite::{params, Connection, OpenFlags, OptionalExtension};
 use serde::Deserialize;
 use serde_json::{json, Value};
 
-use crate::Transcript;
+use crate::{Agent, Transcript};
 
 const SCHEMA: &str = "
 CREATE TABLE IF NOT EXISTS records (
@@ -36,6 +36,7 @@ CREATE TABLE IF NOT EXISTS copies (
     file TEXT NOT NULL,
     agent TEXT NOT NULL,
     indexed INTEGER NOT NULL,
+    -- The Transcript's hint, under the name older helpers that share this file still use.
     items INTEGER NOT NULL,
     PRIMARY KEY (session, file)
 );
@@ -282,7 +283,7 @@ impl Vault {
 
     fn index(&self, session: &str, file: &str) -> Result<()> {
         let path = self.copy_path(session, file)?;
-        let known: Option<(String, i64, bool)> = self
+        let known: Option<(String, i64, i64)> = self
             .db
             .query_row(
                 "SELECT agent, indexed, items FROM copies WHERE session = ?1 AND file = ?2",
@@ -290,22 +291,21 @@ impl Vault {
                 |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
             )
             .optional()?;
-        let (agent, indexed, items) = match known {
-            Some(known) => known,
-            None => match agent_of(&path)? {
-                Some(agent) => (agent.to_string(), 0, false),
-                None => return Ok(()),
-            },
+        let (agent, indexed, hint) = match known {
+            Some((agent, indexed, hint)) => (Agent::named(&agent), indexed, hint),
+            None => (agent_of(&path)?, 0, 0),
+        };
+        let Some(agent) = agent else {
+            return Ok(());
         };
         let write = self.db.unchecked_transaction()?;
-        let mut transcript = Transcript::new(&agent, &path).expect("agent is supported");
-        let mut entries = transcript.read_from(indexed as u64, items)?;
-        if transcript.codex_items() && !items && indexed > 0 {
+        let mut transcript = Transcript::new(agent, &path);
+        let entries = transcript.read_from(indexed as u64, hint)?;
+        if transcript.start < indexed as u64 {
             write.execute(
                 "DELETE FROM line_text WHERE session = ?1 AND file = ?2",
                 [session, file],
             )?;
-            entries = transcript.read_from(0, true)?;
         }
         for entry in &entries {
             if let ("user" | "text", Some(text)) = (entry.kind, &entry.text) {
@@ -321,9 +321,9 @@ impl Vault {
             params![
                 session,
                 file,
-                agent,
+                agent.name(),
                 transcript.offset as i64,
-                transcript.codex_items()
+                transcript.hint()
             ],
         )?;
         write.commit()?;
@@ -394,18 +394,14 @@ fn head(db: &Connection) -> rusqlite::Result<i64> {
 }
 
 /// The Agent that wrote a Transcript, told by its first line; None until that line is whole.
-fn agent_of(path: &Path) -> Result<Option<&'static str>> {
+fn agent_of(path: &Path) -> Result<Option<Agent>> {
     let mut line = Vec::new();
     std::io::BufReader::new(File::open(path)?).read_until(b'\n', &mut line)?;
     if line.last() != Some(&b'\n') {
         return Ok(None);
     }
     let first: Value = serde_json::from_slice(&line).unwrap_or_default();
-    Ok(Some(match first["type"].as_str() {
-        Some("session_meta") => "codex",
-        Some("session") => "pi",
-        _ => "claude",
-    }))
+    Ok(Some(Agent::wrote(&first)))
 }
 
 fn uuid() -> String {
@@ -595,7 +591,7 @@ mod tests {
                 change("t1", "task", 0, json!({"title": "Walrus"})),
             ])
             .unwrap();
-        let mut transcript = Transcript::new("claude", &source).unwrap();
+        let mut transcript = Transcript::new(Agent::Claude, &source);
         transcript.read(None).unwrap();
         let hits = vault.search("walrus", None).unwrap();
         assert_eq!(hits.len(), 3, "{hits:?}");
@@ -654,7 +650,7 @@ mod tests {
         vault.copy("s1", &source).unwrap();
 
         let hits = vault.search("walrus", None).unwrap();
-        let mut transcript = Transcript::new("codex", &source).unwrap();
+        let mut transcript = Transcript::new(Agent::Codex, &source);
         transcript.read_tail(None, |_| false).unwrap();
         let ids: Vec<&str> = transcript
             .entries

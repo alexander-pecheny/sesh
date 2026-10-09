@@ -1,11 +1,22 @@
 //! Stamps the helper with a hash of its sources, which Sesh compares to decide whether the
 //! copy on a Host is stale.
 
+use std::path::{Path, PathBuf};
+
+fn sources(dir: &Path, files: &mut Vec<PathBuf>) {
+    for entry in std::fs::read_dir(dir).expect("src") {
+        let path = entry.expect("src entry").path();
+        if path.is_dir() {
+            sources(&path, files);
+        } else {
+            files.push(path);
+        }
+    }
+}
+
 fn main() {
-    let mut files: Vec<_> = std::fs::read_dir("src")
-        .expect("src")
-        .map(|entry| entry.expect("src entry").path())
-        .collect();
+    let mut files = Vec::new();
+    sources(Path::new("src"), &mut files);
     files.sort();
     files.push("Cargo.toml".into());
     let hash = files

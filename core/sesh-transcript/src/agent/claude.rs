@@ -1,8 +1,10 @@
 use std::collections::{HashMap, HashSet};
+use std::fs::File;
+use std::io::BufRead as _;
 
 use serde_json::Value;
 
-use super::{block_text, creation_diff, Entry, Ids};
+use crate::{block_text, creation_diff, Entry, Ids};
 
 /// Lines Claude writes as the user that the user did not type.
 /// "narration" in base64, at each of the three offsets it can start at.
@@ -30,18 +32,59 @@ pub struct Background {
 #[derive(Default)]
 pub(super) struct Parser {
     /// A subagent's own Transcript, whose every line is a sidechain of its parent's.
-    pub(super) subagent: bool,
+    subagent: bool,
     /// Commands and Agents started in the background and not yet reported finished, by the
     /// call that started them, with what to call them.
-    pub(super) background: Vec<Background>,
+    background: Vec<Background>,
     /// Whether Claude's last reply ended its turn, so what herdr calls working is only Claude
     /// waiting on its background work.
-    pub(super) turn_over: bool,
+    turn_over: bool,
     /// Claude writes a slash command twice, plain and wrapped, under one prompt.
     prompt: Option<String>,
     questions: HashMap<String, String>,
     hidden_results: HashSet<String>,
     tasks: Vec<(String, String)>,
+}
+
+impl super::Parse for Parser {
+    fn line(&mut self, line: &Value, ids: &mut Ids, out: &mut Vec<Entry>) -> bool {
+        self.read(line, ids, out);
+        false
+    }
+
+    fn fresh(&self) -> Box<dyn super::Parse> {
+        Box::new(Self::new(self.subagent))
+    }
+
+    fn turn_over(&self) -> bool {
+        self.turn_over
+    }
+
+    fn background(&self) -> &[Background] {
+        &self.background
+    }
+
+    /// Only the lines that start or end background work are parsed, so a long Transcript
+    /// stays quick.
+    fn scan(&mut self, file: File) -> std::io::Result<()> {
+        let mut scan = Self::new(false);
+        let mut ids = Ids { tag: String::new(), prefix: String::new(), next: 0 };
+        let mut out = Vec::new();
+        let mut reader = std::io::BufReader::with_capacity(1 << 20, file);
+        let mut line = Vec::new();
+        while reader.read_until(b'\n', &mut line)? > 0 {
+            let text = std::str::from_utf8(&line).unwrap_or_default();
+            if ["run_in_background", "task-notification", "async_launched"].iter().any(|word| text.contains(word)) {
+                if let Ok(value) = serde_json::from_str::<Value>(text) {
+                    scan.read(&value, &mut ids, &mut out);
+                    out.clear();
+                }
+            }
+            line.clear();
+        }
+        self.background = scan.background;
+        Ok(())
+    }
 }
 
 impl Parser {
@@ -52,7 +95,7 @@ impl Parser {
         }
     }
 
-    pub(super) fn line(&mut self, line: &Value, ids: &mut Ids, out: &mut Vec<Entry>) {
+    fn read(&mut self, line: &Value, ids: &mut Ids, out: &mut Vec<Entry>) {
         if (line["isSidechain"] == true && !self.subagent)
             || line["isMeta"] == true
             || line["isCompactSummary"] == true
@@ -159,7 +202,7 @@ impl Parser {
                     self.background.push(Background {
                         call: call.to_string(),
                         label: label.lines().next().unwrap_or_default().to_string(),
-                        agent: super::tool_kind(name) == "task",
+                        agent: crate::tool_kind(name) == "task",
                     });
                 }
                 out.push(match name {
@@ -315,7 +358,7 @@ fn typed_text(text: &str) -> Option<String> {
 
 /// Claude Code records a paste, which is how Sesh sends a message, between
 /// `<pasted_content id="…">` tags; the person typed only what is inside.
-pub(super) fn unwrap_pastes(text: &str) -> String {
+pub(crate) fn unwrap_pastes(text: &str) -> String {
     let mut out = String::new();
     let mut rest = text;
     while let Some(start) = rest.find("<pasted_content") {
@@ -332,7 +375,7 @@ pub(super) fn unwrap_pastes(text: &str) -> String {
 
 /// Its id comes from the questions, so the copy made from the permission hook
 /// before Claude writes it and the copy in the Transcript are one entry.
-pub(super) fn question(tag: &str, at: &Value, input: &Value) -> Entry {
+pub(crate) fn question(tag: &str, at: &Value, input: &Value) -> Entry {
     let questions: Vec<Value> = input["questions"]
         .as_array()
         .into_iter()
@@ -354,7 +397,7 @@ pub(super) fn question(tag: &str, at: &Value, input: &Value) -> Entry {
             })
         })
         .collect();
-    let summary = super::first_line(
+    let summary = crate::first_line(
         questions
             .first()
             .and_then(|question| question["question"].as_str())
@@ -363,7 +406,7 @@ pub(super) fn question(tag: &str, at: &Value, input: &Value) -> Entry {
     let questions = Value::from(questions);
     let id = format!(
         "{tag}.q{:08x}",
-        super::fnv1a(questions.to_string().as_bytes())
+        crate::fnv1a(questions.to_string().as_bytes())
     );
     Entry {
         questions: Some(questions),

@@ -310,7 +310,7 @@ impl Writer {
     fn event(&mut self, event: &Event) -> Vec<Change> {
         match event {
             Event::Hello { agent, transcript } => {
-                self.summary["agent"] = agent.clone().into();
+                self.summary["agent"] = agent.name().into();
                 self.summary["transcript"] = transcript.clone().into();
             }
             Event::Entry { entry, replaces } => {

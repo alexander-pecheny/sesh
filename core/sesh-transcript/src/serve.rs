@@ -15,9 +15,10 @@ use std::time::{Duration, Instant};
 
 use serde_json::{json, Value};
 
-use crate::follower::{transcript_path, Event, Follower, Herdr, Input, Source};
+use crate::agent::{transcript_path, Agent};
+use crate::follower::{Event, Follower, Herdr, Input, Source};
 use crate::log::{Log, Writer};
-use crate::{Transcript, AGENTS};
+use crate::Transcript;
 
 pub const PROTOCOL: u64 = 4;
 const TICK: Duration = Duration::from_millis(100);
@@ -112,10 +113,7 @@ impl Machine {
         // A queue let go of ends its thread once the acts already in it are played.
         self.acts.retain(|key, _| panes.iter().any(|pane| pane["pane_id"] == key.as_str()));
         for pane in panes {
-            let (Some(key), Some(agent)) = (pane["pane_id"].as_str(), pane["agent"].as_str()) else { continue };
-            if !AGENTS.contains(&agent) {
-                continue;
-            }
+            let (Some(key), Some(agent)) = (pane["pane_id"].as_str(), Agent::of(pane)) else { continue };
             if let Some(followed) = self.sessions.get_mut(key) {
                 followed.seen = now;
                 followed.follower.tick(pane, now)?;
@@ -124,7 +122,7 @@ impl Machine {
                 continue;
             }
             let writer = Writer::new(key, &self.log)?;
-            let mut follower = Follower::new(agent.to_string(), FIRST, Box::new(self.source.clone()));
+            let mut follower = Follower::new(agent, FIRST, Box::new(self.source.clone()));
             let since = writer.cursor().map(str::to_string);
             follower.start(pane, since.as_deref())?;
             let mut followed = Followed { follower, writer, seen: now };
@@ -179,7 +177,7 @@ impl Machine {
         let Some(oldest) = self.log.first_entry(session)? else {
             return Ok((page, false));
         };
-        let mut transcript = Transcript::new(&agent, path).expect("agent is supported");
+        let mut transcript = Transcript::new(agent, path);
         let Some((older, more)) = transcript.history(&oldest, limit).map_err(|err| err.to_string())? else {
             return Ok((page, false));
         };

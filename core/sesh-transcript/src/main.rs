@@ -4,10 +4,11 @@ use std::path::Path;
 use std::time::{Duration, Instant};
 
 use serde_json::{json, Value};
-use sesh_transcript::follower::{entry_line, herdr, transcript_path, Event, Follower, Herdr};
+use sesh_transcript::agent::{transcript_path, Agent};
+use sesh_transcript::follower::{entry_line, herdr, Event, Follower, Herdr};
 use sesh_transcript::act;
 use sesh_transcript::vault::{self, Vault};
-use sesh_transcript::{replay, serve, Transcript, AGENTS, PROTOCOL, VERSION};
+use sesh_transcript::{replay, serve, Transcript, PROTOCOL, VERSION};
 
 /// Short enough that the chat keeps up with what Claude's screen shows.
 const POLL: Duration = Duration::from_millis(100);
@@ -181,20 +182,17 @@ fn pane_info(pane_id: &str) -> Result<Value, String> {
 }
 
 /// The pane and its Agent, or why it has none Conversations support.
-fn agent_pane(target: &Target) -> Result<(Value, String), String> {
+fn agent_pane(target: &Target) -> Result<(Value, Agent), String> {
     let pane = target.pane()?;
-    match pane["agent"].as_str() {
-        Some(agent) if AGENTS.contains(&agent) => Ok((pane.clone(), agent.to_string())),
-        _ => Err(format!("{target} does not run claude, codex or pi")),
-    }
+    let agent = Agent::of(&pane).ok_or_else(|| format!("{target} does not run claude, codex or pi"))?;
+    Ok((pane, agent))
 }
 
-fn pane_transcript(target: &Target) -> Result<(Transcript, String, Value), String> {
+fn pane_transcript(target: &Target) -> Result<Transcript, String> {
     let (pane, agent) = agent_pane(target)?;
     let path = transcript_path(&pane)
-        .ok_or_else(|| format!("{agent} in {target} has reported no transcript"))?;
-    let transcript = Transcript::new(&agent, path).expect("agent is supported");
-    Ok((transcript, agent, pane))
+        .ok_or_else(|| format!("{} in {target} has reported no transcript", agent.name()))?;
+    Ok(Transcript::new(agent, path))
 }
 
 // MARK: follow
@@ -276,7 +274,7 @@ fn entry(args: &[String]) -> Exit {
     let [id] = rest[..] else {
         return usage();
     };
-    let (mut transcript, _, _) = pane_transcript(&target)?;
+    let mut transcript = pane_transcript(&target)?;
     if let Some(end) = transcript.locate(id).map_err(|err| err.to_string())? {
         transcript
             .read_tail(Some(end), |entries| {
@@ -302,7 +300,7 @@ fn history(args: &[String]) -> Exit {
     else {
         return usage();
     };
-    let (mut transcript, _, _) = pane_transcript(&target)?;
+    let mut transcript = pane_transcript(&target)?;
     let (entries, more) = transcript
         .history(before, last)
         .map_err(|err| err.to_string())?
@@ -324,7 +322,7 @@ fn background(panes: &[String]) -> Exit {
     let mut out = std::io::stdout().lock();
     for pane in panes {
         let (tasks, last, turn_over): (Vec<Value>, Option<String>, bool) = match pane_transcript(&Target::Pane(pane)) {
-            Ok((mut transcript, _, _)) => {
+            Ok(mut transcript) => {
                 transcript
                     .read_tail(None, |entries| entries.len() >= DEFAULT_LAST)
                     .map_err(|err| err.to_string())?;

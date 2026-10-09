@@ -2,20 +2,40 @@ use std::collections::{HashMap, HashSet};
 
 use serde_json::Value;
 
-use super::{block_text, creation_diff, shell_command, Entry, Ids};
+use crate::{block_text, creation_diff, shell_command, Entry, Ids};
 
 /// Codex rollouts come in two shapes. Older ones log each response item; newer ones
 /// add `item_completed` events that say everything once, so seeing one switches
 /// the parser to those and it ignores the rest.
 #[derive(Default)]
 pub(super) struct Parser {
-    pub(super) items: bool,
+    items: bool,
     hidden_results: HashSet<String>,
     diffs: HashMap<String, String>,
 }
 
+impl super::Parse for Parser {
+    fn line(&mut self, line: &Value, ids: &mut Ids, out: &mut Vec<Entry>) -> bool {
+        self.read(line, ids, out);
+        false
+    }
+
+    fn fresh(&self) -> Box<dyn super::Parse> {
+        Box::<Self>::default()
+    }
+
+    /// A piece read on its own may come after the first `item_completed`.
+    fn begin(&mut self, bytes: &[u8], hint: i64) {
+        self.items = hint != 0 || crate::contains(bytes, b"\"item_completed\"");
+    }
+
+    fn hint(&self) -> i64 {
+        self.items.into()
+    }
+}
+
 impl Parser {
-    pub(super) fn line(&mut self, line: &Value, ids: &mut Ids, out: &mut Vec<Entry>) {
+    fn read(&mut self, line: &Value, ids: &mut Ids, out: &mut Vec<Entry>) {
         let at = &line["timestamp"];
         let payload = &line["payload"];
         let kind = payload["type"].as_str().unwrap_or_default();

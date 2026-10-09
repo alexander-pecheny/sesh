@@ -5,8 +5,9 @@ use std::time::{Duration, Instant};
 
 use serde_json::{json, Value};
 
-use crate::follower::{transcript_path, Input, Source};
-use crate::{Transcript, AGENTS};
+use crate::agent::{transcript_path, Agent};
+use crate::follower::{Input, Source};
+use crate::Transcript;
 
 const KEY_PAUSE: Duration = Duration::from_millis(200);
 const MENU_TIMEOUT: Duration = Duration::from_secs(3);
@@ -59,8 +60,8 @@ pub fn act(source: &mut dyn Source, session: &str, pane: Option<&Value>, request
     }
 }
 
-fn agent_pane<'a>(session: &str, pane: Option<&'a Value>) -> Result<(&'a Value, &'a str)> {
-    pane.and_then(|pane| Some((pane, pane["agent"].as_str().filter(|agent| AGENTS.contains(agent))?)))
+fn agent_pane<'a>(session: &str, pane: Option<&'a Value>) -> Result<(&'a Value, Agent)> {
+    pane.and_then(|pane| Some((pane, Agent::of(pane)?)))
         .ok_or_else(|| format!("pane {session} does not run claude, codex or pi"))
 }
 
@@ -72,17 +73,16 @@ struct Answer {
     text: Option<String>,
 }
 
-fn answer(source: &mut dyn Source, session: &str, (pane, agent): (&Value, &str), answers: &[Answer]) -> Result<()> {
+fn answer(source: &mut dyn Source, session: &str, (pane, agent): (&Value, Agent), answers: &[Answer]) -> Result<()> {
     let pending = &pane["permission"];
-    if agent != "claude" || pending["tool"] != "AskUserQuestion" {
+    let Some((menu, submit)) = agent.question_menu().filter(|_| pending["tool"] == "AskUserQuestion") else {
         return Err(format!("no question is open in pane {session}"));
-    }
-    let path = transcript_path(pane).ok_or_else(|| format!("{agent} in pane {session} has reported no transcript"))?;
-    let question = Transcript::new(agent, path).expect("agent is supported").open_question(&pending["input"]);
+    };
+    let path = transcript_path(pane).ok_or_else(|| format!("{} in pane {session} has reported no transcript", agent.name()))?;
+    let question = Transcript::new(agent, path).open_question(&pending["input"]);
     let inputs = question_inputs(question.questions.as_ref().unwrap_or(&Value::Null), answers)?;
-    play(source, session, inputs, question_menu_open, |screen| {
-        screen.contains("Ready to submit your answers?").then(|| vec![key("enter")])
-    })
+    let open = |screen: &str| screen.contains(menu) || screen.contains(submit);
+    play(source, session, inputs, open, |screen| screen.contains(submit).then(|| vec![key("enter")]))
 }
 
 fn key(name: &str) -> Input {
@@ -130,27 +130,9 @@ fn question_inputs(questions: &Value, answers: &[Answer]) -> Result<Vec<Input>> 
     Ok(inputs)
 }
 
-fn question_menu_open(screen: &str) -> bool {
-    screen.contains("Enter to select ·") || screen.contains("Ready to submit your answers?")
-}
-
-fn permit(source: &mut dyn Source, session: &str, (_, agent): (&Value, &str), allow: bool) -> Result<()> {
-    let (name, open): (&str, fn(&str) -> bool) = match (agent, allow) {
-        ("claude", true) => ("1", claude_permission_open),
-        ("claude", false) => ("esc", claude_permission_open),
-        ("codex", true) => ("y", codex_permission_open),
-        ("codex", false) => ("esc", codex_permission_open),
-        _ => return Err("pi asks no permissions".into()),
-    };
-    play(source, session, vec![key(name)], open, |_| None)
-}
-
-fn claude_permission_open(screen: &str) -> bool {
-    screen.contains("Esc to cancel · Tab to amend")
-}
-
-fn codex_permission_open(screen: &str) -> bool {
-    screen.contains("Press enter to confirm or esc to cancel")
+fn permit(source: &mut dyn Source, session: &str, (_, agent): (&Value, Agent), allow: bool) -> Result<()> {
+    let (name, open) = agent.permit(allow).ok_or_else(|| format!("{} asks no permissions", agent.name()))?;
+    play(source, session, vec![key(name)], |screen| screen.contains(open), |_| None)
 }
 
 /// Plays `inputs` into a menu that `open` sees on screen, then waits for it to
@@ -159,7 +141,7 @@ fn play(
     source: &mut dyn Source,
     pane_id: &str,
     inputs: Vec<Input>,
-    open: fn(&str) -> bool,
+    open: impl Fn(&str) -> bool,
     confirm: impl Fn(&str) -> Option<Vec<Input>>,
 ) -> Result<()> {
     let screen = source.read(pane_id, false)?;

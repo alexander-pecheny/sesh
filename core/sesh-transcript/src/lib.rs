@@ -1,16 +1,15 @@
 //! An Agent session's Transcript as Conversation entries, shared by Claude, Codex and pi.
 
 pub mod act;
-mod claude;
-pub use claude::Background;
-mod codex;
+pub mod agent;
+pub use agent::claude::Background;
+pub use agent::Agent;
 pub mod follower;
 pub mod log;
 pub mod reconcile;
 pub mod replay;
 pub mod screen;
 pub mod serve;
-mod pi;
 pub mod vault;
 
 pub const VERSION: &str = concat!(env!("CARGO_PKG_VERSION"), "+", env!("SOURCE_HASH"));
@@ -23,7 +22,6 @@ use serde::Serialize;
 use serde_json::Value;
 
 pub const PROTOCOL: u32 = 2;
-pub const AGENTS: [&str; 3] = ["claude", "codex", "pi"];
 
 const CLIP_LINES: usize = 40;
 const CLIP_BYTES: usize = 16 * 1024;
@@ -227,22 +225,6 @@ impl Ids {
     }
 }
 
-enum Parser {
-    Claude(claude::Parser),
-    Codex(codex::Parser),
-    Pi(pi::Parser),
-}
-
-impl Parser {
-    fn fresh(&self) -> Self {
-        match self {
-            Self::Claude(old) => Self::Claude(claude::Parser::new(old.subagent)),
-            Self::Codex(_) => Self::Codex(Default::default()),
-            Self::Pi(_) => Self::Pi(Default::default()),
-        }
-    }
-}
-
 /// One Transcript, read incrementally. `entries` is what the Conversation shows now.
 pub struct Transcript {
     pub path: PathBuf,
@@ -250,32 +232,24 @@ pub struct Transcript {
     /// Where the parsed lines begin; past 0 after a tail read.
     pub start: u64,
     tag: String,
-    parser: Parser,
+    parser: Box<dyn agent::Parse>,
     pub entries: Vec<Entry>,
     window: u64,
 }
 
 impl Transcript {
-    pub fn new(agent: &str, path: impl Into<PathBuf>) -> Option<Self> {
+    pub fn new(agent: Agent, path: impl Into<PathBuf>) -> Self {
         let path: PathBuf = path.into();
-        let parser = match agent {
-            "claude" => Parser::Claude(claude::Parser::new(
-                path.parent().is_some_and(|folder| folder.ends_with("subagents")),
-            )),
-            "codex" => Parser::Codex(Default::default()),
-            "pi" => Parser::Pi(Default::default()),
-            _ => return None,
-        };
         let name = path.file_name().unwrap_or_default().to_string_lossy();
-        Some(Self {
+        Self {
             tag: format!("{:08x}", fnv1a(name.as_bytes())),
+            parser: agent.parser(&path),
             path,
             offset: 0,
             start: 0,
-            parser,
             entries: Vec::new(),
             window: WINDOW,
-        })
+        }
     }
 
     /// Reads complete lines up to `limit` (or the end) and returns whether the shown
@@ -313,9 +287,7 @@ impl Transcript {
         loop {
             let (start, bytes) = window(&mut file, end, size)?;
             self.parser = self.parser.fresh();
-            if let Parser::Codex(parser) = &mut self.parser {
-                parser.items = contains(&bytes, b"\"item_completed\"");
-            }
+            self.parser.begin(&bytes, 0);
             self.entries.clear();
             (self.start, self.offset) = (start, start);
             self.feed(&bytes);
@@ -326,8 +298,10 @@ impl Transcript {
         }
     }
 
-    /// Search indexes a Transcript copy a piece at a time, so this returns pi's other branches too.
-    pub fn read_from(&mut self, offset: u64, items: bool) -> std::io::Result<Vec<Entry>> {
+    /// Every entry from `offset` on, on every branch, for search to index a Transcript copy a
+    /// piece at a time. `hint` is what `hint` said after the piece before; when this piece
+    /// needs another, every piece is read again and `start` is 0.
+    pub fn read_from(&mut self, offset: u64, hint: i64) -> std::io::Result<Vec<Entry>> {
         self.parser = self.parser.fresh();
         self.entries.clear();
         (self.start, self.offset) = (offset, offset);
@@ -337,18 +311,17 @@ impl Transcript {
         file.seek(SeekFrom::Start(offset))?;
         let mut bytes = Vec::new();
         file.read_to_end(&mut bytes)?;
-        if let Parser::Codex(parser) = &mut self.parser {
-            parser.items = items || contains(&bytes, b"\"item_completed\"");
-        }
+        self.parser.begin(&bytes, hint);
         self.feed(&bytes);
-        Ok(match &self.parser {
-            Parser::Pi(parser) => parser.all().cloned().collect(),
-            _ => std::mem::take(&mut self.entries),
-        })
+        if offset > 0 && self.parser.hint() != hint {
+            return self.read_from(0, self.parser.hint());
+        }
+        Ok(self.parser.every(std::mem::take(&mut self.entries)))
     }
 
-    pub fn codex_items(&self) -> bool {
-        matches!(&self.parser, Parser::Codex(parser) if parser.items)
+    /// What the next `read_from` needs to know of what was read, kept by the caller.
+    pub fn hint(&self) -> i64 {
+        self.parser.hint()
     }
 
     /// Up to `n` entries before entry `id`, oldest first, and whether earlier ones
@@ -460,66 +433,37 @@ impl Transcript {
                 prefix: format!("{}.{offset}", self.tag),
                 next: 0,
             };
-            let entries = &mut self.entries;
-            match &mut self.parser {
-                Parser::Claude(parser) => parser.line(&value, &mut ids, entries),
-                Parser::Codex(parser) => parser.line(&value, &mut ids, entries),
-                Parser::Pi(parser) => branched |= parser.line(&value, &mut ids, entries),
-            }
+            branched |= self.parser.line(&value, &mut ids, &mut self.entries);
         }
         self.offset += start as u64;
         branched
     }
 
-    /// Every entry ever parsed, including those on branches pi has left.
-    /// Whether the Agent's last reply ended its turn; only Claude's say so.
+    /// Whether the Agent's last reply ended its turn.
     pub fn turn_over(&self) -> bool {
-        matches!(&self.parser, Parser::Claude(parser) if parser.turn_over)
+        self.parser.turn_over()
     }
 
     /// What the Agent left running in the background: the starting call and its label.
-    pub fn background(&self) -> &[claude::Background] {
-        match &self.parser {
-            Parser::Claude(parser) => &parser.background,
-            _ => &[],
-        }
+    pub fn background(&self) -> &[Background] {
+        self.parser.background()
     }
 
-    /// Background work over the whole Transcript, so work started long ago still counts;
-    /// only the lines that start or end some are parsed, so a long Transcript stays quick.
+    /// Whether the Agent has ended its turn and waits only on work it left in the background.
+    pub fn waiting(&self) -> bool {
+        self.turn_over() && !self.background().is_empty()
+    }
+
+    /// Background work over the whole Transcript, so work started long ago still counts.
     pub fn scan_background(&mut self) -> std::io::Result<()> {
-        if !matches!(self.parser, Parser::Claude(_)) {
-            return Ok(());
+        match self.open()? {
+            Some(file) => self.parser.scan(file),
+            None => Ok(()),
         }
-        let Some(file) = self.open()? else {
-            return Ok(());
-        };
-        let mut scan = claude::Parser::new(false);
-        let mut ids = Ids { tag: String::new(), prefix: String::new(), next: 0 };
-        let mut out = Vec::new();
-        let mut reader = std::io::BufReader::with_capacity(1 << 20, file);
-        let mut line = Vec::new();
-        while reader.read_until(b'\n', &mut line)? > 0 {
-            let text = std::str::from_utf8(&line).unwrap_or_default();
-            if ["run_in_background", "task-notification", "async_launched"].iter().any(|word| text.contains(word)) {
-                if let Ok(value) = serde_json::from_str::<Value>(text) {
-                    scan.line(&value, &mut ids, &mut out);
-                    out.clear();
-                }
-            }
-            line.clear();
-        }
-        if let Parser::Claude(parser) = &mut self.parser {
-            parser.background = scan.background;
-        }
-        Ok(())
     }
 
     pub fn find(&self, id: &str) -> Option<&Entry> {
-        match &self.parser {
-            Parser::Pi(parser) => parser.find(id),
-            _ => self.entries.iter().find(|entry| entry.id == id),
-        }
+        self.parser.find(&self.entries, id)
     }
 
     /// Claude writes AskUserQuestion to its Transcript only once it is answered, so
@@ -531,30 +475,8 @@ impl Transcript {
             .last()
             .map(|entry| entry.at.clone())
             .unwrap_or_default();
-        claude::question(&self.tag, &Value::String(at), input)
+        agent::claude::question(&self.tag, &Value::String(at), input)
     }
-}
-
-/// The `permission` line for a prompt an Agent's hook reported.
-pub fn permission(agent: &str, id: &str, tool: &str, input: &Value) -> Value {
-    let entry = Entry::tool(String::new(), &Value::Null, tool, input);
-    let reason = entry.description.filter(|_| agent == "codex");
-    let mut line = serde_json::json!({
-        "t": "permission",
-        "id": id,
-        "tool": tool,
-        "summary": entry.summary,
-    });
-    for (key, value) in [
-        ("command", entry.command),
-        ("file", entry.file),
-        ("reason", reason),
-    ] {
-        if let Some(value) = value {
-            line[key] = value.into();
-        }
-    }
-    line
 }
 
 /// The complete lines among the `size` bytes before `end`, and where they start.
