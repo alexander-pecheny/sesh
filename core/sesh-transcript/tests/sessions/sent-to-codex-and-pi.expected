@@ -1,0 +1,6 @@
+"user: List the files"
+"text: Two files: a.txt and b.txt."
+"user: Explain stats.py"
+"text: It averages one column of a CSV file."
+"user: Shorter, please"
+"text: It averages a column."

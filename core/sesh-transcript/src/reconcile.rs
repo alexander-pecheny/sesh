@@ -17,6 +17,15 @@ const GRACE: Duration = Duration::from_secs(3);
 const PROBE: usize = 60;
 /// How many entries' words are kept to recognise what the Transcript holds.
 const CORPUS: usize = 400;
+/// How long an Agent may sit idle with a message it was given and never showed (ADR 0015).
+const LOST_AFTER: Duration = Duration::from_secs(10);
+
+/// Where a message a device sent stands until the Transcript holds it (ADR 0015).
+pub const QUEUED: &str = "queued";
+pub const HANDED: &str = "handed";
+pub const SENT: &str = "sent";
+pub const SHOWN: &str = "shown";
+pub const LOST: &str = "lost";
 
 // MARK: Matching
 
@@ -121,6 +130,16 @@ impl Corpus {
     }
 }
 
+/// A message a device sent, from the moment it is sent until the Transcript holds it.
+struct Message {
+    id: String,
+    text: String,
+    words: String,
+    state: &'static str,
+    /// When it last took its state.
+    at: Instant,
+}
+
 struct Item {
     id: String,
     kind: Kind,
@@ -135,6 +154,9 @@ struct Item {
 #[derive(Default)]
 pub struct Reconciler {
     items: Vec<Item>,
+    messages: Vec<Message>,
+    /// Since when the Agent has been idle, if it is.
+    idle: Option<Instant>,
     status: String,
     corpus: Corpus,
     next: u64,
@@ -148,6 +170,10 @@ impl Reconciler {
     /// Takes over a previous run's provisional items, which keep their ids.
     pub fn adopt(&mut self, items: &[Entry], now: Instant) {
         for item in items {
+            if item.kind == "user" {
+                self.message(&item.id, item.text.as_deref().unwrap_or_default(), item.state.unwrap_or(SENT), now);
+                continue;
+            }
             let kind = if item.kind == "tool" { Kind::Tool } else { Kind::Reply };
             let entry = Entry { id: String::new(), ..item.clone() };
             let seen = now.checked_sub(TOOL_DELAY).unwrap_or(now);
@@ -163,6 +189,14 @@ impl Reconciler {
     /// Adds an entry the Transcript delivered and returns the item it replaces, if one was shown.
     pub fn deliver(&mut self, entry: &Entry, now: Instant) -> Option<String> {
         self.corpus.learn(entry);
+        if entry.kind == "user" {
+            let text = entry.text.as_deref().unwrap_or_default();
+            let said = words(text);
+            // A message of only emoji has no words to match by.
+            let sent = |message: &Message| covers(&said, &message.words) || message.words.is_empty() && message.text.trim() == text.trim();
+            let at = self.messages.iter().position(|message| message.state != QUEUED && sent(message))?;
+            return Some(self.messages.remove(at).id);
+        }
         let held = match entry.kind {
             "text" => words(entry.text.as_deref().unwrap_or_default()),
             "tool" if entry.tool == Some("bash") => words(entry.command.as_deref().unwrap_or_default()),
@@ -201,7 +235,8 @@ impl Reconciler {
             match block.kind {
                 Kind::Reply => self.reply(block, view.width, now, &mut from),
                 Kind::Tool => self.tool(block, view.width, now, &mut from),
-                _ => {}
+                Kind::User => self.said(block, now),
+                Kind::Other => {}
             }
         }
         self.last = Some(view);
@@ -259,6 +294,18 @@ impl Reconciler {
         }
     }
 
+    /// A message Claude shows as read; one it holds still says it can be sent now.
+    fn said(&mut self, block: &Block, now: Instant) {
+        if block.rows.iter().any(|row| row.text().trim_end().ends_with("to send now")) {
+            return;
+        }
+        let text: Vec<String> = block.rows.iter().map(|row| row.skip(2).text()).collect();
+        let text = text.join("\n");
+        if let Some(message) = self.messages.iter_mut().find(|message| matches!(message.state, SENT | HANDED) && shows(&text, block.cut, message)) {
+            (message.state, message.at) = (SHOWN, now);
+        }
+    }
+
     fn add(&mut self, kind: Kind, rows: Vec<Row>, width: usize, now: Instant) {
         self.next += 1;
         let entry = entry(kind, &rows, width);
@@ -299,15 +346,69 @@ impl Reconciler {
         }
     }
 
+    /// Takes a message a device sent, or a new state for one held.
+    pub fn message(&mut self, id: &str, text: &str, state: &'static str, now: Instant) {
+        let message = Message { id: id.into(), text: text.into(), words: words(text), state, at: now };
+        match self.messages.iter_mut().find(|held| held.id == id) {
+            Some(held) => *held = message,
+            None => self.messages.push(message),
+        }
+    }
+
+    /// Takes back a message the Agent was not given or did not take, and says whether it could.
+    pub fn unqueue(&mut self, id: &str) -> bool {
+        let count = self.messages.len();
+        self.messages.retain(|message| message.id != id || !matches!(message.state, QUEUED | LOST));
+        self.messages.len() < count
+    }
+
+    /// Drops a message whose send failed, which the device that sent it takes back.
+    pub fn forget(&mut self, id: &str) {
+        self.messages.retain(|message| message.id != id);
+    }
+
+    pub fn lose(&mut self, id: &str, now: Instant) {
+        if let Some(message) = self.messages.iter_mut().find(|message| message.id == id) {
+            (message.state, message.at) = (LOST, now);
+        }
+    }
+
+    /// The queued messages as one, under the first one's id, given the Agent in `state`: the
+    /// Agent gets them in one prompt, so they show as one.
+    pub fn hand(&mut self, state: &'static str, now: Instant) -> Option<(String, String)> {
+        let queued: Vec<&Message> = self.messages.iter().filter(|message| message.state == QUEUED).collect();
+        let id = queued.first()?.id.clone();
+        let text = queued.iter().map(|message| message.text.as_str()).collect::<Vec<_>>().join("\n\n");
+        self.messages.retain(|message| message.state != QUEUED || message.id == id);
+        self.message(&id, &text, state, now);
+        Some((id, text))
+    }
+
+    /// Tells whether the Agent is idle; a message it was given and has not shown after
+    /// `LOST_AFTER` of that is lost.
+    pub fn idle(&mut self, idle: bool, now: Instant) {
+        let Some(since) = idle.then(|| *self.idle.get_or_insert(now)) else {
+            self.idle = None;
+            return;
+        };
+        for message in self.messages.iter_mut().filter(|message| matches!(message.state, SENT | HANDED)) {
+            if now.duration_since(since.max(message.at)) >= LOST_AFTER {
+                (message.state, message.at) = (LOST, now);
+            }
+        }
+    }
+
     /// Whether the screen is still worth reading.
     pub fn watching(&self, now: Instant) -> bool {
         self.stopped.is_none_or(|stopped| now.duration_since(stopped) < GRACE)
     }
 
     /// The items shown now, each entry carrying its item's id, and the status line.
+    /// The messages come first, so one the Agent takes lands above the reply read with it.
     pub fn shown(&self, now: Instant) -> Shown {
-        let items = self.items.iter().filter(|item| shown(item, now)).map(|item| Entry { id: item.id.clone(), ..item.entry.clone() }).collect();
-        Shown { items, status: self.status.clone() }
+        let messages = self.messages.iter().map(|message| Entry { state: Some(message.state), ..Entry::text_like(message.id.clone(), "user", &Value::Null, message.text.clone()) });
+        let items = self.items.iter().filter(|item| shown(item, now)).map(|item| Entry { id: item.id.clone(), ..item.entry.clone() });
+        Shown { items: messages.chain(items).collect(), status: self.status.clone() }
     }
 }
 
@@ -333,6 +434,35 @@ fn extend(seen: &[Row], more: &[Row]) -> Option<Vec<Row>> {
             && seen[at..].iter().zip(more).take(overlap.saturating_sub(1)).all(|(a, b)| a == b);
         agrees.then(|| [&seen[..at], more].concat())
     })
+}
+
+/// Whether a user block on Claude's screen, as `text`, shows `message`. Claude shows a long
+/// paste as "[Pasted text #1 +12 lines]", which stands for that many more lines.
+fn shows(text: &str, cut: bool, message: &Message) -> bool {
+    let mut parts = Vec::new();
+    let mut lines = None;
+    let mut rest = text;
+    while let Some(start) = rest.find("[Pasted text #") {
+        let Some(end) = rest[start..].find(']').map(|end| start + end) else { break };
+        parts.push(words(&rest[..start]));
+        let more = rest[start..end].split(" +").nth(1).and_then(|count| count.trim_end_matches(" lines").parse::<usize>().ok());
+        lines = Some(lines.unwrap_or(0) + more.unwrap_or(0));
+        rest = &rest[end + 1..];
+    }
+    parts.push(words(rest));
+    let Some(lines) = lines else {
+        let shown = &parts[0];
+        return !shown.is_empty() && match cut {
+            true => message.words.contains(probe(shown)),
+            false => *shown == message.words || shown.chars().count() >= PROBE && message.words.starts_with(shown.as_str()),
+        };
+    };
+    let mut from = 0;
+    for part in parts.iter().filter(|part| !part.is_empty()) {
+        let Some(at) = message.words[from..].find(part.as_str()) else { return false };
+        from += at + part.len();
+    }
+    message.text.trim().lines().count().abs_diff(lines + 1) <= 1
 }
 
 fn floor(text: &str, mut at: usize) -> usize {
@@ -372,6 +502,10 @@ fn row_entry(id: &str, body: &Value) -> Option<Entry> {
     match body["kind"].as_str()? {
         "text" => Some(item_entry(id.into(), Kind::Reply, text("text")?, None)),
         "tool" => Some(item_entry(id.into(), Kind::Tool, text("command")?, text("description"))),
+        "user" => {
+            let state = [QUEUED, HANDED, SENT, SHOWN, LOST].into_iter().find(|state| body["state"] == *state)?;
+            Some(Entry { state: Some(state), ..Entry::text_like(id.into(), "user", &Value::Null, text("text")?) })
+        }
         _ => None,
     }
 }
@@ -391,6 +525,9 @@ pub enum Change {
     Drop(String),
     /// A Transcript entry rewriting the provisional row that showed it.
     Rewrite { id: String, entry: String, body: Value },
+    /// A message the Agent took, which only now finds its place: after every row but the
+    /// messages still `waiting`. Its entry is the Transcript's, when that is how it was taken.
+    Taken { id: String, entry: Option<String>, body: Value, waiting: Vec<String> },
     /// A final row that showed nowhere before: it lands above `above`, the provisional rows,
     /// or rewrites the row already holding `entry`, as after a restart.
     Land { id: String, entry: Option<String>, body: Value, above: Vec<String> },
@@ -425,9 +562,14 @@ impl Rows {
         let shown: Vec<String> = items.iter().map(|item| self.own(&item.id)).collect();
         let mut changes: Vec<Change> = self.live.iter().filter(|(id, _)| !shown.contains(id)).map(|(id, _)| Change::Drop(id.clone())).collect();
         let held = std::mem::take(&mut self.live);
+        let waiting: Vec<String> = shown.iter().zip(items).filter(|(_, item)| waits(item)).map(|(id, _)| id.clone()).collect();
         for (id, item) in shown.into_iter().zip(items) {
-            if !held.iter().any(|(old, was)| *old == id && was == item) {
-                changes.push(Change::Show(id.clone(), serde_json::to_value(item).unwrap_or_default()));
+            let was = held.iter().find(|(old, _)| *old == id).map(|(_, was)| was);
+            let body = serde_json::to_value(item).unwrap_or_default();
+            if was.is_some_and(|was| waits(was) && !waits(item)) {
+                changes.push(Change::Taken { id: id.clone(), entry: None, body, waiting: waiting.clone() });
+            } else if was != Some(item) {
+                changes.push(Change::Show(id.clone(), body));
             }
             self.live.push((id, item.clone()));
         }
@@ -440,8 +582,13 @@ impl Rows {
         let Some(id) = replaces.map(|id| self.own(id)) else {
             return Change::Land { id: entry.id.clone(), entry: Some(entry.id.clone()), body, above: self.above() };
         };
+        let waited = self.live.iter().any(|(live, held)| *live == id && waits(held));
         self.live.retain(|(live, _)| *live != id);
-        Change::Rewrite { id, entry: entry.id.clone(), body }
+        let waiting = self.live.iter().filter(|(_, held)| waits(held)).map(|(live, _)| live.clone()).collect();
+        match waited {
+            true => Change::Taken { id, entry: Some(entry.id.clone()), body, waiting },
+            false => Change::Rewrite { id, entry: entry.id.clone(), body },
+        }
     }
 
     /// The mark where the Agent session moved to another Transcript.
@@ -456,12 +603,19 @@ impl Rows {
         self.live.iter().map(|(id, _)| id.clone()).collect()
     }
 
+    /// A screen item's id, made this follower's own; a message keeps the id its device gave it.
     fn own(&self, live: &str) -> String {
-        if self.adopted.iter().any(|id| id == live) {
+        if !live.starts_with("live.") || self.adopted.iter().any(|id| id == live) {
             return live.to_string();
         }
         format!("{live}.{}", self.epoch)
     }
+}
+
+/// A message the Agent has not taken, which has no place in the order yet: it goes last once
+/// taken, where a message sent to an idle Agent already is.
+fn waits(entry: &Entry) -> bool {
+    matches!(entry.state, Some(QUEUED | HANDED | SENT | LOST))
 }
 
 #[cfg(test)]

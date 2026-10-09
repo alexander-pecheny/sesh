@@ -1,12 +1,14 @@
 //! Replays a recording through the same Machine the follower runs, on the recording's own
 //! clock, and reports the Session log it ends with and what a device watching it saw at each
-//! tick: any message shown twice, any item that moved.
+//! tick: any message shown twice, any item that moved. A recording's `act` is a device's request,
+//! such as a message sent, which the replay takes as the follower would and plays nowhere.
 
 use std::cell::RefCell;
 use std::collections::HashMap;
 use std::io::Write as _;
 use std::path::{Path, PathBuf};
 use std::rc::Rc;
+use std::sync::{mpsc, Arc};
 use std::time::{Duration, Instant};
 
 use serde_json::{json, Value};
@@ -39,6 +41,23 @@ impl Source for Recorded {
 
     fn input(&mut self, _: &str, _: &Input) -> Result<()> {
         Err("a replay takes no input".into())
+    }
+}
+
+/// herdr's hands in a replay, which play nothing.
+struct Idle;
+
+impl Source for Idle {
+    fn panes(&mut self) -> Result<Vec<Value>> {
+        Ok(Vec::new())
+    }
+
+    fn read(&mut self, _: &str, _: bool) -> Result<String> {
+        Err("a replay plays no acts".into())
+    }
+
+    fn input(&mut self, _: &str, _: &Input) -> Result<()> {
+        Ok(())
     }
 }
 
@@ -78,7 +97,7 @@ pub fn replay(recording: &Path, work: &Path) -> Result<Outcome> {
     let source: Rc<RefCell<dyn Source>> = Rc::new(RefCell::new(Recorded { screens, now: now.clone() }));
     let db = work.join("sessions.db");
     let _ = std::fs::remove_file(&db);
-    let mut machine = Machine::new(Log::open(&db)?, Shared(source));
+    let mut machine = Machine::new(Log::open(&db)?, Shared(source)).with_hands(Arc::new(|| Box::new(Idle)));
     let mut moved: HashMap<String, PathBuf> = HashMap::new();
     let start = Instant::now();
     let mut doubles = Vec::new();
@@ -89,6 +108,7 @@ pub fn replay(recording: &Path, work: &Path) -> Result<Outcome> {
     let mut lines = vec![json!({"t": "hello", "protocol": crate::serve::PROTOCOL, "version": crate::version()})];
     let mut watched: HashMap<String, i64> = HashMap::new();
     let mut summaries = 0;
+    let mut last: Vec<Value> = Vec::new();
     for event in &events {
         let at = event["at"].as_u64().unwrap_or(0);
         *now.borrow_mut() = at;
@@ -99,18 +119,24 @@ pub fn replay(recording: &Path, work: &Path) -> Result<Outcome> {
         }
         // A follower that stops and starts again resumes from the cursor the log keeps.
         if event["restart"] == true {
-            machine = Machine::new(Log::open(&db)?, machine.source());
+            machine = Machine::new(Log::open(&db)?, machine.source()).with_hands(Arc::new(|| Box::new(Idle)));
             continue;
         }
-        let Some(panes) = event["panes"].as_array() else { continue };
-        let panes: Vec<Value> = panes.iter().map(|pane| relocate(pane, &mut moved, work)).collect();
-        machine.tick(&panes, start + Duration::from_millis(at))?;
+        if let Some(panes) = event["panes"].as_array() {
+            last = panes.iter().map(|pane| relocate(pane, &mut moved, work)).collect();
+            machine.tick(&last, start + Duration::from_millis(at))?;
+        } else if let Some(request) = event.get("act") {
+            machine.act(request["session"].as_str().unwrap_or_default(), request.clone(), mpsc::channel().0);
+        } else {
+            continue;
+        }
+        let panes = &last;
         let sent = lines.len();
-        watch(&machine.log, &panes, &mut watched, &mut summaries, &mut lines)?;
+        watch(&machine.log, panes, &mut watched, &mut summaries, &mut lines)?;
         let items: Vec<Value> = lines[sent..].iter().filter(|line| line["t"] == "item").cloned().collect();
         device.see(&items, at, &mut moves, &mut doubles);
         ticks.push(Tick { at, items });
-        for pane in &panes {
+        for pane in panes {
             let session = pane["pane_id"].as_str().unwrap_or_default();
             for item in machine.log.last(session, usize::MAX)? {
                 if item["final"] == false {
@@ -132,7 +158,9 @@ impl Device {
     fn see(&mut self, items: &[Value], at: u64, moves: &mut Vec<String>, doubles: &mut Vec<String>) {
         for item in items {
             let key = (item["session"].as_str().unwrap_or_default().to_string(), item["id"].as_str().unwrap_or_default().to_string());
-            if let Some(held) = self.0.get(&key).filter(|held| held["ord"] != item["ord"]) {
+            // A message has no place until the Agent takes it.
+            let placed = |held: &&Value| !matches!(held["entry"]["state"].as_str(), Some("queued" | "handed" | "sent" | "lost"));
+            if let Some(held) = self.0.get(&key).filter(|held| held["ord"] != item["ord"]).filter(placed) {
                 moves.push(format!("{} at {at} ms: {} from {} to {}", key.0, key.1, held["ord"], item["ord"]));
             }
             self.0.insert(key, item.clone());

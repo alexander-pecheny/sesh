@@ -274,7 +274,7 @@ fn the_follower_plays_a_devices_messages_keys_answers_and_stops_into_herdr() {
     let host = Host::new("act");
     host.session("s1", "blocked");
     let mut follower = host.follower(0);
-    for args in [&["send", "w1:p1", "hello there"][..], &["keys", "w1:p1", "esc"], &["stop", "w1:p1"]] {
+    for args in [&["send", "w1:p1", "sent.1", "hello there"][..], &["keys", "w1:p1", "esc"], &["stop", "w1:p1"]] {
         let output = host.command(args).output().unwrap();
         assert!(output.status.success(), "{args:?}: {}", String::from_utf8_lossy(&output.stderr));
     }
@@ -323,7 +323,7 @@ fn a_newer_build_takes_over_only_once_the_acts_in_flight_are_played_and_answered
     host.session("s1", "idle");
     std::fs::write(host.root.join("slow"), "2").unwrap();
     let mut older = host.follower(1);
-    let send = |text: &str| host.command(&["send", "w1:p1", text]).env("SESH_BUILD", "1").stderr(Stdio::piped()).spawn().unwrap();
+    let send = |text: &str| host.command(&["send", "w1:p1", &format!("sent.{text}"), text]).env("SESH_BUILD", "1").stderr(Stdio::piped()).spawn().unwrap();
     let slow = send("before the handoff");
     std::thread::sleep(Duration::from_millis(300));
     let mut newer = host.command(&["serve", "--foreground"]).env("SESH_BUILD", "2").spawn().unwrap();

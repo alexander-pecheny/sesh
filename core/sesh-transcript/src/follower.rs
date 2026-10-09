@@ -200,6 +200,15 @@ impl Follower {
         self.transcript.as_ref().map(|transcript| (self.agent, transcript.path.clone()))
     }
 
+    pub fn agent(&self) -> Agent {
+        self.agent
+    }
+
+    /// What the Agent is doing, as the follower last told it.
+    pub fn state(&self) -> Option<&str> {
+        self.state.as_deref()
+    }
+
     /// The events since the last call, for whoever passes them on.
     pub fn drain(&mut self) -> Vec<Event> {
         std::mem::take(&mut self.out)
@@ -378,14 +387,20 @@ impl Follower {
     fn update_live(&mut self, pane: &Value) -> Result<(), String> {
         let now = self.now;
         let screen = self.agent.reads_screen();
-        let working = screen && matches!(self.reported.as_deref(), Some("working" | "blocked"));
-        self.live.working(working, now);
+        let busy = matches!(self.reported.as_deref(), Some("working" | "blocked"));
+        self.live.working(screen && busy, now);
+        self.live.idle(self.reported.is_some() && !busy, now);
         if let (true, true, Some(pane_id)) = (screen, self.live.watching(now), pane["pane_id"].as_str()) {
             if let Some(view) = settled(self.source.as_mut(), pane_id, &self.live) {
                 self.live.see(view, now);
             }
         }
-        let shown = self.live.shown(now);
+        self.emit_live()
+    }
+
+    /// Tells what the live items now are, if they changed.
+    pub fn emit_live(&mut self) -> Result<(), String> {
+        let shown = self.live.shown(self.now);
         if self.sent.as_ref() == Some(&shown) {
             return Ok(());
         }

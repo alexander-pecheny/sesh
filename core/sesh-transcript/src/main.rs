@@ -21,7 +21,8 @@ const DEFAULT_LAST: usize = 50;
 const USAGE: &str = "usage: sesh-transcript --version | follow --protocol | follow <pane> [--since CURSOR] [--last N]
        | serve [--foreground] [--record DIR --pane PANE] | attach [--sessions] [--watch KEY[:SEQ]]...
        | page KEY --before ORD [--limit N] | replay FILE [--lines]
-       | send KEY TEXT | keys KEY NAME... | answer KEY --json ANSWERS | permit KEY allow|deny | stop KEY
+       | send KEY ID TEXT | unqueue KEY ID | hand KEY
+       | keys KEY NAME... | answer KEY --json ANSWERS | permit KEY allow|deny | stop KEY
        | history <pane> --before ID [--last N] | entry <pane> ID | background <pane>...
        | vault init DIR | vault pull|follow DIR [--since SEQ] | vault push DIR FILE
        | vault size DIR SESSION FILE | vault append DIR SESSION FILE --offset N BYTES_FILE

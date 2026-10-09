@@ -19,9 +19,10 @@ use serde_json::{json, Value};
 use crate::agent::{transcript_path, Agent};
 use crate::follower::{Event, Follower, Herdr, Input, Source};
 use crate::log::{Log, Writer};
+use crate::reconcile::{HANDED, QUEUED, SENT};
 use crate::Transcript;
 
-pub const PROTOCOL: u64 = 4;
+pub const PROTOCOL: u64 = 5;
 const TICK: Duration = Duration::from_millis(100);
 /// herdr's panes are listed less often than the screens of working Agents are read.
 const LIST_EVERY: u32 = 2;
@@ -84,6 +85,8 @@ impl Source for Shared {
 pub type Hands = Arc<dyn Fn() -> Box<dyn Source + Send> + Send + Sync>;
 /// One act for a pane's thread: the request, the pane as last listed, and where its reply goes.
 type Job = (Value, Option<Value>, mpsc::Sender<Value>);
+/// An act that failed: its session and its request.
+type Failed = (String, Value);
 
 struct Followed {
     follower: Follower,
@@ -105,11 +108,16 @@ pub struct Machine {
     playing: Arc<AtomicUsize>,
     /// When a newer build asked this follower to leave, after which it takes no more acts.
     leaving: Option<Instant>,
+    /// Acts that failed, for the message each carried to be dropped or marked lost.
+    failed: (mpsc::Sender<Failed>, mpsc::Receiver<Failed>),
+    /// The time of the last tick: the clock, or a recording's.
+    now: Instant,
 }
 
 impl Machine {
     pub fn new(log: Log, source: Shared) -> Self {
-        Machine { log, source, sessions: HashMap::new(), panes: Vec::new(), hands: Arc::new(|| Box::new(Herdr)), acts: HashMap::new(), playing: Arc::default(), leaving: None }
+        let (hands, failed): (Hands, _) = (Arc::new(|| Box::new(Herdr)), mpsc::channel());
+        Machine { log, source, sessions: HashMap::new(), panes: Vec::new(), hands, acts: HashMap::new(), playing: Arc::default(), leaving: None, failed, now: Instant::now() }
     }
 
     pub fn with_hands(self, hands: Hands) -> Self {
@@ -126,7 +134,16 @@ impl Machine {
 
     /// One look at every pane: new Agents are met, known ones followed, gone ones ended.
     pub fn tick(&mut self, panes: &[Value], now: Instant) -> Result<()> {
-        self.panes = panes.to_vec();
+        (self.panes, self.now) = (panes.to_vec(), now);
+        while let Ok((session, request)) = self.failed.1.try_recv() {
+            let Some(followed) = self.sessions.get_mut(&session) else { continue };
+            match (request["id"].as_str(), request["lost"].as_str()) {
+                (Some(id), _) => followed.follower.live.forget(id),
+                (_, Some(id)) => followed.follower.live.lose(id, now),
+                _ => {}
+            }
+        }
+        let mut hands = Vec::new();
         // A queue let go of ends its thread once the acts already in it are played.
         self.acts.retain(|key, _| panes.iter().any(|pane| pane["pane_id"] == key.as_str()));
         for pane in panes {
@@ -134,6 +151,13 @@ impl Machine {
             if let Some(followed) = self.sessions.get_mut(key) {
                 followed.seen = now;
                 followed.follower.tick(pane, now)?;
+                // The queue goes to the Agent once it can take a message (ADR 0015).
+                if followed.follower.state().is_some_and(|state| !matches!(state, "working" | "blocked")) {
+                    if let Some((id, text)) = followed.follower.live.hand(SENT, now) {
+                        followed.follower.emit_live()?;
+                        hands.push((key.to_string(), json!({"op": "send", "text": text, "lost": id})));
+                    }
+                }
                 let events = followed.follower.drain();
                 followed.writer.apply(&self.log, &events, Some(pane))?;
                 continue;
@@ -158,6 +182,9 @@ impl Machine {
             let mut followed = self.sessions.remove(&key).expect("listed above");
             followed.writer.apply(&self.log, &[Event::State("ended".into()), Event::Live(Default::default())], None)?;
         }
+        for (session, request) in hands {
+            self.play(&session, request, mpsc::channel().0);
+        }
         Ok(())
     }
 
@@ -168,16 +195,61 @@ impl Machine {
             let _ = reply.send(json!({"t": "leaving", "op": request["op"]}));
             return;
         }
+        match self.message(session, &request) {
+            Ok(Some(play)) => self.play(session, play, reply),
+            Ok(None) => drop(reply.send(json!({"t": "done", "op": request["op"], "session": session}))),
+            Err(err) => drop(reply.send(json!({"t": "error", "op": request["op"], "message": err}))),
+        }
+    }
+
+    /// What an act does to the session's messages (ADR 0015), and what then goes to the pane.
+    fn message(&mut self, session: &str, request: &Value) -> Result<Option<Value>> {
+        let (op, id) = (request["op"].as_str().unwrap_or_default(), request["id"].as_str().unwrap_or_default());
+        let ours = matches!(op, "unqueue" | "hand");
+        let followed = match self.sessions.get_mut(session) {
+            Some(followed) if ours || op == "send" && !id.is_empty() => followed,
+            None if ours => return Err(format!("the follower does not follow {session}")),
+            _ => return Ok(Some(request.clone())),
+        };
+        let (follower, now) = (&mut followed.follower, self.now);
+        let busy = follower.state() == Some("working");
+        let text = request["text"].as_str().unwrap_or_default();
+        let state = if busy { HANDED } else { SENT };
+        let play = match op {
+            // pi takes no message while it works, so Sesh holds it.
+            "send" if busy && follower.agent() == Agent::Pi => {
+                follower.live.message(id, text, QUEUED, now);
+                None
+            }
+            "send" => {
+                follower.live.message(id, text, state, now);
+                Some(request.clone())
+            }
+            "unqueue" if follower.live.unqueue(id) => None,
+            "unqueue" => return Err("the Agent has that message already".into()),
+            _ => follower.live.hand(state, now).map(|(id, text)| json!({"op": "send", "text": text, "lost": id})),
+        };
+        follower.emit_live()?;
+        let events = follower.drain();
+        followed.writer.apply(&self.log, &events, None)?;
+        Ok(play)
+    }
+
+    /// Plays `request` on the pane's own thread, after the acts before it.
+    fn play(&mut self, session: &str, request: Value, reply: mpsc::Sender<Value>) {
         let pane = self.panes.iter().find(|pane| pane["pane_id"] == session).cloned();
-        let (hands, playing) = (&self.hands, &self.playing);
+        let (hands, playing, failed) = (&self.hands, &self.playing, &self.failed.0);
         let queue = self.acts.entry(session.to_string()).or_insert_with(|| {
             let (queue, jobs) = mpsc::channel::<Job>();
-            let (mut source, session, playing) = (hands(), session.to_string(), playing.clone());
+            let (mut source, session, playing, failed) = (hands(), session.to_string(), playing.clone(), failed.clone());
             std::thread::spawn(move || {
                 for (request, pane, reply) in jobs {
                     let line = match crate::act::act(source.as_mut(), &session, pane.as_ref(), &request) {
                         Ok(()) => json!({"t": "done", "op": request["op"], "session": session}),
-                        Err(err) => json!({"t": "error", "op": request["op"], "message": err}),
+                        Err(err) => {
+                            let _ = failed.send((session.clone(), request.clone()));
+                            json!({"t": "error", "op": request["op"], "message": err})
+                        }
                     };
                     let _ = reply.send(line);
                     playing.fetch_sub(1, Ordering::SeqCst);
@@ -687,6 +759,42 @@ mod tests {
             self.0.lock().unwrap().push(input.clone());
             Ok(())
         }
+    }
+
+    /// herdr refusing every input.
+    struct Broken;
+
+    impl Source for Broken {
+        fn panes(&mut self) -> Result<Vec<Value>> {
+            Ok(Vec::new())
+        }
+
+        fn read(&mut self, _: &str, _: bool) -> Result<String> {
+            Ok(String::new())
+        }
+
+        fn input(&mut self, _: &str, _: &Input) -> Result<()> {
+            Err("no such pane".into())
+        }
+    }
+
+    #[test]
+    fn a_message_whose_send_failed_is_dropped_for_its_device_to_take_back() {
+        let dir = std::env::temp_dir().join(format!("sesh-failed-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let panes = [json!({"pane_id": "w1:p1", "agent": "codex", "agent_status": "idle"})];
+        let mut machine = Machine::new(Log::open(&dir.join("sessions.db")).unwrap(), Shared(Rc::new(RefCell::new(Quiet))))
+            .with_hands(Arc::new(|| Box::new(Broken)));
+        let start = Instant::now();
+        machine.tick(&panes, start).unwrap();
+        let (reply, replies) = mpsc::channel();
+        machine.act("w1:p1", json!({"op": "send", "id": "sent.1", "text": "hello"}), reply);
+        assert_eq!(machine.log.last("w1:p1", 10).unwrap()[0]["entry"]["state"], "sent");
+        assert_eq!(replies.recv_timeout(Duration::from_secs(5)).unwrap()["t"], "error");
+        machine.tick(&panes, start + TICK).unwrap();
+        let items = machine.log.last("w1:p1", 10).unwrap();
+        std::fs::remove_dir_all(&dir).unwrap();
+        assert_eq!(items, Vec::<Value>::new());
     }
 
     #[test]

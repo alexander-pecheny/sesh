@@ -69,6 +69,9 @@ pub struct Entry {
     pub questions: Option<Value>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub answers: Option<Vec<String>>,
+    /// Where a message the user sent stands until the Transcript holds it (ADR 0015).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub state: Option<&'static str>,
 }
 
 impl Entry {

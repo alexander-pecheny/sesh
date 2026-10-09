@@ -196,16 +196,31 @@ impl Log {
             Change::Show(id, body) => self.put_item(session, &id, None, false, None, &body),
             Change::Drop(id) => self.drop_item(session, &id),
             Change::Rewrite { id, entry, body } => self.put_item(session, &id, None, true, Some(&entry), &body),
+            Change::Taken { id, entry, body, waiting } => {
+                let mut later = self.items("WHERE session = ?1 AND gone = 0 AND ord >= ?2 ORDER BY ord DESC", params![session, self.ord_of(session, &id)?])?;
+                later.retain(|row| row["id"] != id.as_str());
+                let place = match later.iter().position(|row| !waiting.iter().any(|id| row["id"] == id.as_str())) {
+                    Some(at) => later[at]["ord"].as_i64().unwrap_or_default() + 1,
+                    None => self.ord_of(session, &id)?.unwrap_or_default(),
+                };
+                for row in later.iter().take_while(|row| row["ord"].as_i64() >= Some(place)) {
+                    self.move_item(session, row["id"].as_str().unwrap_or_default(), row["ord"].as_i64().unwrap_or_default() + 1)?;
+                }
+                if self.ord_of(session, &id)? != Some(place) {
+                    self.move_item(session, &id, place)?;
+                }
+                self.put_item(session, &id, None, entry.is_some(), entry.as_deref(), &body)
+            }
             Change::Land { id, entry, body, above } => {
                 if let Some(held) = entry.as_deref().map(|entry| self.item_of(session, entry)).transpose()?.flatten() {
                     return self.put_item(session, &held, None, true, entry.as_deref(), &body);
                 }
-                let first = match above.first() {
-                    Some(live) => self.ord_of(session, live)?,
-                    None => None,
-                };
+                // In their order in the log, which a message placed between screen rows keeps.
+                let mut above = above.into_iter().map(|live| Ok((self.ord_of(session, &live)?, live))).collect::<Result<Vec<_>>>()?;
+                above.sort();
+                let first = above.first().and_then(|(ord, _)| *ord);
                 if let Some(first) = first {
-                    for (offset, live) in above.iter().enumerate().rev() {
+                    for (offset, (_, live)) in above.iter().enumerate().rev() {
                         self.move_item(session, live, first + 1 + offset as i64)?;
                     }
                 }

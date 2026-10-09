@@ -55,3 +55,54 @@ fn a_reply_streaming_across_a_follower_restart_keeps_its_row() {
     assert_eq!((&first["final"], &replies.last().unwrap()["final"]), (&false.into(), &true.into()));
     assert!(replies.iter().all(|reply| reply["id"] == first["id"] && reply["ord"] == first["ord"]), "{replies:#?}");
 }
+
+/// Each message's writes in a recording, as its state ("final" once the Transcript holds it,
+/// "gone" once taken back) and its place.
+fn messages(name: &str) -> HashMap<String, Vec<(String, i64)>> {
+    let recording = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/sessions").join(name);
+    let work = std::env::temp_dir().join(format!("sesh-replay-{name}-{}", std::process::id()));
+    let outcome = replay(&recording, &work).unwrap();
+    let _ = std::fs::remove_dir_all(&work);
+    let mut messages: HashMap<String, Vec<(String, i64)>> = HashMap::new();
+    for item in outcome.ticks.iter().flat_map(|tick| &tick.items).filter(|item| item["id"].as_str().unwrap().starts_with("sent.")) {
+        let state = match (&item["gone"], &item["final"]) {
+            (serde_json::Value::Bool(true), _) => "gone",
+            (_, serde_json::Value::Bool(true)) => "final",
+            _ => item["entry"]["state"].as_str().unwrap(),
+        };
+        let writes = messages.entry(item["id"].as_str().unwrap().to_string()).or_default();
+        if writes.last().is_none_or(|(last, _)| last != state) {
+            writes.push((state.to_string(), item["ord"].as_i64().unwrap()));
+        }
+    }
+    messages
+}
+
+fn states(writes: &[(String, i64)]) -> Vec<&str> {
+    writes.iter().map(|(state, _)| state.as_str()).collect()
+}
+
+#[test]
+fn a_message_sent_to_claude_is_one_item_from_the_moment_it_is_sent() {
+    let messages = messages("sent-to-claude.jsonl");
+    for id in ["sent.a", "sent.b"] {
+        let writes = &messages[id];
+        assert_eq!(states(writes), ["sent", "shown", "final"], "{id}");
+        assert!(writes.iter().all(|(_, ord)| *ord == writes[0].1), "{id} moved: {writes:?}");
+    }
+    assert_eq!(states(&messages["sent.d"]), ["handed", "shown", "final"]);
+    assert!(messages["sent.d"][1].1 > messages["sent.c"][0].1, "the message read mid-turn lands after the turn before it");
+    let (one, two) = (messages["sent.e"].last().unwrap(), messages["sent.f"].last().unwrap());
+    assert_eq!((one.0.as_str(), two.0.as_str()), ("final", "final"));
+    assert!(one.1 < two.1);
+    assert_eq!(states(&messages["sent.g"]), ["sent", "lost"], "a message Claude never takes is lost");
+}
+
+#[test]
+fn a_message_sent_to_codex_or_pi_goes_from_sent_to_final_and_pi_queues_it_while_it_works() {
+    let messages = messages("sent-to-codex-and-pi.jsonl");
+    assert_eq!(states(&messages["sent.c1"]), ["sent", "final"]);
+    assert_eq!(states(&messages["sent.p1"]), ["sent", "final"]);
+    assert_eq!(states(&messages["sent.p2"]), ["queued", "sent", "final"]);
+    assert_eq!(states(&messages["sent.p3"]), ["queued", "gone"]);
+}

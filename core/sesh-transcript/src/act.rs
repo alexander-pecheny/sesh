@@ -1,5 +1,6 @@
 //! What a device asks of an Agent (ADR 0012): a message, keys, an answer, a permission or a
-//! stop, which the follower plays into the Agent's pane through its Source.
+//! stop, which the follower plays into the Agent's pane through its Source. Taking back a
+//! queued message, or handing the queue over, the follower does itself (ADR 0015).
 
 use std::time::{Duration, Instant};
 
@@ -17,14 +18,16 @@ const STOP_PAUSE: Duration = Duration::from_secs(1);
 type Result<T> = std::result::Result<T, String>;
 
 /// The ops a device sends the follower to act on a session.
-pub const OPS: [&str; 5] = ["send", "keys", "answer", "permit", "stop"];
+pub const OPS: [&str; 7] = ["send", "unqueue", "hand", "keys", "answer", "permit", "stop"];
 
-/// The request for `op` with its arguments as a one-shot command takes them: the message,
-/// key names, answers as JSON, or allow or deny.
+/// The request for `op` with its arguments as a one-shot command takes them: the message's id
+/// and text, key names, answers as JSON, or allow or deny.
 pub fn request(op: &str, session: &str, args: &[String]) -> Option<Value> {
     let mut request = json!({"op": op, "session": session});
     match (op, args) {
-        ("send", [text]) => request["text"] = text.clone().into(),
+        ("send", [id, text]) => (request["id"], request["text"]) = (id.clone().into(), text.clone().into()),
+        ("unqueue", [id]) => request["id"] = id.clone().into(),
+        ("hand", []) => {}
         ("keys", [_, ..]) => request["keys"] = args.into(),
         ("answer", [flag, answers]) if flag == "--json" => request["answers"] = serde_json::from_str(answers).ok()?,
         ("permit", [decision]) if decision == "allow" || decision == "deny" => request["allow"] = (decision == "allow").into(),
@@ -218,7 +221,9 @@ mod tests {
     #[test]
     fn a_request_is_built_from_a_one_shot_commands_arguments() {
         let args = |list: &[&str]| list.iter().map(|arg| arg.to_string()).collect::<Vec<_>>();
-        assert_eq!(request("send", "w1:p1", &args(&["hi"])), Some(json!({"op": "send", "session": "w1:p1", "text": "hi"})));
+        assert_eq!(request("send", "w1:p1", &args(&["sent.1", "hi"])), Some(json!({"op": "send", "session": "w1:p1", "id": "sent.1", "text": "hi"})));
+        assert_eq!(request("unqueue", "w1:p1", &args(&["sent.1"])).unwrap()["id"], "sent.1");
+        assert_eq!(request("send", "w1:p1", &args(&["hi"])), None);
         assert_eq!(request("keys", "w1:p1", &args(&["esc", "enter"])).unwrap()["keys"], json!(["esc", "enter"]));
         assert_eq!(request("permit", "w1:p1", &args(&["deny"])).unwrap()["allow"], false);
         assert_eq!(request("answer", "w1:p1", &args(&["--json", "[{\"options\":[\"A\"]}]"])).unwrap()["answers"][0]["options"], json!(["A"]));
