@@ -184,18 +184,16 @@ struct CloseTaskSheet: View {
     let task: Record
     @State private var uncommitted: String?
     @State private var discard = false
-    @State private var working = false
-    @State private var problem: String?
 
     private var sessions: Int { vault.children(.session, task: task.id).count }
 
     var body: some View {
         SheetForm(title: "Close Task", action: "Close", role: .destructive,
-                  enabled: uncommitted != nil && (uncommitted?.isEmpty != false || discard), working: working,
-                  perform: { Task { await close() } }) {
+                  enabled: uncommitted != nil && (uncommitted?.isEmpty != false || discard), working: false,
+                  perform: close) {
             Section(task.body.title ?? "Task") {
                 Text(sessions == 1 ? "Stops its Agent session." : "Stops its \(sessions) Agent sessions.")
-                if let path = task.body.path {
+                if let path = task.body.path, path != task.body.repo {
                     Text("Removes the Worktree at \(path) on \(TaskActions.machine(task.body.machine).title); the branch \(task.body.branch ?? "") stays.")
                 }
                 Text("Archives the Task. Its Journal, Documents and Conversations stay searchable.")
@@ -208,17 +206,12 @@ struct CloseTaskSheet: View {
                     Toggle("Discard them", isOn: $discard)
                 }
             }
-            if let problem {
-                Section { Text(problem).foregroundStyle(.red) }
-            }
         }
         .task { uncommitted = await TaskActions.uncommitted(in: task) }
     }
 
-    private func close() async {
-        working = true
-        defer { working = false }
-        problem = await TaskActions.close(task, in: vault, library: library, discard: discard)
-        if problem == nil { dismiss() }
+    private func close() {
+        TaskActions.close(task, in: vault, library: library, discard: discard)
+        dismiss()
     }
 }

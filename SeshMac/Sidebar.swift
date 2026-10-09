@@ -411,8 +411,6 @@ private struct CloseTaskSheet: View {
     let task: Record
     @State private var uncommitted: String?
     @State private var discard = false
-    @State private var working = false
-    @State private var problem: String?
 
     private var sessions: Int { vault.children(.session, task: task.id).count }
 
@@ -421,7 +419,7 @@ private struct CloseTaskSheet: View {
             Text("Close “\(task.body.title ?? "Task")”?").font(.headline)
             VStack(alignment: .leading, spacing: Metric.tiny) {
                 Text(sessions == 1 ? "Stops its Agent session." : "Stops its \(sessions) Agent sessions.")
-                if let path = task.body.path {
+                if let path = task.body.path, path != task.body.repo {
                     Text("Removes the Worktree at \(path) on \(TaskActions.machine(task.body.machine).title); the branch \(task.body.branch ?? "") stays.")
                 }
                 Text("Archives the Task. Its Journal, Documents and Conversations stay searchable.")
@@ -433,15 +431,12 @@ private struct CloseTaskSheet: View {
                     .frame(maxHeight: 120)
                 Toggle("Discard them", isOn: $discard)
             }
-            if let problem { Text(problem).font(.caption).foregroundStyle(.red).textSelection(.enabled) }
             HStack {
                 Spacer()
                 Button("Cancel") { dismiss() }.keyboardShortcut(.cancelAction)
-                Button(role: .destructive) { Task { await close() } } label: {
-                    if working { ProgressView().controlSize(.small) } else { Text("Close Task") }
-                }
+                Button("Close Task", role: .destructive, action: close)
                 .keyboardShortcut(.defaultAction)
-                .disabled(working || uncommitted == nil || (uncommitted?.isEmpty == false && !discard))
+                .disabled(uncommitted == nil || (uncommitted?.isEmpty == false && !discard))
             }
         }
         .padding()
@@ -449,10 +444,8 @@ private struct CloseTaskSheet: View {
         .task { uncommitted = await TaskActions.uncommitted(in: task) }
     }
 
-    private func close() async {
-        working = true
-        defer { working = false }
-        problem = await TaskActions.close(task, in: vault, library: library, discard: discard)
-        if problem == nil { dismiss() }
+    private func close() {
+        TaskActions.close(task, in: vault, library: library, discard: discard)
+        dismiss()
     }
 }

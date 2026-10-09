@@ -244,10 +244,24 @@ enum TaskActions {
         return ran.ok ? ran.out.trimmingCharacters(in: .whitespacesAndNewlines) : ""
     }
 
-    /// Ends a Task: its Transcripts copied one last time, its Agents stopped, its Worktree and
-    /// Workspace removed with the branch kept, and the Task archived. It stays searchable.
-    static func close(_ task: Record, in vault: Vault, library: Library, discard: Bool) async -> String? {
+    /// Ends a Task at once: archived, still searchable, and its Tabs closed. Its machines are
+    /// cleaned after: its Transcripts copied one last time, its Agents stopped, and its
+    /// Worktree and Workspace removed with the branch kept.
+    static func close(_ task: Record, in vault: Vault, library: Library, discard: Bool) {
         let sessions = vault.children(.session, task: task.id)
+        var record = vault.records[task.id] ?? task
+        record.body.archived = true
+        vault.write(record)
+        for tab in library.tabs[task.id] ?? [] { library.close(tab, in: task.id, confirmed: true) }
+        if library.selection == task.id { library.selection = nil }
+        Task {
+            if let problem = await cleanUp(task, sessions: sessions, in: vault, discard: discard) {
+                library.cleanupProblem = "“\(task.body.title ?? "Task")” is closed, but \(problem)"
+            }
+        }
+    }
+
+    private static func cleanUp(_ task: Record, sessions: [Record], in vault: Vault, discard: Bool) async -> String? {
         await vault.copier.copy(sessions)
         for session in sessions {
             guard let pane = session.body.pane else { continue }
@@ -258,14 +272,14 @@ enum TaskActions {
         let open = await Herdr.workspaces(on: home)
         let workspace = task.body.workspace.flatMap { open[$0] != nil ? $0 : nil }
             ?? open.first { $0.value == task.body.title }?.key
-        if let path = task.body.path {
+        if let path = task.body.path, await linked(path, on: home) {
             let force = discard ? " --force" : ""
             let ran = if let workspace {
                 await home.run("herdr worktree remove --workspace \(quote(workspace))\(force)")
             } else {
                 await home.run("git -C \(quote(task.body.repo ?? path)) worktree remove \(quote(path))\(force)")
             }
-            guard ran.ok else { return "The Worktree is still there: \(ran.problem)" }
+            guard ran.ok else { return "its Worktree is still there: \(ran.problem)" }
         } else if let workspace {
             _ = await home.run("herdr workspace close \(quote(workspace))")
         }
@@ -275,15 +289,17 @@ enum TaskActions {
             return [session.body.machine, repo, path]
         })
         for other in others {
+            guard await linked(other[2] ?? "", on: machine(other[0])) else { continue }
             let force = discard ? " --force" : ""
             let ran = await machine(other[0]).run("git -C \(quote(other[1] ?? "")) worktree remove \(quote(other[2] ?? ""))\(force)")
-            guard ran.ok else { return "The Worktree at \(other[2] ?? "") is still there: \(ran.problem)" }
+            guard ran.ok else { return "the Worktree at \(other[2] ?? "") is still there: \(ran.problem)" }
         }
-        var record = vault.records[task.id] ?? task
-        record.body.archived = true
-        vault.write(record)
-        for tab in library.tabs[task.id] ?? [] { library.close(tab, in: task.id, confirmed: true) }
-        if library.selection == task.id { library.selection = nil }
         return nil
+    }
+
+    /// Whether `path` is a linked worktree, whose `.git` is a file; a repository's own
+    /// checkout, used as is, is never removed.
+    private static func linked(_ path: String, on machine: Machine) async -> Bool {
+        await machine.run("[ -f \(quote(path))/.git ]").ok
     }
 }
