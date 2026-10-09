@@ -32,7 +32,7 @@ final class Conversation: ObservableObject {
     @Published var viewing: PlatformImage?
     /// The cards and thoughts the reader opened. Kept here, not in the rows, which the list
     /// rebuilds as the Agent works.
-    @Published var opened: Set<String> = []
+    @Published var opened: Set<String> = [] { didSet { scroll.hold() } }
 
     /// Keyed by the row, which a live item's entry keeps when the Transcript replaces it.
     func isOpen(_ id: String) -> Binding<Bool> {
@@ -64,13 +64,14 @@ final class Conversation: ObservableObject {
     /// What is typed and not sent; it outlives the view, which goes with every switch of Task.
     var draft = "" { didSet { if draft != oldValue { saveDraft?(draft) } } }
     var saveDraft: ((String) -> Void)?
-    /// Where the reader left the chat, kept while the app runs.
-    let spot = ChatList.Spot()
+    /// Where the reader is in the chat, kept while the app runs.
+    let scroll = ChatScroll()
     /// The entry a link or a search result asked to see, scrolled to and marked.
     /// The item a link pointed at, highlighted until it fades three seconds later.
     @Published var focus: String? {
         didSet {
             guard let focus, focus != oldValue else { return }
+            if let row = rows.first(where: { $0.contains(focus) }) { scroll.reveal(row.id) }
             Task { @MainActor [weak self] in
                 try? await Task.sleep(for: .seconds(3))
                 if self?.focus == focus { self?.focus = nil }
@@ -83,6 +84,7 @@ final class Conversation: ObservableObject {
     private(set) var transcript: String?
     /// Whether the helper has sent the first batch of entries.
     @Published private(set) var loaded = false
+    private var opening: [CheckedContinuation<Void, Never>] = []
     private(set) weak var runner: Runner?
     private var loading = false
     private var expanded: Set<String> = []
@@ -92,6 +94,10 @@ final class Conversation: ObservableObject {
         self.source = source
         self.agent = agent
         self.runner = runner
+        scroll.page = { [weak self] in
+            guard let self, !rows.isEmpty else { return }
+            Task { await self.loadEarlier() }
+        }
     }
 
     convenience init(pane: String, agent: Agent?, runner: Runner?) {
@@ -160,7 +166,11 @@ final class Conversation: ObservableObject {
         if background != log.background { background = log.background }
         if status != log.status { status = log.status }
         if earlier != log.earlier { earlier = log.earlier }
-        if loaded != log.loaded { loaded = log.loaded }
+        if loaded != log.loaded {
+            loaded = log.loaded
+            opening.forEach { $0.resume() }
+            opening = []
+        }
         transcript = log.transcript ?? transcript
         if let named = log.agent.flatMap(Agent.init), named != agent { agent = named }
         if let failed = log.problem {
@@ -226,7 +236,7 @@ final class Conversation: ObservableObject {
     /// Pages back until `id` is loaded, then shows it. An id the Transcript no longer has
     /// leaves the Conversation at its oldest entry.
     func reveal(_ id: String) async {
-        for _ in 0..<50 where !loaded { try? await Task.sleep(for: .milliseconds(200)) }
+        if !loaded { await withCheckedContinuation { opening.append($0) } }
         while !rows.contains(where: { $0.contains(id) }), earlier {
             let count = rows.count
             await loadEarlier()

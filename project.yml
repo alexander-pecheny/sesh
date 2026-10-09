@@ -126,6 +126,7 @@ targets:
       - path: SeshTests
         excludes: [Fixtures]
       - path: Shared/SessionLog.swift
+      - path: Shared/ChatScroll.swift
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: me.pecheny.sesh.tests

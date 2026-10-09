@@ -17,12 +17,6 @@ struct ConversationView: View {
     @State private var lost = false
     @StateObject private var field = PlainField()
     @State private var composing = false
-    @State private var atBottom = true
-    @State private var nearTop = false
-    /// Counts the user's sends: whoever sends wants to see the reply, wherever they had scrolled.
-    @State private var sent = 0
-    /// Counts the requests to go to the end, for the native list.
-    @State private var jumps = 0
     /// A message open on its own for selecting part of it, which the phone's list cannot do.
     @State private var selecting: String?
     /// The rows keep their drawing until their version changes, so a time stamped today
@@ -33,19 +27,7 @@ struct ConversationView: View {
     private var working: Bool { conversation.state == "working" }
     private static let rowSpacing: CGFloat = 14
     private static let focusTint = 0.15
-    private static let shadow: CGFloat = 3
-    private static let jumpWidth: CGFloat = 320
-
-    /// Pages back while the reader stays near the top and herdr has more.
-    private func loadEarlier() async {
-        while nearTop, conversation.earlier, !conversation.rows.isEmpty {
-            let count = conversation.rows.count
-            await conversation.loadEarlier()
-            if conversation.rows.count == count { return }
-            // The view says where the reader is only once it has laid the page out.
-            try? await Task.sleep(for: .milliseconds(150))
-        }
-    }
+    static let shadow: CGFloat = 3
 
     var body: some View {
         chat
@@ -63,22 +45,7 @@ struct ConversationView: View {
                     .allowsHitTesting(false)
             }
         }
-        .overlay(alignment: .bottom) {
-            if !atBottom {
-                Button { jump() } label: {
-                    Text("Move to bottom ↓")
-                        .font(.ui(Metric.note).weight(.medium))
-                        .foregroundStyle(flavour(.text))
-                        .frame(maxWidth: Self.jumpWidth)
-                        .padding(.vertical, Metric.gap)
-                        .background(flavour(.surface1), in: .capsule)
-                        .shadow(radius: Self.shadow)
-                }
-                .buttonStyle(.plain)
-                .padding(Metric.pad)
-            }
-        }
-        .onChange(of: sent) { jump() }
+        .overlay(alignment: .bottom) { MoveToBottom(scroll: conversation.scroll, flavour: flavour) }
         .scrollDismissesKeyboard(.interactively)
         .safeAreaInset(edge: .bottom, spacing: 0) {
             VStack(spacing: 0) {
@@ -148,11 +115,7 @@ struct ConversationView: View {
     }
 
     private var chat: some View {
-        ChatList(items: listItems, atBottom: $atBottom, nearTop: $nearTop, jumps: jumps, reveal: revealedRow, spot: conversation.spot, ready: conversation.loaded,
-                 hold: conversation.opened.hashValue,
-                 spacing: Self.rowSpacing, inset: Metric.wide)
-            .onChange(of: nearTop) { if nearTop { Task { await loadEarlier() } } }
-            .onChange(of: conversation.rows.count) { if nearTop { Task { await loadEarlier() } } }
+        ChatList(items: listItems, scroll: conversation.scroll, ready: conversation.loaded, spacing: Self.rowSpacing, inset: Metric.wide)
             .animation(.easeOut(duration: 1), value: conversation.focus)
     }
 
@@ -167,12 +130,6 @@ struct ConversationView: View {
                           text: row.text, copyText: { copyText($0) }, select: { selecting = $0 })
     }
 
-    /// The row the focused entry is in, for the native list to bring to the top.
-    private var revealedRow: String? {
-        guard let focus = conversation.focus else { return nil }
-        return conversation.rows.first { $0.contains(focus) }?.id
-    }
-
     /// Everything the native list shows, each row versioned by what it draws.
     private var listItems: [ChatList.Item] {
         func item(_ id: String, _ version: Int, _ view: some View) -> ChatList.Item {
@@ -180,7 +137,7 @@ struct ConversationView: View {
                 view.frame(maxWidth: .infinity, alignment: .leading).padding(.horizontal, Metric.wide).environment(\.openURL, links)))
         }
         var items: [ChatList.Item] = []
-        if conversation.earlier { items.append(item(ChatList.earlier, 0, ProgressView().frame(maxWidth: .infinity))) }
+        if conversation.earlier { items.append(item(ChatScroll.earlier, 0, ProgressView().frame(maxWidth: .infinity))) }
         for row in conversation.rows {
             var hasher = Hasher()
             hasher.combine(row.version)
@@ -285,17 +242,10 @@ struct ConversationView: View {
         }
         // A send from the full-screen editor jumps while the chat is covered, by sizes that
         // change as it closes; the jump is made again once it has.
-        .onChange(of: composing) { if !composing, atBottom { jump() } }
+        .onChange(of: composing) { if !composing, conversation.scroll.atBottom { conversation.scroll.jump() } }
         .cover(isPresented: $composing) {
             Composer(text: $draft, canSend: canSend) { Task { await send() } }
         }
-    }
-
-    /// One jump lands short while the rows on the way still guess their heights, so it is
-    /// repeated as they measure, unless the reader scrolls away meanwhile.
-    private func jump() {
-        atBottom = true
-        jumps += 1
     }
 
     private func appeared() {
@@ -365,7 +315,8 @@ struct ConversationView: View {
             // Words typed while the message was on its way stay in the box.
             let now = draft.trimmingCharacters(in: .whitespacesAndNewlines)
             draft = now.hasPrefix(text) ? String(now.dropFirst(text.count)).trimmingCharacters(in: .whitespacesAndNewlines) : draft
-            sent += 1
+            // Whoever sends wants to see the reply, wherever they had scrolled.
+            conversation.scroll.jump()
         }
         sending = false
     }
@@ -1005,6 +956,29 @@ private struct EndedBar: View {
 }
 
 /// Twinkling stars and a word with a light sweeping across it, while the Agent works.
+/// "Move to bottom", while the end of the chat is out of view.
+private struct MoveToBottom: View {
+    @ObservedObject var scroll: ChatScroll
+    let flavour: Catppuccin.Flavour
+    private static let width: CGFloat = 320
+
+    var body: some View {
+        if !scroll.atBottom {
+            Button { scroll.jump() } label: {
+                Text("Move to bottom ↓")
+                    .font(.ui(Metric.note).weight(.medium))
+                    .foregroundStyle(flavour(.text))
+                    .frame(maxWidth: Self.width)
+                    .padding(.vertical, Metric.gap)
+                    .background(flavour(.surface1), in: .capsule)
+                    .shadow(radius: ConversationView.shadow)
+            }
+            .buttonStyle(.plain)
+            .padding(Metric.pad)
+        }
+    }
+}
+
 private struct WorkingRow: View {
     @Environment(\.colorScheme) private var colorScheme
     @State private var start = Date()

@@ -3,40 +3,16 @@ import AppKit
 import SwiftUI
 
 /// The Conversation as a native list (ADR 0013): a table whose rows host the chat's SwiftUI
-/// views, each measured once at the table's width and kept, and scrolled by rules of its own.
+/// views, each measured once at the table's width and kept, and scrolled by `ChatScroll`.
 struct ChatList: NSViewRepresentable {
-    struct Item: Identifiable {
-        let id: String
-        /// Changes whenever what the row shows changes, so its height is measured again.
-        let version: Int
-        let view: AnyView
-    }
-
     let items: [Item]
-    @Binding var atBottom: Bool
-    @Binding var nearTop: Bool
-    /// Counts the requests to go to the end, from "Move to bottom" and from sending.
-    let jumps: Int
-    /// The row to bring to the top, for a link or a search result.
-    let reveal: String?
-    let spot: Spot
+    let scroll: ChatScroll
     /// Whether the Conversation has its opening batch, so the rows can be shown.
     var ready = true
-    /// Changes when the reader opens or closes a card, which keeps the rows in view where they
-    /// are, even at the end, so the card opens under the pointer rather than scrolling away.
-    var hold = 0
     let spacing: CGFloat
     let inset: CGFloat
 
-    /// The row that shows earlier pages are loading.
-    static let earlier = "earlier"
-
-    /// The row at the top of the view and its offset, or nil at the end.
-    final class Spot {
-        var anchor: (id: String, offset: CGFloat)?
-    }
-
-    func makeCoordinator() -> Coordinator { Coordinator() }
+    func makeCoordinator() -> Coordinator { Coordinator(spacing: spacing) }
 
     func makeNSView(context: Context) -> NSScrollView {
         let scroll = Scroll()
@@ -52,11 +28,12 @@ struct ChatList: NSViewRepresentable {
         table.style = .plain
         table.selectionHighlightStyle = .none
         table.allowsColumnSelection = false
-        table.intercellSpacing = NSSize(width: 0, height: spacing)
+        table.intercellSpacing = .zero
         table.columnAutoresizingStyle = .uniformColumnAutoresizingStyle
         table.gridStyleMask = []
         scroll.contentInsets = NSEdgeInsets(top: inset, left: 0, bottom: inset, right: 0)
         scroll.documentView = table
+        context.coordinator.parent = self
         context.coordinator.attach(scroll: scroll, table: table)
         return scroll
     }
@@ -67,33 +44,29 @@ struct ChatList: NSViewRepresentable {
     }
 
     @MainActor
-    final class Coordinator: NSObject, NSTableViewDataSource, NSTableViewDelegate {
+    final class Coordinator: NSObject, NSTableViewDataSource, NSTableViewDelegate, ChatSurface {
         static let column = NSUserInterfaceItemIdentifier("row")
         private static let cell = NSUserInterfaceItemIdentifier("cell")
-        /// How close to the end still counts as at the end, and to the top as near it.
-        private static let edge: CGFloat = 40
-        private static let top: CGFloat = 400
-        private static let narrowest: CGFloat = 120
 
         var parent: ChatList?
-        private weak var scroll: NSScrollView?
+        private weak var scrollView: NSScrollView?
         private weak var table: NSTableView?
         private var items: [Item] = []
-        private var heights: [String: (version: Int, width: CGFloat, height: CGFloat)] = [:]
-        /// Measures rows laid out as a cell lays them out, so a cached height is the height drawn.
-        private let sizer = NSHostingController(rootView: AnyView(EmptyView()))
-        private var jumps = 0
-        private var held = 0
-        private var revealed: String?
-        private var atBottom = true
-        private var restored = false
+        private let heights: Heights
         private var adjusting = false
-        /// Whether the rows have been shown: an opening batch arrives in parts, each moving the
-        /// end, so the list stays hidden until they stop and then appears at its place at once.
-        private var shown = false
+        /// The size the rows were last laid out at.
+        private var measured = CGSize.zero
+        /// Whether the reader is moving the view: a wheel tick not yet seen, or a scroller dragged.
+        private var wheeled = false
+        private var live = false
+
+        init(spacing: CGFloat) { heights = Heights(spacing: spacing) }
+
+        /// The keeper, while this list is the one showing its chat.
+        private var keeper: ChatScroll? { parent.flatMap { $0.scroll.surface === self ? $0.scroll : nil } }
 
         func attach(scroll: NSScrollView, table: NSTableView) {
-            self.scroll = scroll
+            scrollView = scroll
             self.table = table
             table.dataSource = self
             table.delegate = self
@@ -104,125 +77,41 @@ struct ChatList: NSViewRepresentable {
             NotificationCenter.default.addObserver(self, selector: #selector(dragging), name: NSScrollView.willStartLiveScrollNotification, object: scroll)
             NotificationCenter.default.addObserver(self, selector: #selector(dropped), name: NSScrollView.didEndLiveScrollNotification, object: scroll)
             (scroll as? Scroll)?.wheeled = { [weak self] in self?.wheeled = true }
+            parent?.scroll.attach(self)
         }
 
-        /// Whether the reader is moving the view: a wheel tick not yet seen, or a scroller dragged.
-        private var wheeled = false
-        private var live = false
         @objc private func dragging() { live = true }
         @objc private func dropped() { live = false }
 
-        /// The column width the rows' heights were last measured at.
-        private var measured: CGFloat = 0
+        private var width: CGFloat { max(1, table?.tableColumns.first?.width ?? scrollView?.contentSize.width ?? 1) }
 
-        private var width: CGFloat { max(1, table?.tableColumns.first?.width ?? scroll?.contentSize.width ?? 1) }
-
-        /// Takes the new rows and keeps the reader where they were: at the end if they were
-        /// there, else on the row at the top of the view.
         func update() {
-            guard let parent, let table, let scroll else { return }
-            if width != measured { resized() }
-            let holding = parent.hold != held
-            held = parent.hold
-            var anchor = atBottom && !holding ? nil : topRow()
-            if let kept = restore(parent.items) { anchor = kept }
-            let old = items
-            items = parent.items
-            let change = Change(old: old.map { ($0.id, $0.version) }, new: items.map { ($0.id, $0.version) })
-            if case .none = change, parent.jumps == jumps, parent.reveal == revealed { return settle() }
-            adjusting = true
-            switch change {
-            case .none: break
-            case .rows(let changed, let added, let removed):
-                table.beginUpdates()
-                if !removed.isEmpty { table.removeRows(at: removed, withAnimation: []) }
-                if !added.isEmpty { table.insertRows(at: added, withAnimation: []) }
-                table.endUpdates()
-                if !changed.isEmpty {
-                    table.reloadData(forRowIndexes: changed, columnIndexes: [0])
-                    table.noteHeightOfRows(withIndexesChanged: changed)
+            guard let parent, let table, let keeper else { return }
+            if size != measured { resized() }
+            let new = parent.items
+            let change = Change(old: items.map { ($0.id, $0.version) }, new: new.map { ($0.id, $0.version) })
+            keeper.update(new.map(\.id), ready: parent.ready, changed: change != .none) {
+                items = new
+                quietly {
+                    guard case .rows(let changed, let added, let removed) = change else { return }
+                    table.beginUpdates()
+                    if !removed.isEmpty { table.removeRows(at: removed, withAnimation: []) }
+                    if !added.isEmpty { table.insertRows(at: added, withAnimation: []) }
+                    table.endUpdates()
+                    if !changed.isEmpty {
+                        table.reloadData(forRowIndexes: changed, columnIndexes: [0])
+                        table.noteHeightOfRows(withIndexesChanged: changed)
+                    }
+                    // The frame takes the new rows' heights only on layout; a scroll before it is clamped.
+                    table.tile()
                 }
             }
-            // The frame takes the new rows' heights only on layout; a scroll before it is clamped.
-            table.tile()
-            adjusting = false
-            if parent.jumps != jumps {
-                jumps = parent.jumps
-                atBottom = true
-            }
-            if let reveal = parent.reveal, reveal != revealed, let row = items.firstIndex(where: { $0.id == reveal }) {
-                revealed = reveal
-                atBottom = false
-                place(row: row, offset: 0)
-            } else if atBottom && !holding {
-                toEnd()
-            } else if let anchor, let row = items.firstIndex(where: { $0.id == anchor.id }) {
-                place(row: row, offset: anchor.offset)
-            }
-            if parent.reveal == nil { revealed = nil }
-            scroll.reflectScrolledClipView(scroll.contentView)
-            report()
-            settle()
-            Self.trace("update rows=\(items.count) anchor=\(anchor.map { "\($0.id)@\($0.offset)" } ?? "-") bottom=\(atBottom) table=\(table.bounds.height) view=\(scroll.contentView.bounds.minY) now=\(topRow().map { "\($0.id)@\($0.offset)" } ?? "-")")
+            items = new
         }
 
-        /// `-listLog PATH` traces every update, for finding where the reader was moved.
-        private static let log = UserDefaults.standard.string(forKey: "listLog").flatMap { path -> FileHandle? in
-            FileManager.default.createFile(atPath: path, contents: nil)
-            return FileHandle(forWritingAtPath: path)
-        }
-
-        static func trace(_ line: @autoclosure () -> String) {
-            guard let log else { return }
-            log.write(Data("\(Date().timeIntervalSince1970) \(line())\n".utf8))
-        }
-
-        /// Where the reader left this chat, taken once, when the rows can first be measured.
-        private func restore(_ items: [Item]) -> (id: String, offset: CGFloat)? {
-            guard !restored, !items.isEmpty, width >= Self.narrowest else { return nil }
-            restored = true
-            Self.trace("restore rows=\(items.count) spot=\(parent?.spot.anchor.map { "\($0.id)@\($0.offset)" } ?? "-")")
-            guard let kept = parent?.spot.anchor, items.contains(where: { $0.id == kept.id }) else {
-                atBottom = true
-                return nil
-            }
-            atBottom = false
-            return kept
-        }
-
-        /// Shows the rows, at their place, once the opening batch is in and they can be measured.
-        private func settle() {
-            guard !shown, let scroll, let parent else { return }
-            guard parent.ready, width >= Self.narrowest else { return scroll.alphaValue = items.isEmpty ? 1 : 0 }
-            shown = true
-            if atBottom { toEnd() }
-            scroll.alphaValue = 1
-            report()
-        }
-
-        /// The first message in view and how far its top sits below the view's. The spinner
-        /// above the first message never counts: held in place, it would keep pages loading.
-        private func topRow() -> (id: String, offset: CGFloat)? {
-            guard let table, let scroll else { return nil }
-            let visible = scroll.contentView.bounds
-            let rows = table.rows(in: visible)
-            guard let row = (rows.lowerBound..<rows.upperBound).first(where: { $0 < items.count && items[$0].id != ChatList.earlier }) else { return nil }
-            return (items[row].id, table.rect(ofRow: row).minY - visible.minY)
-        }
-
-        private func place(row: Int, offset: CGFloat) {
-            guard let table, let scroll else { return }
-            let y = table.rect(ofRow: row).minY - offset
+        private func quietly(_ change: () -> Void) {
             adjusting = true
-            scroll.contentView.scroll(to: NSPoint(x: 0, y: max(-scroll.contentInsets.top, y)))
-            adjusting = false
-        }
-
-        private func toEnd() {
-            guard let table, let scroll else { return }
-            let end = table.bounds.height - scroll.contentView.bounds.height + scroll.contentInsets.bottom
-            adjusting = true
-            scroll.contentView.scroll(to: NSPoint(x: 0, y: max(-scroll.contentInsets.top, end)))
+            change()
             adjusting = false
         }
 
@@ -230,71 +119,56 @@ struct ChatList: NSViewRepresentable {
             guard !adjusting else { return }
             let reader = live || wheeled
             wheeled = false
-            // Rows measured late make the list taller and shift the view; only the reader leaves the end.
-            if atBottom && !reader {
-                toEnd()
-                return
-            }
-            report()
-            Self.trace("scrolled view=\(scroll?.contentView.bounds.minY ?? 0) bottom=\(atBottom)")
+            keeper?.scrolled(byReader: reader)
         }
 
-        /// The window or the sidebar changed the width: every row wraps anew.
+        /// The window, the sidebar or the message box changed the size; a new width wraps every
+        /// row anew. The scroll view resizes before its column does, and only the column counts.
         @objc private func resized() {
-            // The scroll view resizes before its column does; only the column's width counts.
-            guard width != measured else { return }
-            measured = width
-            let kept = restore(items)
-            let bottom = atBottom
-            let anchor = kept ?? (bottom ? nil : topRow())
-            adjusting = true
-            table?.noteHeightOfRows(withIndexesChanged: IndexSet(integersIn: 0..<items.count))
-            table?.tile()
-            adjusting = false
-            if bottom {
-                toEnd()
-            } else if let anchor, let row = items.firstIndex(where: { $0.id == anchor.id }) {
-                place(row: row, offset: anchor.offset)
-            }
-            if kept != nil { report() }
-            settle()
-        }
-
-        /// Whether the reader is at the end and near the top, as the reader alone moves them.
-        private func report() {
-            guard let table, let scroll else { return }
-            let visible = scroll.contentView.bounds
-            guard visible.height > 0 else { return }
-            let bottom = visible.maxY >= table.bounds.height + scroll.contentInsets.bottom - Self.edge
-            // Earlier pages wait until the latest screen is shown.
-            let top = shown && visible.minY < Self.top
-            atBottom = bottom
-            guard let parent else { return }
-            if restored { parent.spot.anchor = bottom ? nil : topRow() }
-            Self.trace("report bottom=\(bottom) restored=\(restored) spot=\(parent.spot.anchor.map { "\($0.id)@\($0.offset)" } ?? "-") table=\(table.bounds.height) view=\(visible.minY)/\(visible.height)")
-            if parent.atBottom != bottom || parent.nearTop != top {
-                DispatchQueue.main.async {
-                    if parent.atBottom != bottom { parent.atBottom = bottom }
-                    if parent.nearTop != top { parent.nearTop = top }
+            guard size != measured, let keeper else { return }
+            let wider = size.width != measured.width
+            measured = size
+            keeper.resized {
+                guard wider, let table else { return }
+                quietly {
+                    table.noteHeightOfRows(withIndexesChanged: IndexSet(integersIn: 0..<items.count))
+                    table.tile()
                 }
             }
         }
+
+        // MARK: ChatSurface
+
+        var size: CGSize { CGSize(width: width, height: scrollView?.contentView.bounds.height ?? 0) }
+        var offset: CGFloat { scrollView?.contentView.bounds.minY ?? 0 }
+        var start: CGFloat { -(scrollView?.contentInsets.top ?? 0) }
+
+        var end: CGFloat {
+            guard let table, let scrollView else { return 0 }
+            return table.bounds.height - scrollView.contentView.bounds.height + scrollView.contentInsets.bottom
+        }
+
+        var visible: Range<Int> {
+            guard let table, let scrollView else { return 0..<0 }
+            return Range(table.rows(in: scrollView.contentView.bounds)) ?? 0..<0
+        }
+
+        func top(of row: Int) -> CGFloat { table?.rect(ofRow: row).minY ?? 0 }
+
+        func scroll(to offset: CGFloat) {
+            guard let scrollView else { return }
+            quietly { scrollView.contentView.scroll(to: NSPoint(x: 0, y: offset)) }
+            scrollView.reflectScrolledClipView(scrollView.contentView)
+        }
+
+        func show(_ shown: Bool) { scrollView?.alphaValue = shown ? 1 : 0 }
 
         // MARK: rows
 
         func numberOfRows(in tableView: NSTableView) -> Int { items.count }
 
         func tableView(_ tableView: NSTableView, heightOfRow row: Int) -> CGFloat {
-            guard row < items.count else { return 1 }
-            let item = items[row]
-            let width = width
-            // Before the column has its width, any height would be wrong and kept.
-            guard width >= Self.narrowest else { return 1 }
-            if let known = heights[item.id], known.version == item.version, known.width == width { return known.height }
-            sizer.rootView = ChatList.laidOut(item.view, report: nil)
-            let height = max(1, ceil(sizer.sizeThatFits(in: CGSize(width: width, height: .greatestFiniteMagnitude)).height))
-            heights[item.id] = (item.version, width, height)
-            return height
+            row < items.count ? heights.of(items[row], width: width) : 1
         }
 
         func tableView(_ tableView: NSTableView, viewFor tableColumn: NSTableColumn?, row: Int) -> NSView? {
@@ -310,22 +184,12 @@ struct ChatList: NSViewRepresentable {
 
         /// A row that changed its own size, such as a card opened, keeps the size it took.
         private func grew(_ id: String, to size: CGSize) {
-            let height = ceil(size.height)
-            // A cell laid out before it has its width, or for another row, reports nonsense.
-            guard let row = items.firstIndex(where: { $0.id == id }), let known = heights[id],
-                  abs(size.width - known.width) < 1, abs(known.height - height) > 0.5 else { return }
-            Self.trace("grew \(id) \(known.height) -> \(height) at \(size.width)")
-            let bottom = atBottom
-            let anchor = bottom ? nil : topRow()
-            heights[id] = (known.version, known.width, height)
-            adjusting = true
-            table?.noteHeightOfRows(withIndexesChanged: IndexSet(integer: row))
-            table?.tile()
-            adjusting = false
-            if bottom {
-                toEnd()
-            } else if let anchor, let top = items.firstIndex(where: { $0.id == anchor.id }) {
-                place(row: top, offset: anchor.offset)
+            guard let row = items.firstIndex(where: { $0.id == id }), heights.grew(id, to: size), let table else { return }
+            keeper?.grew {
+                quietly {
+                    table.noteHeightOfRows(withIndexesChanged: IndexSet(integer: row))
+                    table.tile()
+                }
             }
         }
     }
@@ -362,39 +226,23 @@ struct ChatList: NSViewRepresentable {
         func show(_ view: AnyView) { host.rootView = view }
     }
 }
+
+private typealias Hosting = NSHostingController<AnyView>
 #else
 import SwiftUI
 import UIKit
 
 /// The Conversation as a native list (ADR 0013): a table whose rows host the chat's SwiftUI
-/// views, each measured once at the table's width and kept, and scrolled by rules of its own.
+/// views, each measured once at the table's width and kept, and scrolled by `ChatScroll`.
 struct ChatList: UIViewRepresentable {
-    struct Item: Identifiable {
-        let id: String
-        /// Changes whenever what the row shows changes, so its height is measured again.
-        let version: Int
-        let view: AnyView
-    }
-
     let items: [Item]
-    @Binding var atBottom: Bool
-    @Binding var nearTop: Bool
-    let jumps: Int
-    let reveal: String?
-    let spot: Spot
+    let scroll: ChatScroll
     /// Whether the Conversation has its opening batch, so the rows can be shown.
     var ready = true
-    var hold = 0
     let spacing: CGFloat
     let inset: CGFloat
 
-    static let earlier = "earlier"
-
-    final class Spot {
-        var anchor: (id: String, offset: CGFloat)?
-    }
-
-    func makeCoordinator() -> Coordinator { Coordinator() }
+    func makeCoordinator() -> Coordinator { Coordinator(spacing: spacing) }
 
     func makeUIView(context: Context) -> UITableView {
         let table = UITableView(frame: .zero, style: .plain)
@@ -407,6 +255,7 @@ struct ChatList: UIViewRepresentable {
         table.keyboardDismissMode = .interactive
         table.contentInset = UIEdgeInsets(top: inset, left: 0, bottom: inset, right: 0)
         table.register(Cell.self, forCellReuseIdentifier: Coordinator.cell)
+        context.coordinator.parent = self
         context.coordinator.attach(table)
         return table
     }
@@ -417,192 +266,125 @@ struct ChatList: UIViewRepresentable {
     }
 
     @MainActor
-    final class Coordinator: NSObject, UITableViewDataSource, UITableViewDelegate {
+    final class Coordinator: NSObject, UITableViewDataSource, UITableViewDelegate, ChatSurface {
         static let cell = "cell"
-        private static let edge: CGFloat = 40
-        private static let top: CGFloat = 400
 
         var parent: ChatList?
         private weak var table: UITableView?
         private var items: [Item] = []
-        private var heights: [String: (version: Int, width: CGFloat, height: CGFloat)] = [:]
-        private let sizer = UIHostingController(rootView: AnyView(EmptyView()))
-        private var jumps = 0
-        private var held = 0
-        private var revealed: String?
-        private var atBottom = true
-        private var restored = false
-        /// Whether the rows have been shown; until the opening batch is in, they stay hidden.
-        private var shown = false
+        private let heights: Heights
         private var adjusting = false
-        private var width: CGFloat = 0
+        private var sizing: NSKeyValueObservation?
+        /// The size the rows were last laid out at.
+        private var measured = CGSize.zero
+        /// Whether a tap on the status bar is taking the reader to the top.
+        private var toTop = false
+
+        init(spacing: CGFloat) { heights = Heights(spacing: spacing) }
+
+        /// The keeper, while this list is the one showing its chat.
+        private var keeper: ChatScroll? { parent.flatMap { $0.scroll.surface === self ? $0.scroll : nil } }
 
         func attach(_ table: UITableView) {
             self.table = table
             table.dataSource = self
             table.delegate = self
-            sizing = table.observe(\.bounds) { [weak self] table, _ in
-                MainActor.assumeIsolated { self?.sized(table.bounds.height) }
+            sizing = table.observe(\.bounds) { [weak self] _, _ in
+                MainActor.assumeIsolated { self?.resized() }
             }
+            parent?.scroll.attach(self)
         }
 
-        private var sizing: NSKeyValueObservation?
-        private var height: CGFloat = 0
-
-        /// The keyboard or a growing message box took some of the height: the end stays in view.
-        private func sized(_ height: CGFloat) {
-            guard height != self.height else { return }
-            self.height = height
-            if atBottom { toEnd() }
-            settle()
+        /// The keyboard, a growing message box or a turn took some of the size. Scrolling moves
+        /// the bounds too, so only a new size counts.
+        private func resized() {
+            guard size != measured, let keeper else { return }
+            measured = size
+            keeper.resized()
         }
 
-        func scrollViewDidChangeAdjustedContentInset(_ scrollView: UIScrollView) {
-            if atBottom { toEnd() }
-        }
+        func scrollViewDidChangeAdjustedContentInset(_ scrollView: UIScrollView) { keeper?.resized() }
 
         func update() {
-            guard let parent, let table else { return }
-            let holding = parent.hold != held
-            held = parent.hold
-            var anchor = atBottom && !holding ? nil : topRow()
-            if let kept = restore(parent.items) { anchor = kept }
-            let old = items
-            items = parent.items
-            let change = Change(old: old.map { ($0.id, $0.version) }, new: items.map { ($0.id, $0.version) })
-            if case .none = change, parent.jumps == jumps, parent.reveal == revealed { return settle() }
-            adjusting = true
-            switch change {
-            case .none: break
-            case .rows(let changed, let added, let removed):
-                // UIKit aborts the app on a batch that does not add up, so anything it may not
-                // have counted the way the old rows did is reloaded whole instead.
-                guard table.window != nil, table.numberOfRows(inSection: 0) == old.count else {
-                    table.reloadData()
-                    break
-                }
-                UIView.performWithoutAnimation {
-                    if !added.isEmpty || !removed.isEmpty {
-                        table.performBatchUpdates {
-                            table.deleteRows(at: removed.map { IndexPath(row: $0, section: 0) }, with: .none)
-                            table.insertRows(at: added.map { IndexPath(row: $0, section: 0) }, with: .none)
+            guard let parent, let table, let keeper else { return }
+            let old = items, new = parent.items
+            let change = Change(old: old.map { ($0.id, $0.version) }, new: new.map { ($0.id, $0.version) })
+            keeper.update(new.map(\.id), ready: parent.ready, changed: change != .none) {
+                items = new
+                quietly {
+                    defer { table.layoutIfNeeded() }
+                    guard case .rows(let changed, let added, let removed) = change else { return }
+                    // UIKit aborts the app on a batch that does not add up, so anything it may not
+                    // have counted the way the old rows did is reloaded whole instead.
+                    guard table.window != nil, table.numberOfRows(inSection: 0) == old.count else { return table.reloadData() }
+                    UIView.performWithoutAnimation {
+                        if !added.isEmpty || !removed.isEmpty {
+                            table.performBatchUpdates {
+                                table.deleteRows(at: removed.map { IndexPath(row: $0, section: 0) }, with: .none)
+                                table.insertRows(at: added.map { IndexPath(row: $0, section: 0) }, with: .none)
+                            }
+                        }
+                        // Numbered after the insert, and refreshed in place, keeping their cells.
+                        if !changed.isEmpty {
+                            table.performBatchUpdates { table.reconfigureRows(at: changed.map { IndexPath(row: $0, section: 0) }) }
                         }
                     }
-                    // Numbered after the insert, and refreshed in place, keeping their cells.
-                    if !changed.isEmpty {
-                        table.performBatchUpdates { table.reconfigureRows(at: changed.map { IndexPath(row: $0, section: 0) }) }
-                    }
                 }
             }
-            table.layoutIfNeeded()
-            adjusting = false
-            if parent.jumps != jumps {
-                jumps = parent.jumps
-                atBottom = true
-            }
-            if let reveal = parent.reveal, reveal != revealed, let row = items.firstIndex(where: { $0.id == reveal }) {
-                revealed = reveal
-                atBottom = false
-                place(row: row, offset: 0)
-            } else if atBottom && !holding {
-                toEnd()
-            } else if let anchor, let row = items.firstIndex(where: { $0.id == anchor.id }) {
-                place(row: row, offset: anchor.offset)
-            }
-            if parent.reveal == nil { revealed = nil }
-            report()
-            settle()
+            items = new
         }
 
-        /// Shows the rows, at their place, once the opening batch is in and they can be measured.
-        private func settle() {
-            guard !shown, let table, let parent else { return }
-            guard parent.ready, table.bounds.width > 0 else { return table.alpha = items.isEmpty ? 1 : 0 }
-            shown = true
-            if atBottom { toEnd() }
-            table.alpha = 1
-            report()
-        }
-
-        /// Where the reader left this chat, taken once, when the rows can first be measured.
-        private func restore(_ items: [Item]) -> (id: String, offset: CGFloat)? {
-            guard !restored, !items.isEmpty, (table?.bounds.width ?? 0) > 0 else { return nil }
-            restored = true
-            guard let kept = parent?.spot.anchor, items.contains(where: { $0.id == kept.id }) else {
-                atBottom = true
-                return nil
-            }
-            atBottom = false
-            return kept
-        }
-
-        /// The first message in view and how far its top sits below the view's.
-        private func topRow() -> (id: String, offset: CGFloat)? {
-            guard let table else { return nil }
-            let top = table.contentOffset.y + table.adjustedContentInset.top
-            let visible = CGRect(x: 0, y: top, width: table.bounds.width, height: table.bounds.height)
-            let rows = (table.indexPathsForRows(in: visible) ?? []).map(\.row).sorted()
-            guard let row = rows.first(where: { $0 < items.count && items[$0].id != ChatList.earlier }) else { return nil }
-            return (items[row].id, table.rectForRow(at: IndexPath(row: row, section: 0)).minY - top)
-        }
-
-        private func place(row: Int, offset: CGFloat) {
-            guard let table else { return }
-            let y = table.rectForRow(at: IndexPath(row: row, section: 0)).minY - offset - table.adjustedContentInset.top
-            set(y)
-        }
-
-        private func toEnd() {
-            guard let table else { return }
-            set(table.contentSize.height + table.adjustedContentInset.bottom - table.bounds.height)
-        }
-
-        private func set(_ y: CGFloat) {
-            guard let table else { return }
-            let lowest = -table.adjustedContentInset.top
-            let highest = max(lowest, table.contentSize.height + table.adjustedContentInset.bottom - table.bounds.height)
+        private func quietly(_ change: () -> Void) {
             adjusting = true
-            table.contentOffset = CGPoint(x: 0, y: min(max(y, lowest), highest))
+            change()
             adjusting = false
         }
 
         func scrollViewDidScroll(_ scrollView: UIScrollView) {
             guard !adjusting else { return }
-            report()
+            keeper?.scrolled(byReader: scrollView.isTracking || scrollView.isDecelerating || toTop)
         }
 
-        private func report() {
-            guard let table, let parent, table.bounds.height > 0 else { return }
-            let bottom = table.contentOffset.y + table.bounds.height >= table.contentSize.height + table.adjustedContentInset.bottom - Self.edge
-            // Earlier pages wait until the latest screen is shown.
-            let top = shown && table.contentOffset.y + table.adjustedContentInset.top < Self.top
-            atBottom = bottom
-            if restored { parent.spot.anchor = bottom ? nil : topRow() }
-            if parent.atBottom != bottom || parent.nearTop != top {
-                DispatchQueue.main.async {
-                    if parent.atBottom != bottom { parent.atBottom = bottom }
-                    if parent.nearTop != top { parent.nearTop = top }
-                }
-            }
+        func scrollViewShouldScrollToTop(_ scrollView: UIScrollView) -> Bool {
+            toTop = true
+            return true
         }
+
+        func scrollViewDidScrollToTop(_ scrollView: UIScrollView) { toTop = false }
+
+        // MARK: ChatSurface
+
+        var size: CGSize { table?.bounds.size ?? .zero }
+        var offset: CGFloat { table?.contentOffset.y ?? 0 }
+        var start: CGFloat { -(table?.adjustedContentInset.top ?? 0) }
+
+        var end: CGFloat {
+            guard let table else { return 0 }
+            return table.contentSize.height + table.adjustedContentInset.bottom - table.bounds.height
+        }
+
+        var visible: Range<Int> {
+            guard let table else { return 0..<0 }
+            let rows = (table.indexPathsForRows(in: CGRect(origin: CGPoint(x: 0, y: offset - start), size: size)) ?? []).map(\.row)
+            guard let first = rows.min(), let last = rows.max() else { return 0..<0 }
+            return first..<last + 1
+        }
+
+        func top(of row: Int) -> CGFloat { (table?.rectForRow(at: IndexPath(row: row, section: 0)).minY ?? 0) + start }
+
+        func scroll(to offset: CGFloat) {
+            quietly { table?.contentOffset = CGPoint(x: 0, y: offset) }
+        }
+
+        func show(_ shown: Bool) { table?.alpha = shown ? 1 : 0 }
 
         // MARK: rows
 
         func tableView(_ tableView: UITableView, numberOfRowsInSection section: Int) -> Int { items.count }
 
         func tableView(_ tableView: UITableView, heightForRowAt indexPath: IndexPath) -> CGFloat {
-            guard indexPath.row < items.count else { return 1 }
-            let item = items[indexPath.row]
-            let width = tableView.bounds.width
-            if width != self.width { self.width = width }
-            if let known = heights[item.id], known.version == item.version, known.width == width { return known.height + spacing }
-            sizer.rootView = ChatList.laidOut(item.view, report: nil)
-            let height = max(1, ceil(sizer.sizeThatFits(in: CGSize(width: width, height: .greatestFiniteMagnitude)).height))
-            heights[item.id] = (item.version, width, height)
-            return height + spacing
+            indexPath.row < items.count ? heights.of(items[indexPath.row], width: tableView.bounds.width) : 1
         }
-
-        private var spacing: CGFloat { parent?.spacing ?? 0 }
 
         func tableView(_ tableView: UITableView, cellForRowAt indexPath: IndexPath) -> UITableViewCell {
             let cell = tableView.dequeueReusableCell(withIdentifier: Self.cell, for: indexPath)
@@ -614,21 +396,14 @@ struct ChatList: UIViewRepresentable {
 
         /// A row that changed its own size, such as a card opened, keeps the size it took.
         private func grew(_ id: String, to size: CGSize) {
-            let height = ceil(size.height)
-            // A cell laid out before it has its width, or for another row, reports nonsense.
-            guard let table, let known = heights[id], abs(size.width - known.width) < 1, abs(known.height - height) > 0.5 else { return }
-            let anchor = atBottom ? nil : topRow()
-            heights[id] = (known.version, known.width, height)
-            adjusting = true
-            UIView.performWithoutAnimation {
-                table.beginUpdates()
-                table.endUpdates()
-            }
-            adjusting = false
-            if atBottom {
-                toEnd()
-            } else if let anchor, let top = items.firstIndex(where: { $0.id == anchor.id }) {
-                place(row: top, offset: anchor.offset)
+            guard let table, heights.grew(id, to: size) else { return }
+            keeper?.grew {
+                quietly {
+                    UIView.performWithoutAnimation {
+                        table.beginUpdates()
+                        table.endUpdates()
+                    }
+                }
             }
         }
     }
@@ -657,12 +432,64 @@ struct ChatList: UIViewRepresentable {
         func show(_ view: AnyView) { host.rootView = view }
     }
 }
+
+private typealias Hosting = UIHostingController<AnyView>
 #endif
+
+extension ChatList {
+    struct Item: Identifiable {
+        let id: String
+        /// Changes whenever what the row shows changes, so its height is measured again.
+        let version: Int
+        let view: AnyView
+    }
+
+    /// A row as both the measuring and the shown copy lay it out: the list's width, its own
+    /// height, from the top. The shown copy reports the height it takes, which changes when a
+    /// card opens or an image loads.
+    static func laidOut(_ view: AnyView, report: ((CGSize) -> Void)?) -> AnyView {
+        let fixed = view.fixedSize(horizontal: false, vertical: true)
+        guard let report else { return AnyView(fixed) }
+        return AnyView(
+            fixed
+                .onGeometryChange(for: CGSize.self) { $0.size } action: { size in report(size) }
+                .frame(maxHeight: .infinity, alignment: .top))
+    }
+
+    /// Each row's height, measured once as a cell lays it out and kept under its id, its version
+    /// and the width, with the spacing below it. Before the list has its width, nothing is kept.
+    @MainActor
+    final class Heights {
+        private let spacing: CGFloat
+        private var known: [String: (version: Int, width: CGFloat, height: CGFloat)] = [:]
+        private let sizer = Hosting(rootView: AnyView(EmptyView()))
+
+        init(spacing: CGFloat) { self.spacing = spacing }
+
+        func of(_ item: Item, width: CGFloat) -> CGFloat {
+            guard width >= ChatScroll.narrowest else { return 1 }
+            if let known = known[item.id], known.version == item.version, known.width == width { return known.height + spacing }
+            sizer.rootView = ChatList.laidOut(item.view, report: nil)
+            let height = max(1, ceil(sizer.sizeThatFits(in: CGSize(width: width, height: .greatestFiniteMagnitude)).height))
+            known[item.id] = (item.version, width, height)
+            return height + spacing
+        }
+
+        /// Takes the size a shown row reports, and whether it differs from the kept one.
+        func grew(_ id: String, to size: CGSize) -> Bool {
+            let height = ceil(size.height)
+            // A cell laid out before it has its width, or for another row, reports nonsense.
+            guard let old = known[id], abs(size.width - old.width) < 1, abs(old.height - height) > 0.5 else { return false }
+            known[id] = (old.version, old.width, height)
+            return true
+        }
+    }
+}
 
 /// What a list must redo for new rows: nothing, or rows removed (by their old place), added
 /// and redrawn (by their new place). Only those rows' cells are touched, so the others keep
 /// their views, and with them a selection or a scroll inside them.
-enum Change {
+enum Change: Equatable {
     case none
     case rows(changed: IndexSet, added: IndexSet, removed: IndexSet)
 
@@ -678,19 +505,5 @@ enum Change {
         var changed = IndexSet()
         for (index, row) in new.enumerated() where !added.contains(index) && versions[row.0] != row.1 { changed.insert(index) }
         self = changed.isEmpty && added.isEmpty && removed.isEmpty ? .none : .rows(changed: changed, added: added, removed: removed)
-    }
-}
-
-extension ChatList {
-    /// A row as both the measuring and the shown copy lay it out: the list's width, its own
-    /// height, from the top. The shown copy reports the height it takes, which changes when a
-    /// card opens or an image loads.
-    static func laidOut(_ view: AnyView, report: ((CGSize) -> Void)?) -> AnyView {
-        let fixed = view.fixedSize(horizontal: false, vertical: true)
-        guard let report else { return AnyView(fixed) }
-        return AnyView(
-            fixed
-                .onGeometryChange(for: CGSize.self) { $0.size } action: { size in report(size) }
-                .frame(maxHeight: .infinity, alignment: .top))
     }
 }
