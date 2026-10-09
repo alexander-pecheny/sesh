@@ -20,6 +20,8 @@ struct ChatList: NSViewRepresentable {
     /// The row to bring to the top, for a link or a search result.
     let reveal: String?
     let spot: Spot
+    /// Whether the Conversation has its opening batch, so the rows can be shown.
+    var ready = true
     /// Changes when the reader opens or closes a card, which keeps the rows in view where they
     /// are, even at the end, so the card opens under the pointer rather than scrolling away.
     var hold = 0
@@ -86,6 +88,9 @@ struct ChatList: NSViewRepresentable {
         private var atBottom = true
         private var restored = false
         private var adjusting = false
+        /// Whether the rows have been shown: an opening batch arrives in parts, each moving the
+        /// end, so the list stays hidden until they stop and then appears at its place at once.
+        private var shown = false
 
         func attach(scroll: NSScrollView, table: NSTableView) {
             self.scroll = scroll
@@ -124,7 +129,7 @@ struct ChatList: NSViewRepresentable {
             let old = items
             items = parent.items
             let change = Change(old: old.map { ($0.id, $0.version) }, new: items.map { ($0.id, $0.version) })
-            if case .none = change, parent.jumps == jumps, parent.reveal == revealed { return }
+            if case .none = change, parent.jumps == jumps, parent.reveal == revealed { return settle() }
             adjusting = true
             switch change {
             case .none: break
@@ -157,6 +162,7 @@ struct ChatList: NSViewRepresentable {
             if parent.reveal == nil { revealed = nil }
             scroll.reflectScrolledClipView(scroll.contentView)
             report()
+            settle()
             Self.trace("update rows=\(items.count) anchor=\(anchor.map { "\($0.id)@\($0.offset)" } ?? "-") bottom=\(atBottom) table=\(table.bounds.height) view=\(scroll.contentView.bounds.minY) now=\(topRow().map { "\($0.id)@\($0.offset)" } ?? "-")")
         }
 
@@ -182,6 +188,16 @@ struct ChatList: NSViewRepresentable {
             }
             atBottom = false
             return kept
+        }
+
+        /// Shows the rows, at their place, once the opening batch is in and they can be measured.
+        private func settle() {
+            guard !shown, let scroll, let parent else { return }
+            guard parent.ready, width >= Self.narrowest else { return scroll.alphaValue = items.isEmpty ? 1 : 0 }
+            shown = true
+            if atBottom { toEnd() }
+            scroll.alphaValue = 1
+            report()
         }
 
         /// The first message in view and how far its top sits below the view's. The spinner
@@ -241,6 +257,7 @@ struct ChatList: NSViewRepresentable {
                 place(row: row, offset: anchor.offset)
             }
             if kept != nil { report() }
+            settle()
         }
 
         /// Whether the reader is at the end and near the top, as the reader alone moves them.
@@ -249,7 +266,8 @@ struct ChatList: NSViewRepresentable {
             let visible = scroll.contentView.bounds
             guard visible.height > 0 else { return }
             let bottom = visible.maxY >= table.bounds.height + scroll.contentInsets.bottom - Self.edge
-            let top = visible.minY < Self.top
+            // Earlier pages wait until the latest screen is shown.
+            let top = shown && visible.minY < Self.top
             atBottom = bottom
             guard let parent else { return }
             if restored { parent.spot.anchor = bottom ? nil : topRow() }
@@ -364,6 +382,8 @@ struct ChatList: UIViewRepresentable {
     let jumps: Int
     let reveal: String?
     let spot: Spot
+    /// Whether the Conversation has its opening batch, so the rows can be shown.
+    var ready = true
     var hold = 0
     let spacing: CGFloat
     let inset: CGFloat
@@ -412,6 +432,8 @@ struct ChatList: UIViewRepresentable {
         private var revealed: String?
         private var atBottom = true
         private var restored = false
+        /// Whether the rows have been shown; until the opening batch is in, they stay hidden.
+        private var shown = false
         private var adjusting = false
         private var width: CGFloat = 0
 
@@ -432,6 +454,7 @@ struct ChatList: UIViewRepresentable {
             guard height != self.height else { return }
             self.height = height
             if atBottom { toEnd() }
+            settle()
         }
 
         func scrollViewDidChangeAdjustedContentInset(_ scrollView: UIScrollView) {
@@ -447,7 +470,7 @@ struct ChatList: UIViewRepresentable {
             let old = items
             items = parent.items
             let change = Change(old: old.map { ($0.id, $0.version) }, new: items.map { ($0.id, $0.version) })
-            if case .none = change, parent.jumps == jumps, parent.reveal == revealed { return }
+            if case .none = change, parent.jumps == jumps, parent.reveal == revealed { return settle() }
             adjusting = true
             switch change {
             case .none: break
@@ -487,6 +510,17 @@ struct ChatList: UIViewRepresentable {
                 place(row: row, offset: anchor.offset)
             }
             if parent.reveal == nil { revealed = nil }
+            report()
+            settle()
+        }
+
+        /// Shows the rows, at their place, once the opening batch is in and they can be measured.
+        private func settle() {
+            guard !shown, let table, let parent else { return }
+            guard parent.ready, table.bounds.width > 0 else { return table.alpha = items.isEmpty ? 1 : 0 }
+            shown = true
+            if atBottom { toEnd() }
+            table.alpha = 1
             report()
         }
 
@@ -540,7 +574,8 @@ struct ChatList: UIViewRepresentable {
         private func report() {
             guard let table, let parent, table.bounds.height > 0 else { return }
             let bottom = table.contentOffset.y + table.bounds.height >= table.contentSize.height + table.adjustedContentInset.bottom - Self.edge
-            let top = table.contentOffset.y + table.adjustedContentInset.top < Self.top
+            // Earlier pages wait until the latest screen is shown.
+            let top = shown && table.contentOffset.y + table.adjustedContentInset.top < Self.top
             atBottom = bottom
             if restored { parent.spot.anchor = bottom ? nil : topRow() }
             if parent.atBottom != bottom || parent.nearTop != top {
