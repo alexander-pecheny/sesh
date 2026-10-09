@@ -176,7 +176,7 @@ struct ChatList: NSViewRepresentable {
             let item = items[row]
             let cell = tableView.makeView(withIdentifier: Self.cell, owner: self) as? Cell ?? Cell()
             cell.identifier = Self.cell
-            cell.show(ChatList.laidOut(item.view) { [weak self] size in self?.grew(item.id, to: size) })
+            cell.show(ChatList.laidOut(item.view, width: width) { [weak self] size in self?.grew(item.id, to: size) })
             return cell
         }
 
@@ -390,7 +390,7 @@ struct ChatList: UIViewRepresentable {
             let cell = tableView.dequeueReusableCell(withIdentifier: Self.cell, for: indexPath)
             guard let cell = cell as? Cell, indexPath.row < items.count else { return cell }
             let item = items[indexPath.row]
-            cell.show(ChatList.laidOut(item.view) { [weak self] size in self?.grew(item.id, to: size) })
+            cell.show(ChatList.laidOut(item.view, width: tableView.bounds.width) { [weak self] size in self?.grew(item.id, to: size) })
             return cell
         }
 
@@ -447,8 +447,8 @@ extension ChatList {
     /// A row as both the measuring and the shown copy lay it out: the list's width, its own
     /// height, from the top. The shown copy reports the height it takes, which changes when a
     /// card opens or an image loads.
-    static func laidOut(_ view: AnyView, report: ((CGSize) -> Void)?) -> AnyView {
-        let fixed = view.fixedSize(horizontal: false, vertical: true)
+    static func laidOut(_ view: AnyView, width: CGFloat, report: ((CGSize) -> Void)?) -> AnyView {
+        let fixed = view.fixedSize(horizontal: false, vertical: true).environment(\.rowWidth, width)
         guard let report else { return AnyView(fixed) }
         return AnyView(
             fixed
@@ -469,7 +469,7 @@ extension ChatList {
         func of(_ item: Item, width: CGFloat) -> CGFloat {
             guard width >= ChatScroll.narrowest else { return 1 }
             if let known = known[item.id], known.version == item.version, known.width == width { return known.height + spacing }
-            sizer.rootView = ChatList.laidOut(item.view, report: nil)
+            sizer.rootView = ChatList.laidOut(item.view, width: width, report: nil)
             let height = max(1, ceil(sizer.sizeThatFits(in: CGSize(width: width, height: .greatestFiniteMagnitude)).height))
             known[item.id] = (item.version, width, height)
             return height + spacing

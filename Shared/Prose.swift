@@ -197,22 +197,29 @@ struct Prose: UIViewRepresentable {
 }
 
 /// A table on the phone, which cannot draw one inside text: a grid that scrolls sideways,
-/// each cell drawn by the same renderer and no wider than the prose measure.
+/// each cell drawn by the same renderer. A column wraps at a share of the row's width, so
+/// at least two show at once, but never inside a word.
 struct ProseTable: View {
     @Environment(\.colorScheme) private var colorScheme
+    @Environment(\.rowWidth) private var rowWidth
     let text: String
+    private static let column: CGFloat = 0.6
 
     private var flavour: Catppuccin.Flavour { colorScheme == .dark ? .mocha : .latte }
 
     var body: some View {
         let rows = Renderer(flavour: flavour).cells(text)
+        let widest = min((rowWidth ?? Metric.measure) * Self.column, Metric.measure)
+        let caps = (0..<(rows.map(\.count).max() ?? 0)).map { column in
+            max(widest, rows.compactMap { $0[safe: column]?.word }.max() ?? 0)
+        }
         ScrollView(.horizontal, showsIndicators: false) {
             Grid(alignment: .topLeading, horizontalSpacing: 0, verticalSpacing: 0) {
                 ForEach(rows.indices, id: \.self) { row in
                     GridRow {
                         ForEach(rows[row].indices, id: \.self) { column in
-                            Cell(text: rows[row][column])
-                                .frame(maxWidth: Metric.measure, alignment: .leading)
+                            Cell(text: rows[row][column].text, cap: caps[column])
+                                .frame(maxWidth: caps[column], alignment: .leading)
                                 .padding(.vertical, Renderer.Cell.down)
                                 .padding(.leading, column == 0 ? 0 : Renderer.Cell.across / 2)
                                 .padding(.trailing, column == rows[row].count - 1 ? 0 : Renderer.Cell.across / 2)
@@ -233,6 +240,7 @@ struct ProseTable: View {
     /// One cell's text, already styled.
     private struct Cell: UIViewRepresentable {
         let text: NSAttributedString
+        let cap: CGFloat
 
         func makeUIView(context: Context) -> UILabel {
             let label = UILabel()
@@ -245,7 +253,7 @@ struct ProseTable: View {
         }
 
         func sizeThatFits(_ proposal: ProposedViewSize, uiView label: UILabel, context: Context) -> CGSize? {
-            let width = proposal.width.flatMap { $0.isFinite && $0 > 0 ? min($0, Metric.measure) : nil } ?? Metric.measure
+            let width = proposal.width.flatMap { $0.isFinite && $0 > 0 ? min($0, cap) : nil } ?? cap
             let fitted = Prose.width(of: text, in: width)
             let size = text.boundingRect(with: CGSize(width: fitted, height: .greatestFiniteMagnitude), options: [.usesLineFragmentOrigin, .usesFontLeading], context: nil)
             return CGSize(width: fitted, height: ceil(size.height))

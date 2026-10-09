@@ -222,12 +222,12 @@ struct Renderer {
         return (text, ceil(text.size().width), ceil(word))
     }
 
-    /// The first table's cells, each in the table's style.
-    func cells(_ markdown: String) -> [[NSAttributedString]] {
+    /// The first table's cells, each in the table's style, with how wide its longest word is.
+    func cells(_ markdown: String) -> [[(text: NSAttributedString, word: CGFloat)]] {
         guard let root = Cmark.parse(markdown) else { return [] }
         defer { cmark_node_free(root) }
         guard let table = children(root).first(where: { kind($0) == "table" }) else { return [] }
-        return children(table).enumerated().map { row, cells in children(cells).map { cell($0, header: row == 0).text } }
+        return children(table).enumerated().map { row, cells in children(cells).map { cell($0, header: row == 0) }.map { ($0.text, $0.word) } }
     }
 
     private func plain(_ node: UnsafeMutablePointer<cmark_node>) -> String {

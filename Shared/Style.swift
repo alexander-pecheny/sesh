@@ -102,4 +102,6 @@ extension Array {
 
 extension EnvironmentValues {
     @Entry var taskOrder: [String: Int] = [:]
+    /// The width the Conversation's list lays its rows out at.
+    @Entry var rowWidth: CGFloat?
 }

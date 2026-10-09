@@ -85,8 +85,8 @@ private struct MarkdownWindow: View {
                 let text = (try? String(contentsOfFile: file, encoding: .utf8)) ?? ""
                 let entry: [String: Any] = ["t": "entry", "id": "md", "kind": "text", "summary": "", "at": "2026-10-09T12:00:00Z", "text": text]
                 guard let data = try? JSONSerialization.data(withJSONObject: entry) else { return }
-                conversation.apply(String(decoding: data, as: UTF8.self))
-                conversation.apply(#"{"t": "cursor", "cursor": "0"}"#)
+                conversation.receive(String(decoding: data, as: UTF8.self))
+                conversation.receive(#"{"t": "cursor", "cursor": "0"}"#)
             }
     }
 }
