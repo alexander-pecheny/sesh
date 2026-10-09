@@ -133,7 +133,6 @@ struct Renderer {
         table.numberOfColumns = rows.map { children($0).count }.max() ?? 1
         table.layoutAlgorithm = .automaticLayoutAlgorithm
         table.collapsesBorders = true
-        table.setContentWidth(100, type: .percentageValueType)
         let border = PlatformColor(flavour(.surface2))
         // Each column gets the share of the width its longest text asks for, so a column of
         // short labels stays narrow, as in Claude's own tables.
@@ -145,11 +144,25 @@ struct Renderer {
             return max(min(text, 120), word * 2)
         }
         let total = Double(longest.reduce(0, +))
+        // A table that fits the measure on one line per cell is drawn that narrow; only a
+        // wider one shares out the whole width.
+        let bold = attributes(font: .systemFont(ofSize: Metric.label, weight: .bold), style: paragraph())
+        let natural: [CGFloat] = (0..<table.numberOfColumns).map { column in
+            let cells = rows.map { children($0) }.compactMap { $0.count > column ? $0[column] : nil }
+            let widest = cells.map { inlines($0, bold).size().width }.max() ?? 0
+            return ceil(widest) + 2 * Metric.gap + 1
+        }
+        let fits = natural.reduce(0, +) <= Metric.measure
+        if !fits { table.setContentWidth(100, type: .percentageValueType) }
         let out = NSMutableAttributedString()
         for (row, cells) in rows.map(children).enumerated() {
             for (column, cell) in cells.enumerated() {
                 let block = NSTextTableBlock(table: table, startingRow: row, rowSpan: 1, startingColumn: column, columnSpan: 1)
-                block.setValue(100 * Double(longest[column]) / max(total, 1), type: .percentageValueType, for: .width)
+                if fits {
+                    block.setValue(natural[column], type: .absoluteValueType, for: .width)
+                } else {
+                    block.setValue(100 * Double(longest[column]) / max(total, 1), type: .percentageValueType, for: .width)
+                }
                 // A cell, not the table, keeps the prose measure.
                 block.setValue(Metric.measure, type: .absoluteValueType, for: .maximumWidth)
                 block.setBorderColor(border)

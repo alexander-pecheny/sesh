@@ -314,7 +314,7 @@ impl Client {
                     self.send(&summary);
                 }
                 let since = request["since"].as_i64().unwrap_or(0);
-                if since > 0 {
+                if since > 0 && (machine.log.base()?..=machine.log.head()?).contains(&since) {
                     self.watched.insert(session, since);
                 } else {
                     let head = machine.log.head()?;

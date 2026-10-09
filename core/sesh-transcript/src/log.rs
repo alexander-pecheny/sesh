@@ -43,7 +43,23 @@ impl Log {
         db.busy_timeout(std::time::Duration::from_secs(10)).map_err(sql)?;
         db.pragma_update(None, "journal_mode", "wal").map_err(sql)?;
         db.execute_batch(SCHEMA).map_err(sql)?;
+        // A new log numbers from its creation time, above any older log's numbers, so a
+        // device holding a number from another log can be told by it.
+        let base = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap_or_default().as_millis() as i64 * 1000;
+        db.execute("INSERT OR IGNORE INTO meta (key, value) VALUES ('seq', ?1)", [base]).map_err(sql)?;
+        db.execute("INSERT OR IGNORE INTO meta (key, value) SELECT 'base', value FROM meta WHERE key = 'seq'", [])
+            .map_err(sql)?;
         Ok(Log { db })
+    }
+
+    /// The first number this log gave out; a device's number below it is another log's.
+    pub fn base(&self) -> Result<i64> {
+        let base: Option<i64> = self
+            .db
+            .query_row("SELECT value FROM meta WHERE key = 'base'", [], |row| row.get(0))
+            .optional()
+            .map_err(sql)?;
+        Ok(base.unwrap_or(0))
     }
 
     pub fn head(&self) -> Result<i64> {

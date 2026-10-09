@@ -337,6 +337,7 @@ final class Conversation: ObservableObject {
         let background: [Background]?
         let permissions: [Permission]?
         let more: Bool?
+        let seq: Int?
     }
 
     private var logItems: [String: LogItem] = [:]
@@ -426,6 +427,8 @@ final class Conversation: ObservableObject {
             background = line.background ?? []
             permissions = line.permissions ?? []
         case "opened":
+            // A fresh opening, as after the follower's log was replaced, numbers from its head.
+            if let seq = line.seq { logSeq = seq }
             loaded = true
             earlier = !logItems.isEmpty
         default: break
