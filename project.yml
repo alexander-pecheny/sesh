@@ -131,6 +131,9 @@ targets:
       - path: Shared/Herdr.swift
       - path: Shared/FollowerLink.swift
       - path: Shared/HelperInstaller.swift
+      - path: Shared/Record.swift
+      - path: Shared/Git.swift
+      - path: Shared/Close.swift
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: me.pecheny.sesh.tests

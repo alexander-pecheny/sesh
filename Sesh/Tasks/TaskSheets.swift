@@ -30,7 +30,7 @@ enum TaskSheet: Identifiable {
 }
 
 /// A Form in its own navigation bar, with Cancel and one action that may take a while.
-private struct SheetForm<Content: View>: View {
+struct SheetForm<Content: View>: View {
     @Environment(\.dismiss) private var dismiss
     @Environment(\.colorScheme) private var colorScheme
     let title: String
@@ -172,46 +172,5 @@ struct NewTaskSheet: View {
         guard !trimmed.isEmpty else { return }
         dismiss()
         library.newTask(trimmed, in: vault, parent: parent)
-    }
-}
-
-/// What closing a Task will do, said before it is done; uncommitted work must be given up
-/// explicitly.
-struct CloseTaskSheet: View {
-    @Environment(\.dismiss) private var dismiss
-    @EnvironmentObject private var library: Library
-    @ObservedObject var vault: Vault
-    let task: Record
-    @State private var uncommitted: String?
-    @State private var discard = false
-
-    private var sessions: Int { vault.children(.session, task: task.id).count }
-
-    var body: some View {
-        SheetForm(title: "Close Task", action: "Close", role: .destructive,
-                  enabled: uncommitted != nil && (uncommitted?.isEmpty != false || discard), working: false,
-                  perform: close) {
-            Section(task.body.title ?? "Task") {
-                Text(sessions == 1 ? "Stops its Agent session." : "Stops its \(sessions) Agent sessions.")
-                if let path = task.body.path, path != task.body.repo {
-                    Text("Removes the Worktree at \(path) on \(TaskActions.machine(task.body.machine).title); the branch \(task.body.branch ?? "") stays.")
-                }
-                Text("Archives the Task. Its Journal, Documents and Conversations stay searchable.")
-            }
-            if uncommitted == nil {
-                Section { HStack { ProgressView(); Text("Looking for uncommitted work…") } }
-            } else if let uncommitted, !uncommitted.isEmpty {
-                Section("The Worktree has uncommitted changes") {
-                    Text(uncommitted).font(.system(size: Metric.small, design: .monospaced))
-                    Toggle("Discard them", isOn: $discard)
-                }
-            }
-        }
-        .task { uncommitted = await TaskActions.uncommitted(in: task) }
-    }
-
-    private func close() {
-        TaskActions.close(task, in: vault, library: library, discard: discard)
-        dismiss()
     }
 }

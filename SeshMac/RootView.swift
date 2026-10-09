@@ -28,11 +28,7 @@ struct RootView: View {
         // A Task picked in the sidebar is what the user wants to see, not the results.
         .onChange(of: library.selection) { if library.selection != nil { search.query = "" } }
         .onAppear { search.library = library }
-        .alert("Sesh could not finish closing it", isPresented: Binding(
-            get: { library.cleanupProblem != nil }, set: { if !$0 { library.cleanupProblem = nil } }
-        )) {
-            Button("OK", role: .cancel) {}
-        } message: { Text(library.cleanupProblem ?? "") }
+        .reportsCleanup(library)
         #if DEBUG
         // `-newtask TITLE` makes a Task in the first Vault, as the New Task sheet does.
         .task {

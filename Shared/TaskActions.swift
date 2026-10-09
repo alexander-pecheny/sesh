@@ -237,67 +237,30 @@ enum TaskActions {
         library.open(.document(document.id), in: task)
     }
 
-    /// What `git status` says is uncommitted in the Task's Worktree; empty when clean or absent.
-    static func uncommitted(in task: Record) async -> String {
-        guard let path = task.body.path else { return "" }
-        let ran = await machine(task.body.machine).run("git -C \(quote(path)) status --porcelain")
-        return ran.ok ? ran.out.trimmingCharacters(in: .whitespacesAndNewlines) : ""
-    }
-
     /// Ends a Task at once: archived, still searchable, and its Tabs closed. Its machines are
-    /// cleaned after: its Transcripts copied one last time, its Agents stopped, and its
-    /// Worktree and Workspace removed with the branch kept.
-    static func close(_ task: Record, in vault: Vault, library: Library, discard: Bool) {
-        let sessions = vault.children(.session, task: task.id)
-        var record = vault.records[task.id] ?? task
+    /// cleaned after, as `plan` says; what that cannot do waits for the user to retry.
+    static func close(_ close: Close, as plan: Close.Plan, in vault: Vault, library: Library, discard: Bool) {
+        var record = vault.records[close.task.id] ?? close.task
         record.body.archived = true
         vault.write(record)
-        for tab in library.tabs[task.id] ?? [] { library.close(tab, in: task.id, confirmed: true) }
-        if library.selection == task.id { library.selection = nil }
+        for tab in library.tabs[record.id] ?? [] { library.close(tab, in: record.id, confirmed: true) }
+        if library.selection == record.id { library.selection = nil }
+        finish(close, plan, discard: discard, library: library)
+    }
+
+    private static func finish(_ close: Close, _ plan: Close.Plan, discard: Bool, library: Library) {
         Task {
-            if let problem = await cleanUp(task, sessions: sessions, in: vault, discard: discard) {
-                library.cleanupProblem = "“\(task.body.title ?? "Task")” is closed, but \(problem)"
-            }
+            let failures = await close.perform(plan, discard: discard)
+            guard !failures.isEmpty else { return }
+            library.cleanupProblem = Library.CleanupProblem(
+                message: "“\(close.task.body.title ?? "Task")” is closed, but not cleaned up.\n\n" + failures.map(\.message).joined(separator: "\n\n"),
+                retry: { finish(close, plan, discard: discard, library: library) })
         }
     }
+}
 
-    private static func cleanUp(_ task: Record, sessions: [Record], in vault: Vault, discard: Bool) async -> String? {
-        await vault.copier.copy(sessions)
-        for session in sessions {
-            guard let pane = session.body.pane else { continue }
-            _ = await machine(session.body.machine).follower.stop(pane)
-        }
-        let home = machine(task.body.machine)
-        let open = await Herdr.workspaces(on: home)
-        let workspace = task.body.workspace.flatMap { open[$0] != nil ? $0 : nil }
-            ?? open.first { $0.value == task.body.title }?.key
-        if let path = task.body.path, await linked(path, on: home) {
-            let ran = if let workspace {
-                await Herdr.removeWorktree(of: workspace, force: discard, on: home)
-            } else {
-                await home.run("git -C \(quote(task.body.repo ?? path)) worktree remove \(quote(path))\(discard ? " --force" : "")")
-            }
-            guard ran.ok else { return "its Worktree is still there: \(ran.problem)" }
-        } else if let workspace {
-            await Herdr.closeWorkspace(workspace, on: home)
-        }
-        // Worktrees made later in other repositories carry the Task's branch too.
-        let others = Set(sessions.compactMap { session -> [String?]? in
-            guard let repo = session.body.repo, let path = session.body.path, path != repo, path != task.body.path else { return nil }
-            return [session.body.machine, repo, path]
-        })
-        for other in others {
-            guard await linked(other[2] ?? "", on: machine(other[0])) else { continue }
-            let force = discard ? " --force" : ""
-            let ran = await machine(other[0]).run("git -C \(quote(other[1] ?? "")) worktree remove \(quote(other[2] ?? ""))\(force)")
-            guard ran.ok else { return "the Worktree at \(other[2] ?? "") is still there: \(ran.problem)" }
-        }
-        return nil
-    }
-
-    /// Whether `path` is a linked worktree, whose `.git` is a file; a repository's own
-    /// checkout, used as is, is never removed.
-    private static func linked(_ path: String, on machine: Machine) async -> Bool {
-        await machine.run("[ -f \(quote(path))/.git ]").ok
+extension Close {
+    init(_ task: Record, in vault: Vault) {
+        self.init(task: task, sessions: vault.children(.session, task: task.id), runner: { TaskActions.machine($0) }, copy: vault.copier.copy)
     }
 }

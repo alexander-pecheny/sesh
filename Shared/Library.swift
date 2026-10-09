@@ -468,8 +468,12 @@ final class Library: ObservableObject {
     @Published var ending: Record?
     /// Why the last resume failed, until the user has read it.
     @Published var resumeProblem: String?
-    /// What a closed Task's cleanup on its machines could not do.
-    @Published var cleanupProblem: String?
+    /// What a closed Task's cleanup on its machines could not do, and a way to try it again.
+    struct CleanupProblem {
+        let message: String
+        let retry: () -> Void
+    }
+    @Published var cleanupProblem: CleanupProblem?
 
     /// Ends an idle Agent at once; a busy one waits for the user to confirm.
     func askToEnd(_ session: Record) {

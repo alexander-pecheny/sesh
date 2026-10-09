@@ -53,11 +53,7 @@ struct TasksView: View {
         .sheet(item: $sheet) { $0.view }
         .sheet(isPresented: $settings) { SettingsView() }
         .onAppear { search.library = library }
-        .alert("Sesh could not finish closing it", isPresented: Binding(
-            get: { library.cleanupProblem != nil }, set: { if !$0 { library.cleanupProblem = nil } }
-        )) {
-            Button("OK", role: .cancel) {}
-        } message: { Text(library.cleanupProblem ?? "") }
+        .reportsCleanup(library)
     }
 
     private var empty: some View {

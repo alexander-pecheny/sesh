@@ -66,7 +66,10 @@ struct TaskView: View {
         .task {
             if UserDefaults.standard.bool(forKey: "close") {
                 for _ in 0..<40 where vault.records[id] == nil || !vault.online { try? await Task.sleep(for: .milliseconds(500)) }
-                if let task = vault.records[id] { TaskActions.close(task, in: vault, library: library, discard: false) }
+                if let task = vault.records[id] {
+                    let close = Close(task, in: vault)
+                    TaskActions.close(close, as: await close.plan(), in: vault, library: library, discard: false)
+                }
             }
             if UserDefaults.standard.string(forKey: "start") == "terminal" {
                 for _ in 0..<40 where vault.records[id] == nil || !vault.online { try? await Task.sleep(for: .milliseconds(500)) }

@@ -11,4 +11,14 @@ extension View {
             Text(closing.loss)
         }
     }
+
+    /// Says what a closed Task's cleanup could not do, and offers to try it again.
+    func reportsCleanup(_ library: Library) -> some View {
+        alert("Sesh could not finish closing it", isPresented: Binding(
+            get: { library.cleanupProblem != nil }, set: { if !$0 { library.cleanupProblem = nil } }
+        ), presenting: library.cleanupProblem) { problem in
+            Button("Retry", action: problem.retry)
+            Button("OK", role: .cancel) {}
+        } message: { Text($0.message) }
+    }
 }
