@@ -61,7 +61,9 @@ enum Helper {
     static let file = "sesh-transcript-" + (version?.split(separator: "+").last.map(String.init) ?? "unpinned")
     static let path = "~/.sesh/bin/\(file)"
     static let gz = "$HOME/.sesh/bin/\(file).gz"
-    static let unpack = "gunzip -f \(gz) && chmod 755 $HOME/.sesh/bin/\(file)"
+    /// Unpacked beside its place and moved in whole, so a command racing it never runs half a file.
+    static let unpack = "gunzip -c \(gz) > $HOME/.sesh/bin/\(file).part && chmod 755 $HOME/.sesh/bin/\(file).part"
+        + " && mv -f $HOME/.sesh/bin/\(file).part $HOME/.sesh/bin/\(file) && rm -f \(gz)"
 
     /// The build's name for what `uname -sm` printed, as in `linux-x86_64`.
     static func name(_ platform: String) -> String { platform.lowercased().replacingOccurrences(of: " ", with: "-") }

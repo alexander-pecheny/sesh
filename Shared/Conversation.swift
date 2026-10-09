@@ -248,6 +248,8 @@ final class Conversation: ObservableObject {
         // The helper follows only a pane that runs an Agent, and a starting one does not yet.
         while starting, !Task.isCancelled { try? await Task.sleep(for: .milliseconds(200)) }
         if case .pane(let pane) = source { return await attach(pane) }
+        // A helper still being installed would fail, and a failed follow is not retried.
+        await prepare?()
         while !Task.isCancelled, let runner {
             let since = cursor.map { " --since \(quote($0))" } ?? ""
             let ended = await runner.stream("\(Helper.path) follow \(target)\(since)") { [weak self] in

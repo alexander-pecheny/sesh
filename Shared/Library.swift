@@ -105,8 +105,10 @@ final class Library: ObservableObject {
         if !running, let vault = vault(of: session.id), let last = session.body.transcripts?.last, let agent {
             let copy = "\(vault.folder)/transcripts/\(session.id)/\((last as NSString).lastPathComponent)"
             conversation = Conversation(source: .file(path: copy, agent: agent), agent: agent, runner: vault.machine)
+            conversation.prepare = { _ = await vault.machine.prepare() }
         } else {
             conversation = Conversation(pane: session.body.pane ?? "", agent: agent, runner: machine)
+            conversation.prepare = { _ = await machine.prepare() }
             conversation.openPath = { [weak self, weak conversation] path in
                 guard let self, let vault = self.vault(of: session.id), let current = vault.records[session.id] else { return }
                 let wrote = (conversation?.items ?? []).compactMap { item -> String? in
@@ -116,10 +118,7 @@ final class Library: ObservableObject {
             }
         }
         if let cached = conversations[session.id] { return cached }
-        if case .pane = conversation.source {
-            conversation.prepare = { _ = await machine.prepare() }
-            conversation.cache = cache
-        }
+        if case .pane = conversation.source { conversation.cache = cache }
         conversation.starting = launching.contains(session.id)
         conversation.bookmark = { [weak self] entry in self?.bookmark(entry, in: session.id) }
         conversation.copyLink = { [weak self] entry in self?.copyLink(entry, in: session.id) }

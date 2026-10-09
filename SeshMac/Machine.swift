@@ -75,7 +75,7 @@ final class Machine: Runner, Identifiable, Hashable {
     }
 
     private var home: String?
-    private var prepared = false
+    private var preparing: Task<String?, Never>?
 
     /// Pasted images land in `~/.sesh/uploads` under the moment they were pasted, as the
     /// phone's Uploads do, so the Agent can be told where to look.
@@ -197,9 +197,11 @@ extension Machine {
     /// Puts the pinned transcript helper in place unless that version is already there; once
     /// a run, as every use of a machine asks first.
     func prepare() async -> String? {
-        if prepared { return nil }
-        let problem = await check()
-        prepared = problem == nil
+        if let preparing { return await preparing.value }
+        let task = Task { await check() }
+        preparing = task
+        let problem = await task.value
+        if problem != nil { preparing = nil }
         return problem
     }
 
