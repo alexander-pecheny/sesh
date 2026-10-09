@@ -86,7 +86,7 @@ pub fn replay(recording: &Path, work: &Path) -> Result<Outcome> {
     let mut ticks = Vec::new();
     let mut device = Device::default();
     let mut provisional = std::collections::HashSet::new();
-    let mut lines = vec![json!({"t": "hello", "protocol": crate::serve::PROTOCOL, "version": crate::VERSION})];
+    let mut lines = vec![json!({"t": "hello", "protocol": crate::serve::PROTOCOL, "version": crate::version()})];
     let mut watched: HashMap<String, i64> = HashMap::new();
     let mut summaries = 0;
     for event in &events {

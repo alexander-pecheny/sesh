@@ -52,6 +52,13 @@ enum Helper {
         (try? String(contentsOf: $0.appending(path: "version"), encoding: .utf8))?.trimmingCharacters(in: .whitespacesAndNewlines)
     } ?? published?.version
 
+    /// The follower a helper runs and the Session log it keeps, as in `p4-s1`, which every build
+    /// that names the same pair shares (ADR 0014); a helper from before is known by its version.
+    static func follower(of version: String?) -> String? {
+        version?.split(separator: "+").last?.split(separator: ".").dropFirst().first.map(String.init) ?? version
+    }
+    static let follower = follower(of: version)
+
     /// Named for its version, so builds that pin different helpers share a machine without
     /// replacing each other's.
     static let file = "sesh-transcript-" + (version?.split(separator: "+").last.map(String.init) ?? "unpinned")

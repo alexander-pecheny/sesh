@@ -36,11 +36,21 @@ const START_WAIT: Duration = Duration::from_secs(3);
 
 type Result<T> = std::result::Result<T, String>;
 
-/// Each helper version keeps a follower of its own, so a device that pins another version
-/// never talks to one that speaks differently; an old one leaves once no device uses it.
+/// The follower's protocol and its Session log's schema, as in `p4-s1`, which name its folder:
+/// every helper build that shares both runs the same follower (ADR 0014).
+pub fn follower() -> String {
+    format!("p{PROTOCOL}-s{}", crate::log::VERSION)
+}
+
+/// Orders the builds of one follower, so a newer one takes over: build-helpers.sh stamps its
+/// UTC time and a dev build is 0. SESH_BUILD at run time stands in, so a test can play either.
+fn build() -> u64 {
+    let stamp = std::env::var("SESH_BUILD").ok().or(option_env!("SESH_BUILD").map(str::to_string));
+    stamp.and_then(|stamp| stamp.parse().ok()).unwrap_or(0)
+}
+
 fn home() -> PathBuf {
-    let version = crate::VERSION.rsplit('+').next().unwrap_or("unversioned");
-    std::env::var_os("HOME").map(PathBuf::from).unwrap_or_default().join(".sesh/follower").join(version)
+    std::env::var_os("HOME").map(PathBuf::from).unwrap_or_default().join(".sesh/follower").join(follower())
 }
 
 fn socket() -> PathBuf {
@@ -195,9 +205,9 @@ impl Machine {
 
 // MARK: serve
 
-/// Starts the follower unless one answers, and returns once it does.
+/// Starts the follower unless one of this build or a newer one answers, and returns once it does.
 pub fn serve(foreground: bool, record: Option<(PathBuf, String)>) -> Result<i32> {
-    if UnixStream::connect(socket()).is_ok() {
+    if UnixStream::connect(socket()).is_ok_and(|running| !took_over(running)) {
         return Ok(0);
     }
     if foreground {
@@ -227,12 +237,32 @@ pub fn serve(foreground: bool, record: Option<(PathBuf, String)>) -> Result<i32>
     Err("the follower did not start; see ~/.sesh/follower.log".into())
 }
 
+/// Asks a follower of an older build to leave and waits until it has hung up, so the log
+/// it kept goes on under this build; a follower of this build or a newer one stays.
+fn took_over(running: UnixStream) -> bool {
+    let _ = running.set_read_timeout(Some(START_WAIT));
+    let mut lines = BufReader::new(&running).lines();
+    let _ = writeln!(&running, "{}", json!({"op": "hello"}));
+    let hello: Value = lines.next().and_then(|line| serde_json::from_str(&line.ok()?).ok()).unwrap_or_default();
+    if hello["build"].as_u64().unwrap_or(0) >= build() {
+        return false;
+    }
+    let _ = writeln!(&running, "{}", json!({"op": "leave", "build": build()}));
+    lines.map_while(std::result::Result::ok).for_each(drop);
+    true
+}
+
 fn run(record: Option<(PathBuf, String)>) -> Result<i32> {
     std::fs::create_dir_all(home()).map_err(|err| err.to_string())?;
     let lock = File::create(home().join("follower.lock")).map_err(|err| err.to_string())?;
-    if lock.try_lock().is_err() {
-        return Ok(0);
+    let started = Instant::now();
+    while lock.try_lock().is_err() {
+        if started.elapsed() > START_WAIT {
+            return Ok(0);
+        }
+        std::thread::sleep(TICK);
     }
+    let log = Log::open(&home().join("sessions.db"))?;
     let path = socket();
     let _ = std::fs::remove_file(&path);
     let listener = UnixListener::bind(&path).map_err(|err| format!("{}: {err}", path.display()))?;
@@ -241,7 +271,7 @@ fn run(record: Option<(PathBuf, String)>) -> Result<i32> {
         Some((dir, pane)) => Rc::new(RefCell::new(Recorder::new(&dir, pane)?)),
         None => Rc::new(RefCell::new(Herdr)),
     };
-    let mut machine = Machine::new(Log::open(&home().join("sessions.db"))?, Shared(source.clone()));
+    let mut machine = Machine::new(log, Shared(source.clone()));
     let mut clients: Vec<Client> = Vec::new();
     let mut busy = Instant::now();
     let mut ticks = 0u32;
@@ -265,6 +295,10 @@ fn run(record: Option<(PathBuf, String)>) -> Result<i32> {
         }
         for client in &mut clients {
             client.serve(&mut machine);
+        }
+        if clients.iter().any(|client| client.leave) {
+            let _ = std::fs::remove_file(&path);
+            return Ok(0);
         }
         clients.retain(|client| client.open);
         if !clients.is_empty() {
@@ -293,13 +327,15 @@ struct Client {
     watched: HashMap<String, i64>,
     pinged: Instant,
     done_asking: bool,
+    /// Whether a newer build asked this follower to leave.
+    leave: bool,
     /// Replies to this device's acts, as their threads finish them.
     replies: (mpsc::Sender<Value>, mpsc::Receiver<Value>),
 }
 
 impl Client {
     fn new(stream: UnixStream) -> Self {
-        Client { stream, read: Vec::new(), write: Vec::new(), open: true, summaries: 0, all: false, watched: HashMap::new(), pinged: Instant::now(), done_asking: false, replies: mpsc::channel() }
+        Client { stream, read: Vec::new(), write: Vec::new(), open: true, summaries: 0, all: false, watched: HashMap::new(), pinged: Instant::now(), done_asking: false, leave: false, replies: mpsc::channel() }
     }
 
     fn send(&mut self, line: &Value) {
@@ -350,9 +386,10 @@ impl Client {
         let session = request["session"].as_str().unwrap_or_default().to_string();
         match request["op"].as_str().unwrap_or_default() {
             "hello" => {
-                self.send(&json!({"t": "hello", "protocol": PROTOCOL, "version": crate::VERSION}));
+                self.send(&json!({"t": "hello", "protocol": PROTOCOL, "version": crate::version(), "build": build()}));
                 self.all = request["sessions"] == true;
             }
+            "leave" => self.leave = request["build"].as_u64().unwrap_or(0) > build(),
             "watch" => {
                 if let Some(mut summary) = machine.log.session(&session)? {
                     summary["t"] = "session".into();

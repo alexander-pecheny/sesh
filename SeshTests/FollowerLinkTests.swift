@@ -124,4 +124,10 @@ final class HelperInstallerTests: XCTestCase {
         XCTAssertEqual(plan("missing\nLinux x86_64\n\n"), .failed("box has no herdr, which Tasks run their Agents in."))
         XCTAssertEqual(plan("", status: 255), .failed("no route"))
     }
+
+    func testBuildsOfOneFollowerShareItsCache() {
+        XCTAssertEqual(Helper.follower(of: "sesh-transcript 0.1.0+932cb2c6076a8838.p4-s1"), "p4-s1")
+        XCTAssertEqual(Helper.follower(of: "sesh-transcript 0.1.0+25b5aeb667961443.p4-s1"), "p4-s1")
+        XCTAssertEqual(Helper.follower(of: "sesh-transcript 0.1.0+bd98cab2566d1d05"), "sesh-transcript 0.1.0+bd98cab2566d1d05")
+    }
 }

@@ -13,6 +13,8 @@ export CARGO_TARGET_X86_64_UNKNOWN_LINUX_MUSL_LINKER=rust-lld
 export CARGO_TARGET_AARCH64_UNKNOWN_LINUX_MUSL_LINKER=rust-lld
 # The Vault needs only SQLite's FTS5 and JSON, and leaving out the rest saves 80 KB.
 export LIBSQLITE3_FLAGS="-USQLITE_ENABLE_FTS3 -USQLITE_ENABLE_RTREE -USQLITE_ENABLE_DBSTAT_VTAB -USQLITE_ENABLE_STAT4"
+# Orders this build among others of the same follower, so the newer one takes it over (ADR 0014).
+export SESH_BUILD=$(date -u +%Y%m%d%H%M%S)
 
 out="$root/build/helpers"
 mkdir -p "$out"

@@ -23,9 +23,9 @@ sequence number, so a reconnect resumes from the last number seen.
 The phone's ssh streams cannot write to a running command's stdin, so a device names what
 it wants on `attach`'s command line instead: `--sessions` for every summary, and
 `--watch KEY:SEQ` for each session it shows, from the last item it has. Opening another
-session starts another `attach`, and earlier pages come through a one-shot `page`. Each
-helper version runs a follower of its own under `~/.sesh/follower/VERSION`, so a device
-never talks to a follower that speaks another version.
+session starts another `attach`, and earlier pages come through a one-shot `page`. The
+follower a device reaches is the one for its protocol and log, which a newer helper build
+takes over (ADR 0014), so a device never talks to a follower that speaks another protocol.
 
 Messages, keys, answers, permissions and stops go to the follower the same way, each through
 a one-shot command (`send`, `keys`, `answer`, `permit`, `stop`), and the follower plays them

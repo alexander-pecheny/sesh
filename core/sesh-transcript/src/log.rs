@@ -10,6 +10,10 @@ use serde_json::{json, Value};
 use crate::follower::Event;
 use crate::reconcile::{Change, Rows};
 
+/// The schema's version, which with the follower's protocol names the folder the log lives in
+/// (ADR 0014). Bump it with any change to the tables or to what their rows mean.
+pub const VERSION: i64 = 1;
+
 const SCHEMA: &str = "
 CREATE TABLE IF NOT EXISTS meta (key TEXT PRIMARY KEY, value INTEGER NOT NULL);
 CREATE TABLE IF NOT EXISTS sessions (key TEXT PRIMARY KEY, seq INTEGER NOT NULL, body TEXT NOT NULL);
@@ -44,7 +48,13 @@ impl Log {
         let db = Connection::open(path).map_err(sql)?;
         db.busy_timeout(std::time::Duration::from_secs(10)).map_err(sql)?;
         db.pragma_update(None, "journal_mode", "wal").map_err(sql)?;
+        let version: i64 = db.pragma_query_value(None, "user_version", |row| row.get(0)).map_err(sql)?;
+        let tables: i64 = db.query_row("SELECT COUNT(*) FROM sqlite_master", [], |row| row.get(0)).map_err(sql)?;
+        if version != VERSION && tables > 0 {
+            return Err(format!("{} has Session log schema {version}, and this helper reads only {VERSION}", path.display()));
+        }
         db.execute_batch(SCHEMA).map_err(sql)?;
+        db.pragma_update(None, "user_version", VERSION).map_err(sql)?;
         // A new log numbers from its creation time, above any older log's numbers, so a
         // device holding a number from another log can be told by it.
         let base = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap_or_default().as_millis() as i64 * 1000;

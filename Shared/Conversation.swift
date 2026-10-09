@@ -183,19 +183,19 @@ final class Conversation: ObservableObject {
         didSet { loadCache() }
     }
 
-    /// Each helper version keeps a log of its own, numbered and ordered its own way, so a
-    /// cache is good only with the version that wrote it.
+    /// Each follower keeps a log of its own, numbered and ordered its own way, so a cache is
+    /// good only with the follower that wrote it, whichever helper build ran it.
     private struct Cache: Codable {
         let seq: Int
         let items: [SessionLog.Item]
-        var version: String?
+        var follower: String?
     }
     private static let kept = 80
     private var saving = false
 
     private func loadCache() {
         guard let cache, let data = try? Data(contentsOf: cache),
-              let kept = try? JSONDecoder().decode(Cache.self, from: data), kept.version == Helper.version else { return }
+              let kept = try? JSONDecoder().decode(Cache.self, from: data), kept.follower == Helper.follower else { return }
         log.restore(kept.items, seq: kept.seq)
         savedSeq = kept.seq
         publish()
@@ -208,7 +208,7 @@ final class Conversation: ObservableObject {
         DispatchQueue.main.asyncAfter(deadline: .now() + 1) { [weak self] in
             guard let self else { return }
             saving = false
-            guard let data = try? JSONEncoder().encode(Cache(seq: log.seq, items: log.kept(Self.kept), version: Helper.version)) else { return }
+            guard let data = try? JSONEncoder().encode(Cache(seq: log.seq, items: log.kept(Self.kept), follower: Helper.follower)) else { return }
             try? FileManager.default.createDirectory(at: cache.deletingLastPathComponent(), withIntermediateDirectories: true)
             try? data.write(to: cache, options: .atomic)
         }

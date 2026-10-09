@@ -8,7 +8,7 @@ use sesh_transcript::agent::{transcript_path, Agent};
 use sesh_transcript::follower::{entry_line, herdr, Event, Follower, Herdr};
 use sesh_transcript::act;
 use sesh_transcript::vault::{self, Vault};
-use sesh_transcript::{replay, serve, Transcript, PROTOCOL, VERSION};
+use sesh_transcript::{replay, serve, version, Transcript, PROTOCOL};
 
 /// Short enough that the chat keeps up with what Claude's screen shows.
 const POLL: Duration = Duration::from_millis(100);
@@ -36,7 +36,7 @@ fn main() {
     let rest = args.get(1..).unwrap_or_default();
     let exit = match args.first().map(String::as_str) {
         Some("--version") => {
-            println!("sesh-transcript {VERSION}");
+            println!("sesh-transcript {}", version());
             Ok(0)
         }
         Some("follow") => follow(rest),

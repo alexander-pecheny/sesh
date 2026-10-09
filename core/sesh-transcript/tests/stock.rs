@@ -1,7 +1,7 @@
 //! The helper against a stand-in for stock herdr, which reports Claude's session id but no
 //! Transcript path and no permission prompts.
 
-use std::io::BufRead;
+use std::io::{BufRead, BufReader, Write};
 use std::path::{Path, PathBuf};
 use std::os::unix::net::UnixStream;
 use std::process::{Child, Command, Stdio};
@@ -78,14 +78,12 @@ esac
         command
     }
 
-    /// A follower of this Host's own, run in the foreground so the test can end it, once it
-    /// answers on its socket.
-    fn follower(&self) -> Child {
-        let mut child = self.command(&["serve", "--foreground"]).spawn().unwrap();
-        let versions = self.root.join(".sesh/follower");
+    /// A follower of this Host's own from helper build `build`, run in the foreground so the
+    /// test can end it, once it answers on its socket.
+    fn follower(&self, build: u64) -> Child {
+        let mut child = self.command(&["serve", "--foreground"]).env("SESH_BUILD", build.to_string()).spawn().unwrap();
         for _ in 0..50 {
-            let sockets = std::fs::read_dir(&versions).into_iter().flatten().flatten().map(|dir| dir.path().join("follower.sock"));
-            if sockets.into_iter().any(|socket| UnixStream::connect(socket).is_ok()) {
+            if self.hello().is_some_and(|hello| hello["build"] == build) {
                 return child;
             }
             std::thread::sleep(Duration::from_millis(100));
@@ -93,6 +91,27 @@ esac
         child.kill().unwrap();
         child.wait().unwrap();
         panic!("the follower did not start");
+    }
+
+    /// What the follower answering on this Host says of itself, if one does.
+    fn hello(&self) -> Option<Value> {
+        let folders = std::fs::read_dir(self.root.join(".sesh/follower")).ok()?;
+        let socket = folders.flatten().find_map(|dir| UnixStream::connect(dir.path().join("follower.sock")).ok())?;
+        writeln!(&socket, "{}", json!({"op": "hello"})).ok()?;
+        serde_json::from_str(&BufReader::new(&socket).lines().next()?.ok()?).ok()
+    }
+
+    /// `attach` as a device pinning helper build `build` runs it, and its lines as they come.
+    fn attach(&self, build: u64, args: &[&str]) -> (Child, mpsc::Receiver<Value>) {
+        let mut child = self.command(&[&["attach"], args].concat()).env("SESH_BUILD", build.to_string()).stdout(Stdio::piped()).spawn().unwrap();
+        let (send, lines) = mpsc::channel();
+        let stdout = child.stdout.take().unwrap();
+        std::thread::spawn(move || {
+            for line in BufReader::new(stdout).lines() {
+                let _ = send.send(serde_json::from_str::<Value>(&line.unwrap()).unwrap());
+            }
+        });
+        (child, lines)
     }
 
     fn inputs(&self) -> String {
@@ -104,6 +123,15 @@ impl Drop for Host {
     fn drop(&mut self) {
         let _ = std::fs::remove_dir_all(&self.root);
     }
+}
+
+/// Lines up to and including the first that `last` picks.
+fn until(lines: &mpsc::Receiver<Value>, last: impl Fn(&Value) -> bool) -> Vec<Value> {
+    let mut seen: Vec<Value> = Vec::new();
+    while !seen.last().is_some_and(&last) {
+        seen.push(lines.recv_timeout(Duration::from_secs(5)).expect("a line within 5 s"));
+    }
+    seen
 }
 
 /// Lines up to and including the next cursor.
@@ -245,7 +273,7 @@ fn history_pages_back_through_a_transcript_found_by_id() {
 fn the_follower_plays_a_devices_messages_keys_answers_and_stops_into_herdr() {
     let host = Host::new("act");
     host.session("s1", "blocked");
-    let mut follower = host.follower();
+    let mut follower = host.follower(0);
     for args in [&["send", "w1:p1", "hello there"][..], &["keys", "w1:p1", "esc"], &["stop", "w1:p1"]] {
         let output = host.command(args).output().unwrap();
         assert!(output.status.success(), "{args:?}: {}", String::from_utf8_lossy(&output.stderr));
@@ -260,4 +288,61 @@ fn the_follower_plays_a_devices_messages_keys_answers_and_stops_into_herdr() {
     assert_eq!(unknown.status.code(), Some(2));
     follower.kill().unwrap();
     follower.wait().unwrap();
+}
+
+#[test]
+fn a_newer_build_takes_over_an_older_follower_and_keeps_its_log() {
+    let host = Host::new("newer");
+    host.session("s1", "idle");
+    host.say("s1", "user", "hi");
+    let mut older = host.follower(1);
+    let (mut device, lines) = host.attach(1, &["--watch", "w1:p1"]);
+    let opened = until(&lines, |line| line["t"] == "opened");
+    assert!(opened.iter().any(|line| line["entry"]["text"] == "hi"), "{opened:?}");
+    let seq = opened.last().unwrap()["seq"].as_i64().unwrap();
+    device.kill().unwrap();
+    device.wait().unwrap();
+
+    let mut newer = host.follower(2);
+    assert!(older.wait().unwrap().success());
+    host.say("s1", "assistant", "hello");
+    let (mut device, lines) = host.attach(2, &["--watch", &format!("w1:p1:{seq}")]);
+    let resumed = until(&lines, |line| line["entry"]["text"] == "hello");
+    device.kill().unwrap();
+    device.wait().unwrap();
+    newer.kill().unwrap();
+    newer.wait().unwrap();
+    assert_eq!(resumed[0]["build"], 2);
+    assert!(resumed.iter().all(|line| line["t"] != "opened"), "{resumed:?}");
+    assert!(resumed.last().unwrap()["seq"].as_i64().unwrap() > seq);
+}
+
+#[test]
+fn an_older_build_attaches_to_a_newer_follower_and_leaves_it_running() {
+    let host = Host::new("older");
+    host.session("s1", "idle");
+    let mut newer = host.follower(2);
+    let (mut device, lines) = host.attach(1, &["--sessions"]);
+    let hello = until(&lines, |line| line["t"] == "hello");
+    device.kill().unwrap();
+    device.wait().unwrap();
+    let running = newer.try_wait().unwrap().is_none();
+    newer.kill().unwrap();
+    newer.wait().unwrap();
+    assert_eq!(hello[0]["build"], 2);
+    assert!(running);
+}
+
+#[test]
+fn a_session_log_of_another_schema_is_refused() {
+    let host = Host::new("schema");
+    let version = String::from_utf8(host.command(&["--version"]).output().unwrap().stdout).unwrap();
+    let folder = host.root.join(".sesh/follower").join(version.trim().rsplit('.').next().unwrap());
+    std::fs::create_dir_all(&folder).unwrap();
+    let db = rusqlite::Connection::open(folder.join("sessions.db")).unwrap();
+    db.execute_batch(&format!("CREATE TABLE items (id TEXT); PRAGMA user_version = {};", sesh_transcript::log::VERSION + 1)).unwrap();
+    drop(db);
+    let output = host.command(&["serve", "--foreground"]).output().unwrap();
+    assert_eq!(output.status.code(), Some(1));
+    assert!(String::from_utf8_lossy(&output.stderr).contains("Session log schema"), "{output:?}");
 }

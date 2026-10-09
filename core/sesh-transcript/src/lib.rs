@@ -12,7 +12,10 @@ pub mod screen;
 pub mod serve;
 pub mod vault;
 
-pub const VERSION: &str = concat!(env!("CARGO_PKG_VERSION"), "+", env!("SOURCE_HASH"));
+/// The helper's version as `--version` prints it: its sources' hash, then the follower it runs.
+pub fn version() -> String {
+    format!("{}+{}.{}", env!("CARGO_PKG_VERSION"), env!("SOURCE_HASH"), serve::follower())
+}
 
 use std::fs::File;
 use std::io::{BufRead, Read, Seek, SeekFrom};
