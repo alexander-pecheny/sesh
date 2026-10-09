@@ -5,14 +5,13 @@ use std::time::{Duration, Instant};
 
 use serde_json::{json, Value};
 use sesh_transcript::follower::{entry_line, herdr, transcript_path, Event, Follower, Herdr};
+use sesh_transcript::act;
 use sesh_transcript::vault::{self, Vault};
 use sesh_transcript::{replay, serve, Transcript, AGENTS, PROTOCOL, VERSION};
 
 /// Short enough that the chat keeps up with what Claude's screen shows.
 const POLL: Duration = Duration::from_millis(100);
 const VAULT_POLL: Duration = Duration::from_millis(500);
-const KEY_PAUSE: Duration = Duration::from_millis(200);
-const MENU_TIMEOUT: Duration = Duration::from_secs(3);
 const AGENT_GONE_AFTER: Duration = Duration::from_secs(2);
 /// A quiet stream still writes this often, since only a failed write shows that sshd's end
 /// of the socket has gone; polling the socket does not.
@@ -21,8 +20,8 @@ const DEFAULT_LAST: usize = 50;
 const USAGE: &str = "usage: sesh-transcript --version | follow --protocol | follow <pane> [--since CURSOR] [--last N]
        | serve [--foreground] [--record DIR --pane PANE] | attach [--sessions] [--watch KEY[:SEQ]]...
        | page KEY --before ORD [--limit N] | replay FILE [--lines]
-       | history <pane> --before ID [--last N] | entry <pane> ID
-       | answer <pane> --json ANSWERS | permit <pane> allow|deny | background <pane>...
+       | send KEY TEXT | keys KEY NAME... | answer KEY --json ANSWERS | permit KEY allow|deny | stop KEY
+       | history <pane> --before ID [--last N] | entry <pane> ID | background <pane>...
        | vault init DIR | vault pull|follow DIR [--since SEQ] | vault push DIR FILE
        | vault size DIR SESSION FILE | vault append DIR SESSION FILE --offset N BYTES_FILE
        | vault copy DIR SESSION --from PATH | vault search DIR QUERY [--limit N]
@@ -51,8 +50,10 @@ fn main() {
         Some("history") => history(rest),
         Some("background") => background(rest),
         Some("entry") => entry(rest),
-        Some("answer") => answer(rest),
-        Some("permit") => permit(rest),
+        Some(op) if act::OPS.contains(&op) => match rest.split_first().and_then(|(session, args)| act::request(op, session, args)) {
+            Some(request) => serve::ask(&request),
+            None => usage(),
+        },
         Some("vault") => vault(rest),
         _ => usage(),
     };
@@ -97,9 +98,9 @@ fn attach(args: &[String]) -> Exit {
 
 fn page(args: &[String]) -> Exit {
     let Some((rest, options)) = parse_args(args, &["before", "limit"]) else { return usage() };
-    let ([session], Some(before)) = (rest.as_slice(), options.get("before").and_then(|ord| ord.parse().ok())) else { return usage() };
-    let limit = options.get("limit").and_then(|limit| limit.parse().ok()).unwrap_or(50);
-    serve::page(session, before, limit)
+    let ([session], Some(before)) = (rest.as_slice(), options.get("before").and_then(|ord| ord.parse::<i64>().ok())) else { return usage() };
+    let limit: u64 = options.get("limit").and_then(|limit| limit.parse().ok()).unwrap_or(50);
+    serve::ask(&json!({"op": "page", "session": session, "before": before, "limit": limit}))
 }
 
 fn usage() -> Exit {
@@ -449,232 +450,4 @@ fn vault_push(dir: &str, file: &str) -> Result<Vec<Value>, String> {
     let mut lines: Vec<Value> = records.iter().map(vault::Record::line).collect();
     lines.push(vault::head_line(head));
     Ok(lines)
-}
-
-// MARK: answer and permit
-
-#[derive(serde::Deserialize)]
-struct Answer {
-    #[serde(default)]
-    options: Vec<String>,
-    #[serde(default)]
-    text: Option<String>,
-}
-
-/// One step of playing a menu: a key name or literal text.
-#[derive(Debug, PartialEq)]
-enum Input {
-    Key(String),
-    Text(String),
-}
-
-fn answer(args: &[String]) -> Exit {
-    let [pane_id, flag, answers] = args else {
-        return usage();
-    };
-    if flag != "--json" {
-        return usage();
-    }
-    let answers: Vec<Answer> =
-        serde_json::from_str(answers).map_err(|err| format!("invalid answers: {err}"))?;
-    let (transcript, agent, pane) = pane_transcript(&Target::Pane(pane_id))?;
-    let pending = &pane["permission"];
-    if agent != "claude" || pending["tool"] != "AskUserQuestion" {
-        return Err(format!("no question is open in pane {pane_id}"));
-    }
-    let question = transcript.open_question(&pending["input"]);
-    let questions = question.questions.as_ref().unwrap_or(&Value::Null);
-    let inputs = question_inputs(questions, &answers)?;
-    play(pane_id, inputs, question_menu_open, |screen| {
-        screen
-            .contains("Ready to submit your answers?")
-            .then(|| vec![Input::Key("enter".into())])
-    })
-}
-
-/// Claude's question menu: a digit picks an option (and moves on when only one
-/// may be picked), the row after the options takes free text, and in a
-/// multi-select the row after that moves on.
-fn question_inputs(questions: &Value, answers: &[Answer]) -> Result<Vec<Input>, String> {
-    let questions = questions.as_array().map(Vec::as_slice).unwrap_or_default();
-    if questions.len() != answers.len() {
-        return Err(format!(
-            "expected {} answers, got {}",
-            questions.len(),
-            answers.len()
-        ));
-    }
-    let key = |key: String| Input::Key(key);
-    let mut inputs = Vec::new();
-    for (question, answer) in questions.iter().zip(answers) {
-        let labels: Vec<&str> = question["options"]
-            .as_array()
-            .into_iter()
-            .flatten()
-            .filter_map(|option| option["label"].as_str())
-            .collect();
-        let digits = answer
-            .options
-            .iter()
-            .map(|label| {
-                labels
-                    .iter()
-                    .position(|candidate| candidate == label)
-                    .map(|index| (index + 1).to_string())
-                    .ok_or_else(|| format!("no option {label:?} in {labels:?}"))
-            })
-            .collect::<Result<Vec<_>, _>>()?;
-        let text = answer.text.clone().filter(|text| !text.is_empty());
-        let free_row = (labels.len() + 1).to_string();
-        if question["multi"] == true {
-            inputs.extend(digits.into_iter().map(key));
-            inputs.extend((0..labels.len()).map(|_| key("down".into())));
-            inputs.extend(text.map(Input::Text));
-            inputs.extend(["down", "enter"].map(|name| key(name.into())));
-        } else {
-            match (digits.into_iter().next(), text) {
-                (Some(digit), _) => inputs.push(key(digit)),
-                (None, Some(text)) => {
-                    inputs.extend([key(free_row), Input::Text(text), key("enter".into())])
-                }
-                (None, None) => return Err("each answer needs an option or text".into()),
-            }
-        }
-    }
-    Ok(inputs)
-}
-
-fn question_menu_open(screen: &str) -> bool {
-    screen.contains("Enter to select ·") || screen.contains("Ready to submit your answers?")
-}
-
-fn permit(args: &[String]) -> Exit {
-    let [pane_id, decision] = args else {
-        return usage();
-    };
-    let (_, agent) = agent_pane(&Target::Pane(pane_id))?;
-    let (key, open): (&str, fn(&str) -> bool) = match (agent.as_str(), decision.as_str()) {
-        ("claude", "allow") => ("1", claude_permission_open),
-        ("claude", "deny") => ("esc", claude_permission_open),
-        ("codex", "allow") => ("y", codex_permission_open),
-        ("codex", "deny") => ("esc", codex_permission_open),
-        ("pi", _) => return Err("pi asks no permissions".into()),
-        _ => return usage(),
-    };
-    play(pane_id, vec![Input::Key(key.into())], open, |_| None)
-}
-
-fn claude_permission_open(screen: &str) -> bool {
-    screen.contains("Esc to cancel · Tab to amend")
-}
-
-fn codex_permission_open(screen: &str) -> bool {
-    screen.contains("Press enter to confirm or esc to cancel")
-}
-
-/// Plays `inputs` into a menu that `open` sees on screen, then waits for it to
-/// close, answering any follow-up screen `confirm` recognises.
-fn play(
-    pane_id: &str,
-    inputs: Vec<Input>,
-    open: fn(&str) -> bool,
-    confirm: impl Fn(&str) -> Option<Vec<Input>>,
-) -> Exit {
-    let screen = read_screen(pane_id)?;
-    if !open(&screen) {
-        return Err(format!("no menu is open in pane {pane_id}:\n{screen}"));
-    }
-    for input in inputs {
-        send(pane_id, input)?;
-        std::thread::sleep(KEY_PAUSE);
-    }
-    let deadline = Instant::now() + MENU_TIMEOUT;
-    loop {
-        let screen = read_screen(pane_id)?;
-        if !open(&screen) {
-            return Ok(0);
-        }
-        for input in confirm(&screen).into_iter().flatten() {
-            send(pane_id, input)?;
-            std::thread::sleep(KEY_PAUSE);
-        }
-        if Instant::now() >= deadline {
-            return Err(format!(
-                "the menu is still open in pane {pane_id}:\n{screen}"
-            ));
-        }
-        std::thread::sleep(KEY_PAUSE);
-    }
-}
-
-fn send(pane_id: &str, input: Input) -> Result<(), String> {
-    match input {
-        Input::Key(key) => herdr(&["pane", "send-keys", pane_id, &key]),
-        Input::Text(text) => herdr(&["pane", "send-text", pane_id, &text]),
-    }
-    .map(drop)
-}
-
-fn read_screen(pane_id: &str) -> Result<String, String> {
-    herdr(&["pane", "read", pane_id, "--source", "visible"])
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    fn answers(json: &str) -> Vec<Answer> {
-        serde_json::from_str(json).unwrap()
-    }
-
-    fn keys(inputs: &[Input]) -> Vec<String> {
-        inputs
-            .iter()
-            .map(|input| match input {
-                Input::Key(key) => key.clone(),
-                Input::Text(text) => format!("text:{text}"),
-            })
-            .collect()
-    }
-
-    #[test]
-    fn question_inputs_play_claudes_menu() {
-        let questions = json!([
-            {"question": "Colour?", "multi": false, "options": [{"label": "Red"}, {"label": "Blue"}]},
-            {"question": "Pets?", "multi": true, "options": [{"label": "Cat"}, {"label": "Dog"}, {"label": "Fish"}]},
-            {"question": "Tea?", "multi": false, "options": [{"label": "Tea"}, {"label": "Coffee"}]},
-        ]);
-        let inputs = question_inputs(
-            &questions,
-            &answers(
-                r#"[{"options":["Blue"]},{"options":["Cat","Fish"],"text":"hamster"},{"options":[],"text":"water"}]"#,
-            ),
-        )
-        .unwrap();
-        assert_eq!(
-            keys(&inputs),
-            [
-                "2",
-                "1",
-                "3",
-                "down",
-                "down",
-                "down",
-                "text:hamster",
-                "down",
-                "enter",
-                "3",
-                "text:water",
-                "enter"
-            ]
-        );
-    }
-
-    #[test]
-    fn question_inputs_reject_unknown_labels_and_count_mismatches() {
-        let questions = json!([{"multi": false, "options": [{"label": "Red"}]}]);
-        assert!(question_inputs(&questions, &answers(r#"[{"options":["Green"]}]"#)).is_err());
-        assert!(question_inputs(&questions, &answers("[]")).is_err());
-        assert!(question_inputs(&questions, &answers(r#"[{"options":[]}]"#)).is_err());
-    }
 }

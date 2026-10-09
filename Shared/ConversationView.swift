@@ -187,7 +187,7 @@ struct ConversationView: View {
     private var input: some View {
         HStack(alignment: .bottom, spacing: Metric.gap) {
             #if os(iOS)
-            if let link = (conversation.runner as? Machine)?.link {
+            if let link = conversation.runner?.uploads {
                 UploadButton(link: link) { picking = true }
             } else {
                 Image.lucide("image-up", size: 20).foregroundStyle(flavour(.overlay0))
@@ -230,7 +230,7 @@ struct ConversationView: View {
         .sheet(isPresented: $picking) {
             PhotoPicker { results in
                 picking = false
-                (conversation.runner as? Machine)?.link?.upload(results) { field.insertPaths($0) }
+                conversation.runner?.uploads?.upload(results) { field.insertPaths($0) }
             }
             .ignoresSafeArea()
         }

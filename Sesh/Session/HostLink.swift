@@ -1,4 +1,3 @@
-import CryptoKit
 import PhotosUI
 import SwiftUI
 
@@ -6,7 +5,7 @@ import SwiftUI
 /// Conversations. It has no terminal. Core callbacks arrive on tokio threads and hop to main
 /// in `LinkBridge`.
 @MainActor
-final class HostLink: ObservableObject, Identifiable, Runner {
+final class HostLink: ObservableObject, Identifiable {
     enum Stage: Equatable {
         case connecting, authenticating, ready, failed
     }
@@ -25,13 +24,14 @@ final class HostLink: ObservableObject, Identifiable, Runner {
     private var handle: OpaquePointer?
     private var bridge = LinkBridge()
     private var waiting: [UInt32: CheckedContinuation<Ran, Never>] = [:]
-    private var streams: [UInt32: (buffer: Data, line: (String) -> Void)] = [:]
+    private var streams: [UInt32: (lines: LineSplitter, line: (String) -> Void)] = [:]
     private var linking: [CheckedContinuation<Bool, Never>] = []
     private var linked = false
     private var paused = false
-    private var links: [String: URL] = [:]
     private var uploaded: (([String], String?) -> Void)?
-    private var preparing: Task<String?, Never>?
+    /// Kept with the Link, so a Host edited to point elsewhere is prepared afresh.
+    private(set) lazy var installer = HelperInstaller(
+        title: host.title, run: { [unowned self] in await run($0) }, put: { [unowned self] in await put($0, to: $1) })
 
     init(host: Host, store: Store) {
         self.host = host
@@ -123,7 +123,7 @@ final class HostLink: ObservableObject, Identifiable, Runner {
         guard let handle, !Task.isCancelled else { return Ran(status: -1, out: "", err: "not connected") }
         let id = start(handle)
         guard id != 0 else { return Ran(status: -1, out: "", err: "not connected") }
-        if let line { streams[id] = (Data(), line) }
+        if let line { streams[id] = (LineSplitter(), line) }
         return await withTaskCancellationHandler {
             await withCheckedContinuation { waiting[id] = $0 }
         } onCancel: {
@@ -132,68 +132,6 @@ final class HostLink: ObservableObject, Identifiable, Runner {
                 sesh_session_cancel(handle, id)
             }
         }
-    }
-
-    /// Makes sure the Host has herdr running and the pinned helper, once per app run.
-    func prepare() async -> String? {
-        if let preparing { return await preparing.value }
-        let task = Task { await check() }
-        preparing = task
-        let problem = await task.value
-        if problem != nil { preparing = nil }
-        return problem
-    }
-
-    private func check() async -> String? {
-        let ran = await run("""
-            command -v herdr >/dev/null 2>&1 || echo missing
-            uname -sm
-            \(Helper.path) --version 2>/dev/null || echo
-            if command -v herdr >/dev/null 2>&1 && ! herdr workspace list >/dev/null 2>&1; then
-                nohup herdr server </dev/null >/dev/null 2>&1 &
-                for i in 1 2 3 4 5; do sleep 1; herdr workspace list >/dev/null 2>&1 && break; done
-            fi
-            """)
-        let lines = ran.out.components(separatedBy: "\n")
-        guard ran.ok, lines.count > 1 else { return ran.problem }
-        guard lines[0] != "missing" else { return "\(host.title) has no herdr, which Tasks run their Agents in." }
-        return await install(platform: lines[0], found: lines[1])
-    }
-
-    /// Puts the published helper for this Host's platform in place unless that version is there.
-    /// The Host fetches it from GitHub; one that cannot gets it through the phone. Either way
-    /// only the exact bytes this build pinned are installed.
-    private func install(platform: String, found: String) async -> String? {
-        let name = Helper.name(platform)
-        guard let published = Helper.published, let sha = published.sha256[name], let download = Helper.download(name)
-        else { return "Sesh has no helper for \(platform) on \(host.title)." }
-        guard found != published.version else { return nil }
-        var ran = await run(download)
-        if !ran.ok, let data = await Self.download(published.url + "sesh-transcript-\(name).gz", sha: sha) {
-            let file = FileManager.default.temporaryDirectory.appending(path: "sesh-transcript.gz")
-            try? data.write(to: file)
-            ran = await call { sesh_session_put($0, file.path, ".sesh/bin/\(Helper.file).gz") }
-            if ran.ok { ran = await run(Helper.unpack) }
-        }
-        return ran.ok ? nil : "Sesh could not install its helper on \(host.title): \(ran.problem)"
-    }
-
-    private static func download(_ url: String, sha: String) async -> Data? {
-        guard let source = URL(string: url), let (data, _) = try? await URLSession.shared.data(from: source)
-        else { return nil }
-        return SHA256.hash(data: data).map { String(format: "%02x", $0) }.joined() == sha ? data : nil
-    }
-
-    /// The link `--remote-control` prints when it starts, which opens the Claude app on
-    /// exactly this conversation.
-    func link(for pane: String) async -> URL? {
-        if let known = links[pane] { return known }
-        let ran = await run(
-            "herdr agent read \(quote(pane)) --source recent-unwrapped --lines 1000"
-                + " | grep -o 'https://claude.ai/code/session_[A-Za-z0-9_]*' | tail -n 1")
-        let found = URL(string: ran.out.trimmingCharacters(in: .whitespacesAndNewlines))
-        if let found, found.host != nil { links[pane] = found }
-        return links[pane]
     }
 
     // MARK: Uploads
@@ -265,21 +203,14 @@ final class HostLink: ObservableObject, Identifiable, Runner {
     }
 
     fileprivate func ran(_ id: UInt32, _ result: Ran) {
-        if let rest = streams.removeValue(forKey: id), !rest.buffer.isEmpty {
-            rest.line(String(decoding: rest.buffer, as: UTF8.self))
-        }
+        if var stream = streams.removeValue(forKey: id), let rest = stream.lines.flush() { stream.line(rest) }
         waiting.removeValue(forKey: id)?.resume(returning: result)
         if result.status == -1, result.err.hasPrefix("the connection to the Host is gone") { drop(result.err) }
     }
 
     fileprivate func chunk(_ id: UInt32, _ data: Data) {
         guard var stream = streams[id] else { return }
-        stream.buffer.append(data)
-        var lines: [String] = []
-        while let end = stream.buffer.firstIndex(of: UInt8(ascii: "\n")) {
-            lines.append(String(decoding: stream.buffer[..<end], as: UTF8.self))
-            stream.buffer.removeSubrange(...end)
-        }
+        let lines = stream.lines.feed(data)
         streams[id] = stream
         lines.forEach(stream.line)
     }

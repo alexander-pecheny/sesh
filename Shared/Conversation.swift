@@ -114,34 +114,18 @@ final class Conversation: ObservableObject {
         }
     }
 
-    /// Follows until the screen goes away, picking up after the last cursor whenever the
-    /// Link drops, so a reconnect neither repeats nor misses an entry.
+    /// Follows until the screen goes away, the pane's Session log (ADR 0010) or a Transcript
+    /// file, going on after a drop from the last item or cursor held.
     func follow() async {
         // The helper follows only a pane that runs an Agent, and a starting one does not yet.
         while starting, !Task.isCancelled { try? await Task.sleep(for: .milliseconds(200)) }
-        if case .pane(let pane) = source { return await attach(pane) }
-        // A helper still being installed would fail, and a failed follow is not retried.
-        await prepare?()
-        while !Task.isCancelled, let runner {
-            let since = log.cursor.map { " --since \(quote($0))" } ?? ""
-            let ended = await runner.stream("\(Helper.path) follow \(target)\(since)") { [weak self] in self?.receive($0) }
-            guard !Task.isCancelled else { return }
-            if ended.status == 0 { return problem = "This Agent session has ended." }
-            if ended.status > 0 { return problem = ended.problem }
-            try? await Task.sleep(for: .seconds(2))
-        }
-    }
-
-    /// Follows the pane's Session log (ADR 0010); after a drop it asks again from the last
-    /// item it has.
-    private func attach(_ pane: String) async {
-        await prepare?()
-        while !Task.isCancelled, let runner {
-            let watch = log.seq > 0 ? "\(pane):\(log.seq)" : pane
-            let ended = await runner.stream("\(Helper.path) attach --watch \(quote(watch))") { [weak self] in self?.receive($0) }
-            guard !Task.isCancelled else { return }
-            if ended.status > 0, !ended.problem.isEmpty { problem = ended.problem }
-            try? await Task.sleep(for: .seconds(2))
+        guard let follower = runner?.follower else { return }
+        let line: (String) -> Void = { [weak self] in self?.receive($0) }
+        let problem: (String) -> Void = { [weak self] in self?.problem = $0 }
+        switch source {
+        case .pane(let pane): await follower.watch(pane, from: { [weak self] in self?.log.seq ?? 0 }, line: line, problem: problem)
+        case .file(let path, let agent):
+            await follower.follow(file: path, agent: agent, from: { [weak self] in self?.log.cursor }, line: line, problem: problem)
         }
     }
 
@@ -192,9 +176,6 @@ final class Conversation: ObservableObject {
             saveCache()
         }
     }
-
-    /// Runs before the first attach, as a machine must have its helper first.
-    var prepare: (() async -> Void)?
 
     /// Where this session's last items are kept on the device, so opening it shows them at
     /// once and asks the follower only for what changed since.
@@ -254,11 +235,10 @@ final class Conversation: ObservableObject {
         }
         loading = true
         defer { loading = false }
-        let command = switch source {
-        case .pane(let pane): "\(Helper.path) page \(quote(pane)) --before \(first.ord) --limit \(Self.page)"
-        case .file: "\(Helper.path) history \(target) --before \(quote(first.entry.id)) --last \(Self.page)"
+        let ran = switch source {
+        case .pane(let pane): await runner.follower.page(pane, before: first.ord, limit: Self.page)
+        case .file: await runner.run("\(Helper.path) history \(target) --before \(quote(first.entry.id)) --last \(Self.page)")
         }
-        let ran = await runner.run(command)
         if ran.ok { log.page(ran.out) } else { log.earlier = false }
         publish()
         saveCache()
@@ -266,11 +246,7 @@ final class Conversation: ObservableObject {
 
     // MARK: Talking to the Agent
 
-    private func run(_ command: String) async -> String? {
-        guard let runner else { return nil }
-        let ran = await runner.run(command)
-        return ran.ok ? nil : ran.problem
-    }
+    private var follower: FollowerLink? { runner?.follower }
 
     /// While the Agent starts up, which can take seconds, messages wait in the queue.
     @Published var starting = false
@@ -283,7 +259,7 @@ final class Conversation: ObservableObject {
             if !starting, agent != .pi { await hand() }
             return nil
         }
-        return await run("herdr agent prompt \(quote(pane)) \(quote(text))")
+        return await follower?.send(text, to: pane)
     }
 
     /// A message written while the Agent works, held here until it finishes or the user
@@ -315,7 +291,7 @@ final class Conversation: ObservableObject {
         let ids = Set(waiting.map(\.id))
         let text = waiting.map(\.text).joined(separator: "\n\n")
         mark(ids, handed: true)
-        if let failed = await run("herdr agent prompt \(quote(pane)) \(quote(text))") {
+        if let failed = await follower?.send(text, to: pane) {
             problem = failed
             mark(ids, handed: false)
         }
@@ -337,7 +313,7 @@ final class Conversation: ObservableObject {
     func interrupt() async {
         guard let pane else { return }
         if agent == .claude, queued.contains(where: \.handed) {
-            problem = await run("herdr agent send-keys \(quote(pane)) ctrl+enter")
+            problem = await follower?.keys(["ctrl+enter"], to: pane)
             return
         }
         await stop()
@@ -348,7 +324,7 @@ final class Conversation: ObservableObject {
     /// Picks a choice in a menu read off the Agent's screen.
     func choose(_ choice: SessionLog.Permission.Choice) async {
         guard let pane else { return }
-        problem = await run("herdr pane send-keys \(quote(pane)) \(quote(choice.key))")
+        problem = await follower?.keys([choice.key], to: pane)
     }
 
     /// Hands the queue to the Agent at once; Claude takes a message mid-turn, or while it
@@ -357,22 +333,24 @@ final class Conversation: ObservableObject {
 
     func stop() async {
         guard let pane else { return }
-        problem = await run("herdr agent send-keys \(quote(pane)) esc")
+        problem = await follower?.keys(["esc"], to: pane)
     }
 
     /// One answer per question, in order: the labels picked, and any text typed instead.
     func answer(_ answers: [(options: [String], text: String)]) async -> String? {
+        guard let pane else { return nil }
         let json = answers.map { answer -> [String: Any] in
             var object: [String: Any] = ["options": answer.options]
             if !answer.text.isEmpty { object["text"] = answer.text }
             return object
         }
         let data = (try? JSONSerialization.data(withJSONObject: json)) ?? Data("[]".utf8)
-        return await run("\(Helper.path) answer \(target) --json \(quote(String(decoding: data, as: UTF8.self)))")
+        return await follower?.answer(String(decoding: data, as: UTF8.self), in: pane)
     }
 
     func permit(_ allow: Bool) async {
-        problem = await run("\(Helper.path) permit \(target) \(allow ? "allow" : "deny")")
+        guard let pane else { return }
+        problem = await follower?.permit(allow, in: pane)
     }
 
     /// The helper cuts long output down; the whole entry is fetched the first time it is opened.
@@ -390,20 +368,19 @@ final class Conversation: ObservableObject {
     func image(_ path: String) async -> PlatformImage? {
         if let known = images[path] { return known }
         guard let runner else { return Self.sample }
-        let ran = await runner.run("base64 < \(quote(path)) | tr -d '\\n'")
-        let image = Data(base64Encoded: ran.out).flatMap(PlatformImage.init(data:))
+        let image = await runner.read(path).flatMap(PlatformImage.init(data:))
         images[path] = image
         return image
     }
 
     func upload(_ data: Data, ext: String) async -> String? { await runner?.upload(data, ext: ext) }
 
-    #if os(iOS)
     func link() async -> URL? {
         guard let pane else { return nil }
-        return await (runner as? Machine)?.link?.link(for: pane)
+        return await runner?.claudeLink(for: pane)
     }
 
+    #if os(iOS)
     /// What a fixture's images look like, since there is no Host to fetch them from.
     private static let sample = UIGraphicsImageRenderer(size: CGSize(width: 300, height: 200)).image { context in
         let colours = [Catppuccin.Flavour.mocha(.mauve), Catppuccin.Flavour.mocha(.blue)].map { UIColor($0).cgColor }
@@ -411,8 +388,6 @@ final class Conversation: ObservableObject {
         context.cgContext.drawLinearGradient(gradient, start: .zero, end: CGPoint(x: 300, y: 200), options: [])
     }
     #else
-    func link() async -> URL? { nil }
-
     private static let sample: PlatformImage? = nil
     #endif
 }

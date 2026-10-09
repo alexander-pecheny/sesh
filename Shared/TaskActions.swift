@@ -265,23 +265,21 @@ enum TaskActions {
         await vault.copier.copy(sessions)
         for session in sessions {
             guard let pane = session.body.pane else { continue }
-            let machine = machine(session.body.machine)
-            _ = await machine.run("herdr agent send-keys \(quote(pane)) ctrl+c ctrl+c; sleep 1; herdr pane close \(quote(pane))")
+            _ = await machine(session.body.machine).follower.stop(pane)
         }
         let home = machine(task.body.machine)
         let open = await Herdr.workspaces(on: home)
         let workspace = task.body.workspace.flatMap { open[$0] != nil ? $0 : nil }
             ?? open.first { $0.value == task.body.title }?.key
         if let path = task.body.path, await linked(path, on: home) {
-            let force = discard ? " --force" : ""
             let ran = if let workspace {
-                await home.run("herdr worktree remove --workspace \(quote(workspace))\(force)")
+                await Herdr.removeWorktree(of: workspace, force: discard, on: home)
             } else {
-                await home.run("git -C \(quote(task.body.repo ?? path)) worktree remove \(quote(path))\(force)")
+                await home.run("git -C \(quote(task.body.repo ?? path)) worktree remove \(quote(path))\(discard ? " --force" : "")")
             }
             guard ran.ok else { return "its Worktree is still there: \(ran.problem)" }
         } else if let workspace {
-            _ = await home.run("herdr workspace close \(quote(workspace))")
+            await Herdr.closeWorkspace(workspace, on: home)
         }
         // Worktrees made later in other repositories carry the Task's branch too.
         let others = Set(sessions.compactMap { session -> [String?]? in

@@ -43,18 +43,14 @@ enum Helper {
     #if os(macOS)
     /// `-helpers DIR` points at `build/helpers`, so a helper not yet released can be tried.
     static let local = UserDefaults.standard.string(forKey: "helpers").map { URL(filePath: $0) }
+    #else
+    static let local: URL? = nil
     #endif
 
     /// The helper this build runs, as its `--version` prints it.
-    static let version: String? = {
-        #if os(macOS)
-        if let local {
-            return (try? String(contentsOf: local.appending(path: "version"), encoding: .utf8))?
-                .trimmingCharacters(in: .whitespacesAndNewlines)
-        }
-        #endif
-        return published?.version
-    }()
+    static let version: String? = local.map {
+        (try? String(contentsOf: $0.appending(path: "version"), encoding: .utf8))?.trimmingCharacters(in: .whitespacesAndNewlines)
+    } ?? published?.version
 
     /// Named for its version, so builds that pin different helpers share a machine without
     /// replacing each other's.
@@ -101,16 +97,56 @@ struct HerdrError: Decodable {
 /// A machine Sesh runs shell commands on: a Host over SSH, or the Mac itself.
 @MainActor
 protocol Runner: AnyObject {
+    var title: String { get }
     func run(_ command: String) async -> Ran
     /// Runs `command` until it exits or the calling task is cancelled, handing each line of
     /// its stdout to `line` as it arrives.
     func stream(_ command: String, line: @escaping (String) -> Void) async -> Ran
+    /// Writes `data` to `path` on the machine, relative to its home folder unless absolute.
+    func put(_ data: Data, to path: String) async -> Ran
+    /// Puts the pinned helper in place and herdr's server up, once a run, as every use of a
+    /// machine asks first.
+    func prepare() async -> String?
+    var follower: FollowerLink { get }
+
     /// Saves a pasted image on the machine and returns its absolute path there.
     func upload(_ data: Data, ext: String) async -> String?
+    /// The link that opens the Claude app on the Agent in `pane`.
+    func claudeLink(for pane: String) async -> URL?
+    #if os(iOS)
+    /// The Link photo Uploads go over.
+    var uploads: HostLink? { get }
+    #endif
 }
 
 extension Runner {
     func upload(_ data: Data, ext: String) async -> String? { nil }
+    func claudeLink(for pane: String) async -> URL? { nil }
+
+    func read(_ path: String) async -> Data? {
+        Data(base64Encoded: await run("base64 < \(quote(path)) | tr -d '\\n'").out)
+    }
+}
+
+/// Whole lines out of the chunks a stream arrives in.
+struct LineSplitter {
+    private var buffer = Data()
+
+    mutating func feed(_ chunk: Data) -> [String] {
+        buffer.append(chunk)
+        var lines: [String] = []
+        while let end = buffer.firstIndex(of: UInt8(ascii: "\n")) {
+            lines.append(String(decoding: buffer[buffer.startIndex..<end], as: UTF8.self))
+            buffer.removeSubrange(buffer.startIndex...end)
+        }
+        return lines
+    }
+
+    /// What is left after the last newline, once the stream has ended.
+    mutating func flush() -> String? {
+        defer { buffer.removeAll() }
+        return buffer.isEmpty ? nil : String(decoding: buffer, as: UTF8.self)
+    }
 }
 
 /// `path` quoted for the shell, with a leading `~/` still meaning the home folder.

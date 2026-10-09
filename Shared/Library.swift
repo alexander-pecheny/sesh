@@ -105,10 +105,8 @@ final class Library: ObservableObject {
         if !running, let vault = vault(of: session.id), let last = session.body.transcripts?.last, let agent {
             let copy = "\(vault.folder)/transcripts/\(session.id)/\((last as NSString).lastPathComponent)"
             conversation = Conversation(source: .file(path: copy, agent: agent), agent: agent, runner: vault.machine)
-            conversation.prepare = { _ = await vault.machine.prepare() }
         } else {
             conversation = Conversation(pane: session.body.pane ?? "", agent: agent, runner: machine)
-            conversation.prepare = { _ = await machine.prepare() }
             conversation.openPath = { [weak self, weak conversation] path in
                 guard let self, let vault = self.vault(of: session.id), let current = vault.records[session.id] else { return }
                 let wrote = (conversation?.rows ?? []).flatMap(\.entries).compactMap(\.file)
@@ -152,9 +150,8 @@ final class Library: ObservableObject {
     /// Whether the session's pane still runs its Agent; a pane whose Agent exited is a bare shell.
     private func runs(_ session: Record, on machine: Machine) async -> Bool {
         _ = await machine.prepare()
-        let pane = await machine.run("herdr pane get \(quote(session.body.pane ?? ""))")
-        struct Got: Decodable { struct Result: Decodable { struct Pane: Decodable { let agent: String? }; let pane: Pane }; let result: Result }
-        return (try? JSONDecoder().decode(Got.self, from: Data(pane.out.utf8)))?.result.pane.agent != nil
+        if case .found(let pane) = await Herdr.look(for: session.body.pane ?? "", on: machine) { return pane.agent != nil }
+        return false
     }
 
     init() {
@@ -218,31 +215,21 @@ final class Library: ObservableObject {
             while !Task.isCancelled, let self {
                 let machines = Machine.here + self.vaults.compactMap { $0.place.alias == nil ? nil : $0.machine }
                 for machine in machines where self.followers[machine.id] == nil {
-                    self.followers[machine.id] = Task { [weak self] in await self?.follow(machine) }
+                    self.followers[machine.id] = Task { [weak self] in
+                        await machine.follower.sessions { online in
+                            if online { self?.listed.insert(machine.id) } else { self?.listed.remove(machine.id) }
+                        } line: { self?.summarize($0, on: machine.id) }
+                    }
                 }
                 try? await Task.sleep(for: .seconds(5))
             }
         }
     }
 
-    private func follow(_ machine: Machine) async {
-        while !Task.isCancelled {
-            _ = await machine.prepare()
-            _ = await machine.stream("\(Helper.path) attach --sessions") { [weak self] in self?.summarize($0, on: machine.id) }
-            listed.remove(machine.id)
-            try? await Task.sleep(for: .seconds(2))
-        }
-    }
-
     private func summarize(_ text: String, on machine: String) {
         guard let summary = try? JSONDecoder().decode(Summary.self, from: Data(text.utf8)) else { return }
-        switch summary.t {
-        case "hello": listed.insert(machine)
-        case "session":
-            guard let pane = summary.session else { return }
-            summaries[machine, default: [:]][pane] = summary
-        default: return
-        }
+        guard summary.t == "session", let pane = summary.session else { return }
+        summaries[machine, default: [:]][pane] = summary
         // A working session's status line ticks every second; marks need no more than this.
         guard !publishing else { return }
         publishing = true
@@ -393,8 +380,7 @@ final class Library: ObservableObject {
 
     /// Interrupts an Unfiled Agent and closes its pane.
     func stop(_ item: Unfiled) async {
-        let machine = TaskActions.machine(item.machine)
-        _ = await machine.run("herdr agent send-keys \(quote(item.pane)) ctrl+c ctrl+c; sleep 1; herdr pane close \(quote(item.pane))")
+        _ = await TaskActions.machine(item.machine).follower.stop(item.pane)
         unfiled[item.machine ?? ""]?.removeAll { $0 == item }
     }
 
@@ -473,10 +459,7 @@ final class Library: ObservableObject {
     /// its Conversation and its Tab stay.
     func end(_ session: Record) async {
         await vault(of: session.id)?.copier.copy([session])
-        if let pane = session.body.pane {
-            let machine = TaskActions.machine(session.body.machine)
-            _ = await machine.run("herdr agent send-keys \(quote(pane)) ctrl+c ctrl+c; sleep 1; herdr pane close \(quote(pane))")
-        }
+        if let pane = session.body.pane { _ = await TaskActions.machine(session.body.machine).follower.stop(pane) }
         live[key(session)] = nil
         reload(session.id)
     }
@@ -533,7 +516,7 @@ final class Library: ObservableObject {
         guard let vault = vault(of: id), let record = vault.records[id] else { return }
         if let pane = record.body.pane {
             let machine = TaskActions.machine(record.body.machine)
-            Task { _ = await machine.run("herdr pane close \(quote(pane))") }
+            Task { await Herdr.close(pane, on: machine) }
         }
         vault.delete(record)
     }

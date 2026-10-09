@@ -127,6 +127,10 @@ targets:
         excludes: [Fixtures]
       - path: Shared/SessionLog.swift
       - path: Shared/ChatScroll.swift
+      - path: Shared/Shell.swift
+      - path: Shared/Herdr.swift
+      - path: Shared/FollowerLink.swift
+      - path: Shared/HelperInstaller.swift
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: me.pecheny.sesh.tests

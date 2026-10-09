@@ -76,7 +76,17 @@ final class Machine: Runner, Identifiable, Hashable {
 
     func prepare() async -> String? {
         guard let link else { return unreachable.err }
-        return await link.prepare()
+        return await link.installer.prepare()
+    }
+
+    private(set) lazy var follower = FollowerLink(self)
+    var uploads: HostLink? { link }
+    private var claudeLinks: [String: URL] = [:]
+
+    func claudeLink(for pane: String) async -> URL? {
+        if let known = claudeLinks[pane] { return known }
+        claudeLinks[pane] = await Herdr.claudeLink(for: pane, on: self)
+        return claudeLinks[pane]
     }
 
     /// Every Link lets go of its socket on the way to the background and dials again on use.

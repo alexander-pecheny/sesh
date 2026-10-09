@@ -17,7 +17,7 @@ extension Library {
         var terminal: String?
         while terminal == nil, !Task.isCancelled {
             switch await Herdr.look(for: pane, on: machine) {
-            case .found(let found): terminal = found
+            case .found(let found): terminal = found.terminal_id
             case .gone:
                 gone()
                 return nil
@@ -25,7 +25,7 @@ extension Library {
             }
         }
         guard let terminal else { return nil }
-        let attach = "herdr terminal attach \(quote(terminal)) --takeover"
+        let attach = Herdr.attach(terminal)
         let command: String
         if let alias = machine.alias {
             let remote = quote("exec \"$SHELL\" -lic \(quote(attach))")

@@ -3,6 +3,16 @@ import Foundation
 /// What Sesh asks of herdr on any machine, through whichever Runner reaches it.
 @MainActor
 enum Herdr {
+    /// Shell lines that print `missing` where herdr is not installed, and start its server
+    /// where it is down.
+    nonisolated static let wake = """
+        command -v herdr >/dev/null 2>&1 || echo missing
+        if command -v herdr >/dev/null 2>&1 && ! herdr workspace list >/dev/null 2>&1; then
+            nohup herdr server </dev/null >/dev/null 2>&1 &
+            for i in 1 2 3 4 5; do sleep 1; herdr workspace list >/dev/null 2>&1 && break; done
+        fi
+        """
+
     /// Menus an Agent may open before its first prompt, and the keys that get past them.
     private static let menus = [
         (prompt: "Yes, I trust this folder", keys: "down enter"),
@@ -101,13 +111,18 @@ enum Herdr {
         return opened(ran).map { Opened(workspace: workspace, pane: $0.pane) }
     }
 
-    /// The id `herdr terminal attach` takes for a pane, or nil when the pane is gone.
-    static func terminal(of pane: String, on runner: Runner) async -> String? {
-        if case .found(let terminal) = await look(for: pane, on: runner) { terminal } else { nil }
+    /// What herdr says of a pane.
+    struct Pane: Decodable {
+        struct Session: Decodable { let path: String? }
+        /// The id `herdr terminal attach` takes.
+        let terminal_id: String
+        /// The Agent running in it; a pane whose Agent exited is a bare shell.
+        let agent: String?
+        let agent_session: Session?
     }
 
     enum Lookup {
-        case found(String)
+        case found(Pane)
         /// herdr answered that it has no such pane.
         case gone
         /// The machine or herdr did not answer, which says nothing of the pane.
@@ -115,20 +130,38 @@ enum Herdr {
     }
 
     static func look(for pane: String, on runner: Runner) async -> Lookup {
-        struct Pane: Decodable {
-            struct Result: Decodable {
-                struct Info: Decodable { let terminal_id: String }
-                let pane: Info
-            }
+        struct Got: Decodable {
+            struct Result: Decodable { let pane: Pane }
             let result: Result
         }
         let ran = await runner.run("herdr pane get \(quote(pane))")
-        if let found = try? JSONDecoder().decode(Pane.self, from: Data(ran.out.utf8)) { return .found(found.result.pane.terminal_id) }
+        if let got = try? JSONDecoder().decode(Got.self, from: Data(ran.out.utf8)) { return .found(got.result.pane) }
         return (ran.err + ran.out).contains("pane_not_found") ? .gone : .unreachable(ran.problem)
     }
 
-    static func rename(_ workspace: String, to label: String, on runner: Runner) async {
-        _ = await runner.run("herdr workspace rename \(quote(workspace)) \(quote(label))")
+    /// The command that shows a pane's terminal, taken over from any other device showing it.
+    static func attach(_ terminal: String) -> String { "herdr terminal attach \(quote(terminal)) --takeover" }
+
+    /// Ends a Terminal's shell.
+    static func close(_ pane: String, on runner: Runner) async {
+        _ = await runner.run("herdr pane close \(quote(pane))")
+    }
+
+    /// The link `--remote-control` prints when it starts, which opens the Claude app on
+    /// exactly this conversation.
+    static func claudeLink(for pane: String, on runner: Runner) async -> URL? {
+        let ran = await runner.run(
+            "herdr agent read \(quote(pane)) --source recent-unwrapped --lines 1000"
+                + " | grep -o 'https://claude.ai/code/session_[A-Za-z0-9_]*' | tail -n 1")
+        return URL(string: ran.out.trimmingCharacters(in: .whitespacesAndNewlines)).flatMap { $0.host == nil ? nil : $0 }
+    }
+
+    static func removeWorktree(of workspace: String, force: Bool, on runner: Runner) async -> Ran {
+        await runner.run("herdr worktree remove --workspace \(quote(workspace))\(force ? " --force" : "")")
+    }
+
+    static func closeWorkspace(_ workspace: String, on runner: Runner) async {
+        _ = await runner.run("herdr workspace close \(quote(workspace))")
     }
 
     /// The Workspaces herdr has open right now, by id, with their labels.

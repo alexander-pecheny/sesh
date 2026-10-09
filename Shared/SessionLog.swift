@@ -4,7 +4,7 @@ import Foundation
 /// lines Sesh's transcript helper prints: the follower's items for a pane, or a Transcript
 /// file's entries, which the helper has already turned into the same entries (ADR 0006).
 struct SessionLog {
-    static let protocols: Set<Int> = [1, 2, 3]
+    static let protocols: Set<Int> = [1, 2, FollowerLink.protocol]
     /// The first protocol that can page back through a Transcript with `history`.
     private static let paging = 2
     /// The first protocol in which the follower sends the Session log rather than entries.
@@ -129,7 +129,6 @@ struct SessionLog {
         let id: String?
         let seq: Int?
         let more: Bool?
-        let message: String?
         let replaces: String?
         let items: [Entry]?
         let tasks: [Background]?
@@ -178,6 +177,10 @@ struct SessionLog {
 
     static func isLive(_ id: String) -> Bool { id.hasPrefix("live.") }
 
+    static func unknown(_ protocol: Int) -> String {
+        "The Host's helper speaks protocol \(`protocol`), which this Sesh does not know. Update Sesh."
+    }
+
     /// The row an entry is drawn in.
     func rowKey(_ id: String) -> String { rowKeys[id] ?? id }
 
@@ -204,11 +207,8 @@ struct SessionLog {
         case "hello":
             agent = line.agent ?? agent
             transcript = line.transcript.flatMap { $0.isEmpty ? nil : $0 } ?? transcript
-            if let number = line.protocol, !Self.protocols.contains(number) {
-                problem = "The Host's helper speaks protocol \(number), which this Sesh does not know. Update Sesh."
-            }
+            if let number = line.protocol, !Self.protocols.contains(number) { problem = Self.unknown(number) }
             if (line.protocol ?? 0) >= Self.follower { fresh = [] } else { earlier = (line.protocol ?? 0) >= Self.paging }
-        case "error": problem = line.message
         case "item":
             guard let item = try? decoder.decode(Item.self, from: data) else { return }
             seq = max(seq, item.seq)

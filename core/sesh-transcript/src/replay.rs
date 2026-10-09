@@ -11,7 +11,7 @@ use std::time::{Duration, Instant};
 
 use serde_json::{json, Value};
 
-use crate::follower::Source;
+use crate::follower::{Input, Source};
 use crate::log::Log;
 use crate::serve::{Machine, Shared};
 
@@ -35,6 +35,10 @@ impl Source for Recorded {
             .and_then(|screens| screens.iter().rev().find(|(at, _)| *at <= now))
             .map(|(_, screen)| screen.clone())
             .ok_or_else(|| "no screen recorded yet".to_string())
+    }
+
+    fn input(&mut self, _: &str, _: &Input) -> Result<()> {
+        Err("a replay takes no input".into())
     }
 }
 

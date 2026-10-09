@@ -17,11 +17,24 @@ const RETRY: u32 = 8;
 /// How many entries a follower keeps parsed, for questions and matching.
 const KEEP: usize = 500;
 
-/// What a follower reads from herdr: the panes, and a pane's screen. A recording stands in
-/// for herdr when a session is replayed.
+/// What the follower plays into a pane for a device (ADR 0012).
+#[derive(Clone, Debug, PartialEq)]
+pub enum Input {
+    /// Key names, as herdr spells them.
+    Keys(Vec<String>),
+    /// Literal text, typed.
+    Text(String),
+    /// A message, which herdr submits as the Agent's next prompt.
+    Prompt(String),
+    Close,
+}
+
+/// What a follower asks of herdr: the panes, a pane's screen, and input for a pane. A
+/// recording stands in for herdr when a session is replayed.
 pub trait Source {
     fn panes(&mut self) -> Result<Vec<Value>, String>;
     fn read(&mut self, pane_id: &str, ansi: bool) -> Result<String, String>;
+    fn input(&mut self, pane_id: &str, input: &Input) -> Result<(), String>;
 
     /// The recorder, when this Source records what it reads.
     fn recorder(&mut self) -> Option<&mut crate::serve::Recorder> {
@@ -52,6 +65,16 @@ impl Source for Herdr {
     fn read(&mut self, pane_id: &str, ansi: bool) -> Result<String, String> {
         let format = if ansi { "ansi" } else { "text" };
         herdr(&["pane", "read", pane_id, "--source", "visible", "--format", format])
+    }
+
+    fn input(&mut self, pane_id: &str, input: &Input) -> Result<(), String> {
+        match input {
+            Input::Keys(keys) => herdr(&[&["pane", "send-keys", pane_id][..], &keys.iter().map(String::as_str).collect::<Vec<_>>()].concat()),
+            Input::Text(text) => herdr(&["pane", "send-text", pane_id, text]),
+            Input::Prompt(text) => herdr(&["agent", "prompt", pane_id, text]),
+            Input::Close => herdr(&["pane", "close", pane_id]),
+        }
+        .map(drop)
     }
 }
 

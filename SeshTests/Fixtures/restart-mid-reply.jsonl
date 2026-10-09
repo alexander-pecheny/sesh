@@ -1,4 +1,4 @@
-{"protocol":3,"t":"hello","version":"0.1.0+87ccb86f07ea6a6b"}
+{"protocol":4,"t":"hello","version":"0.1.0+87ccb86f07ea6a6b"}
 {"seq":1791564867254001,"session":"w16:p1","t":"opened"}
 {"agent":"claude","cursor":"0:/var/folders/hh/9b_7prq52wvf26jj163d_btr0000gn/T/sesh-replay-7099/t0/852bd43b-899b-44a4-af2e-a8df571f30c6.jsonl","cwd":"/private/tmp/rec-test","done":null,"name":null,"permissions":[],"seq":1791564867254001,"session":"w16:p1","state":"idle","status":"","t":"session","transcript":"/var/folders/hh/9b_7prq52wvf26jj163d_btr0000gn/T/sesh-replay-7099/t0/852bd43b-899b-44a4-af2e-a8df571f30c6.jsonl"}
 {"agent":"claude","cursor":"686:/var/folders/hh/9b_7prq52wvf26jj163d_btr0000gn/T/sesh-replay-7099/t0/852bd43b-899b-44a4-af2e-a8df571f30c6.jsonl","cwd":"/private/tmp/rec-test","done":null,"last":"2026-10-08T15:17:39.593Z","name":null,"permissions":[],"seq":1791564867254003,"session":"w16:p1","state":"working","status":"","t":"session","transcript":"/var/folders/hh/9b_7prq52wvf26jj163d_btr0000gn/T/sesh-replay-7099/t0/852bd43b-899b-44a4-af2e-a8df571f30c6.jsonl"}

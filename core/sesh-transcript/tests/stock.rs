@@ -3,7 +3,8 @@
 
 use std::io::BufRead;
 use std::path::{Path, PathBuf};
-use std::process::{Command, Stdio};
+use std::os::unix::net::UnixStream;
+use std::process::{Child, Command, Stdio};
 use std::sync::mpsc;
 use std::time::Duration;
 
@@ -15,21 +16,35 @@ struct Host {
 
 impl Host {
     fn new(name: &str) -> Self {
-        let root =
-            std::env::temp_dir().join(format!("sesh-transcript-{name}-{}", std::process::id()));
+        // Short, as the follower's socket path under it must be.
+        let root = PathBuf::from(format!("/tmp/sesh-{name}-{}", std::process::id()));
         std::fs::create_dir_all(root.join("claude/projects/-work")).unwrap();
         let herdr = root.join("herdr");
-        std::fs::write(&herdr, "#!/bin/sh\n[ \"$1 $2\" = 'pane get' ] && exec cat \"$(dirname \"$0\")/pane.json\"\nexit 1\n").unwrap();
+        // Answers what it is asked of the pane from files, and notes every input it is given.
+        let script = r#"#!/bin/sh
+dir="$(dirname "$0")"
+case "$1 $2" in
+'pane get') exec cat "$dir/pane.json" ;;
+'pane list') exec cat "$dir/panes.json" ;;
+'agent list') echo '{"result":{"agents":[]}}' ;;
+'pane read') exec cat "$dir/screen.txt" ;;
+'pane send-keys'|'pane send-text'|'pane close'|'agent prompt') echo "$*" >> "$dir/inputs" ;;
+*) exit 1 ;;
+esac
+"#;
+        std::fs::write(&herdr, script).unwrap();
         let executable = std::os::unix::fs::PermissionsExt::from_mode(0o755);
         std::fs::set_permissions(&herdr, executable).unwrap();
         Self { root }
     }
 
     fn session(&self, id: &str, status: &str) {
-        let pane = json!({"result": {"pane": {"pane_id": "w1:p1", "agent": "claude", "agent_status": status,
-            "agent_session": {"source": "herdr:claude", "agent": "claude", "kind": "id", "value": id}}}});
-        std::fs::write(self.root.join("pane.json.new"), pane.to_string()).unwrap();
-        std::fs::rename(self.root.join("pane.json.new"), self.root.join("pane.json")).unwrap();
+        let pane = json!({"pane_id": "w1:p1", "agent": "claude", "agent_status": status,
+            "agent_session": {"source": "herdr:claude", "agent": "claude", "kind": "id", "value": id}});
+        for (name, reply) in [("pane.json", json!({"result": {"pane": pane}})), ("panes.json", json!({"result": {"panes": [pane]}}))] {
+            std::fs::write(self.root.join("new.json"), reply.to_string()).unwrap();
+            std::fs::rename(self.root.join("new.json"), self.root.join(name)).unwrap();
+        }
     }
 
     fn transcript(&self, id: &str) -> PathBuf {
@@ -58,8 +73,30 @@ impl Host {
         command
             .args(args)
             .env("PATH", path)
+            .env("HOME", &self.root)
             .env("CLAUDE_CONFIG_DIR", self.root.join("claude"));
         command
+    }
+
+    /// A follower of this Host's own, run in the foreground so the test can end it, once it
+    /// answers on its socket.
+    fn follower(&self) -> Child {
+        let mut child = self.command(&["serve", "--foreground"]).spawn().unwrap();
+        let versions = self.root.join(".sesh/follower");
+        for _ in 0..50 {
+            let sockets = std::fs::read_dir(&versions).into_iter().flatten().flatten().map(|dir| dir.path().join("follower.sock"));
+            if sockets.into_iter().any(|socket| UnixStream::connect(socket).is_ok()) {
+                return child;
+            }
+            std::thread::sleep(Duration::from_millis(100));
+        }
+        child.kill().unwrap();
+        child.wait().unwrap();
+        panic!("the follower did not start");
+    }
+
+    fn inputs(&self) -> String {
+        std::fs::read_to_string(self.root.join("inputs")).unwrap_or_default()
     }
 }
 
@@ -202,4 +239,25 @@ fn history_pages_back_through_a_transcript_found_by_id() {
         [json!("message 1"), json!("message 2"), Value::Null]
     );
     assert_eq!(page.last().unwrap(), &json!({"t": "history", "more": true}));
+}
+
+#[test]
+fn the_follower_plays_a_devices_messages_keys_answers_and_stops_into_herdr() {
+    let host = Host::new("act");
+    host.session("s1", "blocked");
+    let mut follower = host.follower();
+    for args in [&["send", "w1:p1", "hello there"][..], &["keys", "w1:p1", "esc"], &["stop", "w1:p1"]] {
+        let output = host.command(args).output().unwrap();
+        assert!(output.status.success(), "{args:?}: {}", String::from_utf8_lossy(&output.stderr));
+    }
+    assert_eq!(host.inputs(), "agent prompt w1:p1 hello there\npane send-keys w1:p1 esc\npane send-keys w1:p1 ctrl+c ctrl+c\npane close w1:p1\n");
+
+    std::fs::write(host.root.join("screen.txt"), "Do you want to proceed?\n").unwrap();
+    let refused = host.command(&["permit", "w1:p1", "allow"]).output().unwrap();
+    assert_eq!(refused.status.code(), Some(1));
+    assert!(String::from_utf8_lossy(&refused.stderr).starts_with("no menu is open in pane w1:p1"));
+    let unknown = host.command(&["permit", "w1:p1", "maybe"]).output().unwrap();
+    assert_eq!(unknown.status.code(), Some(2));
+    follower.kill().unwrap();
+    follower.wait().unwrap();
 }

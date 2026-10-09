@@ -24,17 +24,6 @@ final class Copier {
         }
     }
 
-    private struct Pane: Decodable {
-        struct Result: Decodable {
-            struct Info: Decodable {
-                struct Session: Decodable { let path: String? }
-                let agent_session: Session?
-            }
-            let pane: Info
-        }
-        let result: Result
-    }
-
     private func copyAll() async {
         guard let vault, vault.online else { return }
         await copy(vault.all(.session))
@@ -46,8 +35,8 @@ final class Copier {
         for session in sessions {
             guard let pane = session.body.pane else { continue }
             let machine = TaskActions.machine(session.body.machine)
-            let ran = await machine.run("herdr pane get \(quote(pane))")
-            let reported = (try? JSONDecoder().decode(Pane.self, from: Data(ran.out.utf8)))?.result.pane.agent_session?.path
+            var reported: String?
+            if case .found(let found) = await Herdr.look(for: pane, on: machine) { reported = found.agent_session?.path }
             if let path = await reported.asyncOr({ await self.found(pane, on: machine) }),
                !(session.body.transcripts ?? []).contains(path) {
                 var record = vault.records[session.id] ?? session

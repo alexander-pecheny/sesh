@@ -14,7 +14,7 @@ final class SessionLogTests: XCTestCase {
         return line(["t": "item", "session": "w1:p1", "id": id, "ord": ord, "seq": seq, "final": final, "gone": gone, "entry": body])
     }
 
-    private let hello = #"{"t":"hello","protocol":3,"version":"test"}"#
+    private let hello = #"{"t":"hello","protocol":4,"version":"test"}"#
 
     private func texts(_ log: SessionLog) -> [String] {
         log.rows.flatMap(\.entries).map { $0.text ?? $0.summary }

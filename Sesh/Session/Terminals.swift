@@ -18,13 +18,13 @@ extension Library {
         guard let host = machine.host else { return .failure(Herdr.Failure("\(machine.title) is not reachable from the phone.")) }
         let terminal: String
         switch await Herdr.look(for: pane, on: machine) {
-        case .found(let found): terminal = found
+        case .found(let found): terminal = found.terminal_id
         case .gone: return .failure(Herdr.Failure("The pane is gone from \(machine.title)."))
         case .unreachable(let problem): return .failure(Herdr.Failure("Sesh could not reach \(machine.title): \(problem)"))
         }
         if let known = terminals.sessions[key] { return .success(known) }
         let session = SeshSession(host: host, store: Store.shared, app: app,
-                                  command: "herdr terminal attach \(quote(terminal)) --takeover")
+                                  command: Herdr.attach(terminal))
         terminals.sessions[key] = session
         return .success(session)
     }

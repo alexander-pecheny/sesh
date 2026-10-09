@@ -27,5 +27,7 @@ session starts another `attach`, and earlier pages come through a one-shot `page
 helper version runs a follower of its own under `~/.sesh/follower/VERSION`, so a device
 never talks to a follower that speaks another version.
 
-Once sends and choices go through the follower, a device no longer runs herdr commands at
-all; herdr stays the follower's business.
+Messages, keys, answers, permissions and stops go to the follower the same way, each through
+a one-shot command (`send`, `keys`, `answer`, `permit`, `stop`), and the follower plays them
+into the pane. A device still runs herdr itself only to make Workspaces, Worktrees and panes,
+to start an Agent, and to attach a Terminal.

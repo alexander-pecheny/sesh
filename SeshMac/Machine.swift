@@ -75,7 +75,11 @@ final class Machine: Runner, Identifiable, Hashable {
     }
 
     private var home: String?
-    private var preparing: Task<String?, Never>?
+    private(set) lazy var follower = FollowerLink(self)
+    private lazy var installer = HelperInstaller(
+        title: title, run: { [unowned self] in await run($0) }, put: { [unowned self] in await put($0, to: $1) })
+
+    func prepare() async -> String? { await installer.prepare() }
 
     /// Pasted images land in `~/.sesh/uploads` under the moment they were pasted, as the
     /// phone's Uploads do, so the Agent can be told where to look.
@@ -104,7 +108,7 @@ final class Machine: Runner, Identifiable, Hashable {
         // Data to write, or, for a stream, an input the app never writes and only closes.
         let feed = input != nil || line != nil ? Pipe() : nil
         if let feed { process.standardInput = feed }
-        let lines = LineSplitter(line)
+        let lines = Greeted(line)
         let collected = Collector()
         out.fileHandleForReading.readabilityHandler = { handle in
             let chunk = handle.availableData
@@ -167,64 +171,24 @@ private final class Collector: @unchecked Sendable {
     let err = Buffer()
 }
 
-/// Turns chunks into whole lines, on the main actor.
+/// A stream's whole lines, those of the shell's greeting left out.
 @MainActor
-private final class LineSplitter {
+private final class Greeted {
     private let line: ((String) -> Void)?
-    private var buffer = Data()
+    private var lines = LineSplitter()
     private var greeted = false
 
     init(_ line: ((String) -> Void)?) { self.line = line }
 
     func feed(_ chunk: Data) {
         guard let line else { return }
-        buffer.append(chunk)
-        while let end = buffer.firstIndex(of: UInt8(ascii: "\n")) {
-            let text = String(decoding: buffer[buffer.startIndex..<end], as: UTF8.self)
-            buffer.removeSubrange(buffer.startIndex...end)
+        for text in lines.feed(chunk) {
             if greeted { line(text) } else { greeted = text == Machine.mark }
         }
     }
 
     func flush() {
-        guard let line, greeted, !buffer.isEmpty else { return }
-        line(String(decoding: buffer, as: UTF8.self))
-        buffer.removeAll()
-    }
-}
-
-extension Machine {
-    /// Puts the pinned transcript helper in place unless that version is already there; once
-    /// a run, as every use of a machine asks first.
-    func prepare() async -> String? {
-        if let preparing { return await preparing.value }
-        let task = Task { await check() }
-        preparing = task
-        let problem = await task.value
-        if problem != nil { preparing = nil }
-        return problem
-    }
-
-    private func check() async -> String? {
-        let ran = await run("uname -sm; \(Helper.path) --version 2>/dev/null || echo")
-        let lines = ran.out.components(separatedBy: "\n")
-        guard ran.ok, lines.count > 1 else { return ran.problem }
-        guard lines[1] != Helper.version else { return nil }
-        if let local = Helper.local { return await install(from: local, platform: lines[0]) }
-        guard let download = Helper.download(Helper.name(lines[0])) else {
-            return "Sesh has no helper for \(lines[0]) on \(title)."
-        }
-        let installed = await run(download)
-        return installed.ok ? nil : "Sesh could not install its helper on \(title): \(installed.problem)"
-    }
-
-    private func install(from folder: URL, platform: String) async -> String? {
-        guard let data = try? Data(contentsOf: folder.appending(path: "sesh-transcript-\(Helper.name(platform)).gz")) else {
-            return "There is no local helper for \(platform)."
-        }
-        let put = await put(data, to: "~/.sesh/bin/\(Helper.file).gz")
-        guard put.ok else { return put.problem }
-        let unpacked = await run(Helper.unpack)
-        return unpacked.ok ? nil : unpacked.problem
+        guard let line, greeted, let rest = lines.flush() else { return }
+        line(rest)
     }
 }

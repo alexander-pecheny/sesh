@@ -1,5 +1,6 @@
 //! An Agent session's Transcript as Conversation entries, shared by Claude, Codex and pi.
 
+pub mod act;
 mod claude;
 pub use claude::Background;
 mod codex;

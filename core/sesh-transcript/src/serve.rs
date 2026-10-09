@@ -14,11 +14,11 @@ use std::time::{Duration, Instant};
 
 use serde_json::{json, Value};
 
-use crate::follower::{transcript_path, Event, Follower, Herdr, Source};
+use crate::follower::{transcript_path, Event, Follower, Herdr, Input, Source};
 use crate::log::{Log, Writer};
 use crate::{Transcript, AGENTS};
 
-pub const PROTOCOL: u64 = 3;
+pub const PROTOCOL: u64 = 4;
 const TICK: Duration = Duration::from_millis(100);
 /// herdr's panes are listed less often than the screens of working Agents are read.
 const LIST_EVERY: u32 = 2;
@@ -59,6 +59,10 @@ impl Source for Shared {
     fn read(&mut self, pane_id: &str, ansi: bool) -> Result<String> {
         self.0.borrow_mut().read(pane_id, ansi)
     }
+
+    fn input(&mut self, pane_id: &str, input: &Input) -> Result<()> {
+        self.0.borrow_mut().input(pane_id, input)
+    }
 }
 
 struct Followed {
@@ -72,11 +76,13 @@ pub struct Machine {
     pub log: Log,
     source: Shared,
     sessions: HashMap<String, Followed>,
+    /// The panes as herdr last listed them, which answers and permissions are checked against.
+    panes: Vec<Value>,
 }
 
 impl Machine {
     pub fn new(log: Log, source: Shared) -> Self {
-        Machine { log, source, sessions: HashMap::new() }
+        Machine { log, source, sessions: HashMap::new(), panes: Vec::new() }
     }
 
     pub fn source(&self) -> Shared {
@@ -89,6 +95,7 @@ impl Machine {
 
     /// One look at every pane: new Agents are met, known ones followed, gone ones ended.
     pub fn tick(&mut self, panes: &[Value], now: Instant) -> Result<()> {
+        self.panes = panes.to_vec();
         for pane in panes {
             let (Some(key), Some(agent)) = (pane["pane_id"].as_str(), pane["agent"].as_str()) else { continue };
             if !AGENTS.contains(&agent) {
@@ -121,6 +128,12 @@ impl Machine {
             followed.writer.apply(&self.log, &[Event::State("ended".into()), Event::Live(Default::default())], None)?;
         }
         Ok(())
+    }
+
+    /// Plays what a device asked into the session's pane.
+    pub fn act(&mut self, session: &str, request: &Value) -> Result<()> {
+        let pane = self.panes.iter().find(|pane| pane["pane_id"] == session);
+        crate::act::act(&mut self.source, session, pane, request)
     }
 
     /// Items before `ord`, read from the Transcript when the log holds too few.
@@ -334,6 +347,10 @@ impl Client {
                 }
                 self.send(&json!({"t": "page_done", "session": session, "before": before, "more": more}));
             }
+            op if crate::act::OPS.contains(&op) => {
+                machine.act(&session, request)?;
+                self.send(&json!({"t": "done", "op": op, "session": session}));
+            }
             other => return Err(format!("unknown op {other:?}")),
         }
         Ok(())
@@ -394,21 +411,26 @@ pub fn attach(requests: &[Value]) -> Result<i32> {
     }
 }
 
-/// `page KEY --before ORD --limit N`: one page of a session's earlier items, for a device
-/// that reads it with a command of its own.
-pub fn page(session: &str, before: i64, limit: u64) -> Result<i32> {
+/// One request from a device that runs a command of its own for each, as the phone must
+/// (ADR 0012): `page` prints the page's lines, and an act fails with the follower's error.
+pub fn ask(request: &Value) -> Result<i32> {
     let mut stream = connect()?;
-    writeln!(stream, "{}", json!({"op": "page", "session": session, "before": before, "limit": limit})).map_err(|err| err.to_string())?;
+    writeln!(stream, "{request}").map_err(|err| err.to_string())?;
+    let page = request["op"] == "page";
     let mut out = std::io::stdout().lock();
     for line in BufReader::new(stream).lines() {
         let line = line.map_err(|err| err.to_string())?;
-        writeln!(out, "{line}").map_err(|err| err.to_string())?;
         let value: Value = serde_json::from_str(&line).unwrap_or_default();
-        if value["t"] == "page_done" || value["t"] == "error" {
-            break;
+        if page {
+            writeln!(out, "{line}").map_err(|err| err.to_string())?;
+        }
+        match value["t"].as_str() {
+            Some("error") if !page => return Err(value["message"].as_str().unwrap_or("the follower failed").to_string()),
+            Some("page_done" | "error" | "done") => return Ok(0),
+            _ => {}
         }
     }
-    Ok(0)
+    if page { Ok(0) } else { Err("the follower hung up".into()) }
 }
 
 fn connect() -> Result<UnixStream> {
@@ -500,6 +522,10 @@ impl Source for Recorder {
             self.write(json!({"read": pane_id, "ansi": ansi, "screen": screen}));
         }
         Ok(screen)
+    }
+
+    fn input(&mut self, pane_id: &str, input: &Input) -> Result<()> {
+        Herdr.input(pane_id, input)
     }
 
     fn recorder(&mut self) -> Option<&mut Recorder> {
