@@ -1,21 +1,7 @@
-//! Claude's screen, read with its styles, as the entries its Transcript will hold: the
-//! replies it is still writing or has not saved yet, a command still running, and the
-//! status line. See "Live items" in docs/PLAN.md.
+//! Claude's screen, read with its styles, as a View: its replies, commands and other blocks
+//! as Markdown, and the status line. The reconciler decides which of them the Transcript
+//! holds already.
 
-use std::time::{Duration, Instant};
-
-use serde_json::{json, Value};
-
-use crate::Entry;
-
-/// A command shows only once the Transcript has had this long to name it.
-const TOOL_DELAY: Duration = Duration::from_millis(500);
-/// How long items outlive Claude's turn, while the Transcript catches up.
-const GRACE: Duration = Duration::from_secs(3);
-/// Enough of an item's words to tell it from other entries.
-const PROBE: usize = 60;
-/// How many entries' words are kept to recognise what the Transcript holds.
-const CORPUS: usize = 400;
 /// How far up from the bottom a menu in place of the prompt box can reach.
 const MENU: usize = 30;
 const SPINNERS: &str = "·✢✳✶✻✽*";
@@ -74,7 +60,7 @@ struct Span {
 }
 
 #[derive(Clone, Debug, Default)]
-struct Row(Vec<Span>);
+pub(crate) struct Row(Vec<Span>);
 
 /// herdr gives a space next to a styled word either style, so only ink is compared.
 impl PartialEq for Row {
@@ -87,11 +73,11 @@ impl PartialEq for Row {
 }
 
 impl Row {
-    fn text(&self) -> String {
+    pub(crate) fn text(&self) -> String {
         self.0.iter().map(|span| span.text.as_str()).collect::<String>().trim_end().to_string()
     }
 
-    fn blank(&self) -> bool {
+    pub(crate) fn blank(&self) -> bool {
         self.text().trim().is_empty()
     }
 
@@ -101,7 +87,7 @@ impl Row {
     }
 
     /// The row without its first `columns` characters.
-    fn skip(&self, columns: usize) -> Row {
+    pub(crate) fn skip(&self, columns: usize) -> Row {
         let mut left = columns;
         let mut spans = Vec::new();
         for span in &self.0 {
@@ -216,15 +202,15 @@ fn measure(text: &str) -> usize {
 
 /// One run of rows that starts with a marker, or a run cut off at the top of the screen.
 #[derive(Clone, Debug, PartialEq)]
-struct Block {
-    kind: Kind,
-    rows: Vec<Row>,
+pub(crate) struct Block {
+    pub(crate) kind: Kind,
+    pub(crate) rows: Vec<Row>,
     /// Its start is above the screen.
-    cut: bool,
+    pub(crate) cut: bool,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq)]
-enum Kind {
+pub(crate) enum Kind {
     Reply,
     User,
     Tool,
@@ -235,9 +221,9 @@ enum Kind {
 /// width Claude wraps its text to.
 #[derive(Clone, Debug, PartialEq)]
 pub struct View {
-    blocks: Vec<Block>,
-    status: String,
-    width: usize,
+    pub(crate) blocks: Vec<Block>,
+    pub(crate) status: String,
+    pub(crate) width: usize,
 }
 
 impl View {
@@ -428,7 +414,7 @@ fn summary(text: &str) -> bool {
 
 /// A reply's rows, marker and margin included, as the Markdown Claude wrote and the words a
 /// reader sees.
-fn markdown(rows: &[Row], width: usize) -> (String, String) {
+pub(crate) fn markdown(rows: &[Row], width: usize) -> (String, String) {
     // Grey is Claude's chrome, such as a " · summary" label after the last line.
     let rows: Vec<Row> = rows
         .iter()
@@ -539,7 +525,7 @@ fn width_of(row: &Row) -> usize {
 
 /// A list item's marker, as Markdown, and how many columns it takes on the screen. Claude
 /// letters the items of a nested numbered list.
-fn list_marker(text: &str) -> Option<(String, usize)> {
+pub(crate) fn list_marker(text: &str) -> Option<(String, usize)> {
     if let Some(rest) = text.strip_prefix("- ").or_else(|| text.strip_prefix("• ")) {
         return (!rest.is_empty()).then(|| ("-".to_string(), 2));
     }
@@ -847,7 +833,7 @@ fn escape(text: &str) -> String {
 // MARK: Running commands
 
 /// The command a tool block shows running, and the line above it when that describes it.
-fn command(block: &Block, width: usize) -> Option<(String, Option<String>)> {
+pub(crate) fn command(block: &Block, width: usize) -> Option<(String, Option<String>)> {
     let texts: Vec<String> = block.rows.iter().map(Row::text).collect();
     let start = texts.iter().position(|text| text.trim_start().starts_with("⎿  $ "))?;
     let mut command = texts[start].trim_start()["⎿  $ ".len()..].to_string();
@@ -878,341 +864,6 @@ fn command(block: &Block, width: usize) -> Option<(String, Option<String>)> {
 /// "3s", "1m", "2h".
 fn duration(word: &str) -> bool {
     word.len() > 1 && word.ends_with(['s', 'm', 'h']) && word[..word.len() - 1].chars().all(|c| c.is_ascii_digit())
-}
-
-// MARK: Following the screen
-
-/// Letters and digits of what a reader sees: Markdown's marks, link addresses, fences and
-/// list markers dropped, so the screen's text and the Transcript's compare.
-pub fn words(markdown: &str) -> String {
-    let mut out = String::new();
-    for line in markdown.lines() {
-        // Claude's screen spells a link `text (url)` where the Transcript has `[text](url)`,
-        // so addresses count on neither side.
-        let line = without_urls(line);
-        let line = line.trim_start();
-        if line.starts_with("```") {
-            continue;
-        }
-        let line: String = match list_marker(line) {
-            Some((_, length)) => line.chars().skip(length).collect(),
-            None => line.to_string(),
-        };
-        let mut rest = line.as_str();
-        while let Some(at) = rest.find("](") {
-            out.extend(rest[..at].chars().filter(|c| c.is_alphanumeric()).flat_map(char::to_lowercase));
-            rest = rest[at..].find(')').map_or("", |end| &rest[at + end + 1..]);
-        }
-        out.extend(rest.chars().filter(|c| c.is_alphanumeric()).flat_map(char::to_lowercase));
-    }
-    out
-}
-
-fn without_urls(line: &str) -> String {
-    let mut out = String::new();
-    let mut rest = line;
-    while let Some(at) = ["https://", "http://"].iter().filter_map(|scheme| rest.find(scheme)).min() {
-        out.push_str(&rest[..at]);
-        let end = rest[at..].find(|c: char| c.is_whitespace() || c == ')').map_or(rest.len(), |end| at + end);
-        rest = &rest[end..];
-    }
-    out.push_str(rest);
-    out
-}
-
-fn probe(words: &str) -> &str {
-    let end = words.char_indices().nth(PROBE).map_or(words.len(), |(at, _)| at);
-    &words[..end]
-}
-
-/// Whether `held`, an entry's words, covers `shown`, an item's: it starts the same way, or
-/// for a short item, is the same.
-fn covers(held: &str, shown: &str) -> bool {
-    let probe = probe(shown);
-    !probe.is_empty() && held.starts_with(probe)
-}
-
-/// The words of what the Transcript holds, by kind, newest last.
-#[derive(Default)]
-struct Corpus {
-    replies: Vec<String>,
-    users: Vec<String>,
-    commands: Vec<String>,
-}
-
-impl Corpus {
-    fn learn(&mut self, entry: &Entry) {
-        // The same command often runs again in a later turn; only this turn's count.
-        if entry.kind == "user" {
-            self.commands.clear();
-        }
-        let list = match entry.kind {
-            "text" => &mut self.replies,
-            "user" => &mut self.users,
-            "tool" => &mut self.commands,
-            _ => return,
-        };
-        let text = match entry.kind {
-            "tool" => entry.command.clone().or_else(|| entry.description.clone()).unwrap_or_default(),
-            _ => entry.text.clone().unwrap_or_default(),
-        };
-        list.push(words(&text));
-        if list.len() > CORPUS {
-            list.remove(0);
-        }
-    }
-
-    /// Whether the Transcript holds a block: cut blocks by any of their words, whole ones by
-    /// their start.
-    fn holds(&self, block: &Block, width: usize) -> bool {
-        let (list, shown) = match block.kind {
-            Kind::Reply => (&self.replies, markdown(&block.rows, width).1),
-            Kind::User => (&self.users, block.rows.iter().map(|row| row.skip(2).text()).collect::<Vec<_>>().join(" ")),
-            Kind::Tool => match command(block, width) {
-                Some((command, _)) => (&self.commands, command),
-                None => return false,
-            },
-            Kind::Other => return false,
-        };
-        let shown = words(&shown);
-        if block.cut {
-            let probe = probe(&shown);
-            return !probe.is_empty() && list.iter().any(|held| held.contains(probe));
-        }
-        list.iter().any(|held| covers(held, &shown))
-    }
-}
-
-struct Item {
-    id: String,
-    kind: Kind,
-    rows: Vec<Row>,
-    seen: Instant,
-    entry: Entry,
-    /// What a reader sees, for comparing with the Transcript.
-    words: String,
-}
-
-/// The provisional items, kept from read to read, and what the Transcript already holds.
-#[derive(Default)]
-pub struct Live {
-    items: Vec<Item>,
-    status: String,
-    corpus: Corpus,
-    next: u64,
-    /// When Claude stopped working, if it has.
-    stopped: Option<Instant>,
-    /// The last view used, so a changed screen is read twice.
-    last: Option<View>,
-}
-
-impl Live {
-    /// Adds an entry the Transcript delivered and returns the item it replaces, if one was shown.
-    pub fn deliver(&mut self, entry: &Entry, now: Instant) -> Option<String> {
-        self.corpus.learn(entry);
-        let held = match entry.kind {
-            "text" => words(entry.text.as_deref().unwrap_or_default()),
-            "tool" if entry.tool == Some("bash") => words(entry.command.as_deref().unwrap_or_default()),
-            _ => return None,
-        };
-        let kind = if entry.kind == "text" { Kind::Reply } else { Kind::Tool };
-        let at = self.items.iter().position(|item| item.kind == kind && covers(&held, &item.words))?;
-        let replaced = shown(&self.items[at], now).then(|| self.items[at].id.clone());
-        self.items.drain(..=at);
-        replaced
-    }
-
-    /// Whether the screen changed in what this follows, so it should be read again to be
-    /// sure no redraw was half done.
-    pub fn changed(&self, view: &View) -> bool {
-        self.last.as_ref().is_none_or(|last| last.blocks != view.blocks)
-    }
-
-    /// Takes in one settled read of the screen.
-    pub fn see(&mut self, view: View, now: Instant) {
-        // Claude hides its spinner while a long reply streams; its word, not its stale count, stays.
-        self.status = match (view.status.is_empty(), self.stopped) {
-            (true, None) => self.status.split(" (").next().unwrap_or_default().to_string(),
-            _ => view.status.clone(),
-        };
-        let held = view.blocks.iter().rposition(|block| self.corpus.holds(block, view.width));
-        let fresh: Vec<&Block> = view
-            .blocks
-            .iter()
-            .enumerate()
-            .filter(|(index, block)| held.is_none_or(|held| *index > held) && !self.corpus.holds(block, view.width))
-            .map(|(_, block)| block)
-            .collect();
-        let mut from = 0;
-        for block in fresh {
-            match block.kind {
-                Kind::Reply => self.reply(block, view.width, now, &mut from),
-                Kind::Tool => self.tool(block, view.width, now, &mut from),
-                _ => {}
-            }
-        }
-        self.last = Some(view);
-    }
-
-    fn reply(&mut self, block: &Block, width: usize, now: Instant, from: &mut usize) {
-        if block.cut {
-            let Some((index, rows)) = self.items[*from..].iter().enumerate().rev().find_map(|(index, item)| {
-                (item.kind == Kind::Reply).then(|| Some((*from + index, extend(&item.rows, &block.rows)?))).flatten()
-            }) else {
-                return;
-            };
-            self.update(index, rows, width);
-            *from = index + 1;
-            return;
-        }
-        let (_, shown) = markdown(&block.rows, width);
-        let start = words(&shown);
-        if start.is_empty() {
-            return;
-        }
-        let same = self.items[*from..].iter().position(|item| {
-            item.kind == Kind::Reply && {
-                let (a, b) = (probe(&item.words), probe(&start));
-                let length = a.len().min(b.len()).min(20);
-                (length >= 8 || a == b) && a[..floor(a, length)] == b[..floor(b, length)]
-            }
-        });
-        match same {
-            Some(index) => {
-                self.update(*from + index, block.rows.clone(), width);
-                *from += index + 1;
-            }
-            None => {
-                self.add(Kind::Reply, block.rows.clone(), width, now);
-                *from = self.items.len();
-            }
-        }
-    }
-
-    fn tool(&mut self, block: &Block, width: usize, now: Instant, from: &mut usize) {
-        let Some((command, _)) = command(block, width) else { return };
-        let words = words(&command);
-        let same = self.items[*from..].iter().position(|item| item.kind == Kind::Tool && item.words == words);
-        match same {
-            Some(index) => {
-                self.update(*from + index, block.rows.clone(), width);
-                *from += index + 1;
-            }
-            None if !words.is_empty() => {
-                self.add(Kind::Tool, block.rows.clone(), width, now);
-                *from = self.items.len();
-            }
-            None => {}
-        }
-    }
-
-    fn add(&mut self, kind: Kind, rows: Vec<Row>, width: usize, now: Instant) {
-        self.next += 1;
-        let entry = entry(kind, &rows, width);
-        self.items.push(Item {
-            id: format!("live.{}.{}", std::process::id(), self.next),
-            kind,
-            words: entry_words(&entry),
-            rows,
-            seen: now,
-            entry,
-        });
-    }
-
-    fn update(&mut self, index: usize, rows: Vec<Row>, width: usize) {
-        let item = &mut self.items[index];
-        // Claude hides a line while its Markdown is incomplete, such as a link still streaming.
-        let shrinks = rows.len() < item.rows.len()
-            && rows[..rows.len().saturating_sub(1)].iter().zip(&item.rows).all(|(new, old)| new.text() == old.text());
-        if item.rows == rows || shrinks {
-            return;
-        }
-        item.entry = entry(item.kind, &rows, width);
-        item.words = entry_words(&item.entry);
-        item.rows = rows;
-    }
-
-    /// Tells whether Claude works; once it has stopped for a while, every item goes.
-    pub fn working(&mut self, working: bool, now: Instant) {
-        if working {
-            self.stopped = None;
-            return;
-        }
-        let stopped = *self.stopped.get_or_insert(now);
-        self.status.clear();
-        if now.duration_since(stopped) >= GRACE {
-            self.items.clear();
-            self.last = None;
-        }
-    }
-
-    /// Whether the screen is still worth reading.
-    pub fn watching(&self, now: Instant) -> bool {
-        self.stopped.is_none_or(|stopped| now.duration_since(stopped) < GRACE)
-    }
-
-    /// The `live` line for what is shown now.
-    pub fn line(&self, now: Instant) -> Value {
-        let items: Vec<Value> = self
-            .items
-            .iter()
-            .filter(|item| shown(item, now))
-            .map(|item| {
-                let mut value = serde_json::to_value(&item.entry).unwrap_or_default();
-                value["id"] = item.id.clone().into();
-                value
-            })
-            .collect();
-        json!({"t": "live", "items": items, "status": self.status})
-    }
-}
-
-fn shown(item: &Item, now: Instant) -> bool {
-    item.kind == Kind::Reply || now.duration_since(item.seen) >= TOOL_DELAY
-}
-
-/// `seen` carried on by `more`, the rows a later read shows from somewhere inside it.
-fn extend(seen: &[Row], more: &[Row]) -> Option<Vec<Row>> {
-    let skip = more.iter().take_while(|row| row.blank()).count();
-    let more = &more[skip..];
-    let first = more.first()?;
-    (0..seen.len()).find_map(|at| {
-        let overlap = seen.len() - at;
-        let agrees = seen[at] == *first
-            && seen[at..].iter().zip(more).take(overlap.saturating_sub(1)).all(|(a, b)| a == b);
-        agrees.then(|| [&seen[..at], more].concat())
-    })
-}
-
-fn floor(text: &str, mut at: usize) -> usize {
-    while !text.is_char_boundary(at) {
-        at -= 1;
-    }
-    at
-}
-
-/// An item's entry, undated: Sesh dates it when it first shows it.
-fn entry(kind: Kind, rows: &[Row], width: usize) -> Entry {
-    let at = Value::Null;
-    match kind {
-        Kind::Tool => {
-            let block = Block { kind, rows: rows.to_vec(), cut: false };
-            let (command, description) = command(&block, width).unwrap_or_default();
-            let mut input = json!({"command": command});
-            if let Some(description) = description {
-                input["description"] = description.into();
-            }
-            Entry::tool(String::new(), &at, "Bash", &input)
-        }
-        _ => {
-            let (markdown, _) = markdown(rows, width);
-            Entry::text_like(String::new(), "text", &at, markdown)
-        }
-    }
-}
-
-fn entry_words(entry: &Entry) -> String {
-    words(entry.command.as_deref().or(entry.text.as_deref()).unwrap_or_default())
 }
 
 #[cfg(test)]

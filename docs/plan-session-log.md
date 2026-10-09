@@ -37,7 +37,7 @@ One loop drives every session:
 | `items` | session key, id, order, seq, final, kind, the entry as JSON |
 | `meta` | the machine's sequence counter |
 
-An item from the screen is written with `final = 0`. When `Live::deliver` matches a
+An item from the screen is written with `final = 0`. When the reconciler matches a
 Transcript entry to it, the same row is rewritten with the entry and `final = 1`; an entry
 with no screen item is written straight as final. A screen item the Transcript never
 matches, such as text Claude rewrote as narration, is dropped when its turn's entries have

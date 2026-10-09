@@ -2,11 +2,13 @@
 //! machine, one row per item, rewritten in place and stamped with the machine's next
 //! sequence number on every write.
 
-use std::collections::HashMap;
 use std::path::Path;
 
 use rusqlite::{params, Connection, OptionalExtension};
 use serde_json::{json, Value};
+
+use crate::follower::Event;
+use crate::reconcile::{Change, Rows};
 
 const SCHEMA: &str = "
 CREATE TABLE IF NOT EXISTS meta (key TEXT PRIMARY KEY, value INTEGER NOT NULL);
@@ -178,9 +180,45 @@ impl Log {
         Ok(())
     }
 
+    /// Writes what the reconciler decided.
+    pub fn change(&self, session: &str, change: Change) -> Result<()> {
+        match change {
+            Change::Show(id, body) => self.put_item(session, &id, None, false, None, &body),
+            Change::Drop(id) => self.drop_item(session, &id),
+            Change::Rewrite { id, entry, body } => self.put_item(session, &id, None, true, Some(&entry), &body),
+            Change::Land { id, entry, body, above } => {
+                if let Some(held) = entry.as_deref().map(|entry| self.item_of(session, entry)).transpose()?.flatten() {
+                    return self.put_item(session, &held, None, true, entry.as_deref(), &body);
+                }
+                let first = match above.first() {
+                    Some(live) => self.ord_of(session, live)?,
+                    None => None,
+                };
+                if let Some(first) = first {
+                    for (offset, live) in above.iter().enumerate().rev() {
+                        self.move_item(session, live, first + 1 + offset as i64)?;
+                    }
+                }
+                self.put_item(session, &id, first, true, entry.as_deref(), &body)
+            }
+        }
+    }
+
+    /// The Transcript entry of the first row that holds one, to read older entries before it.
+    pub fn first_entry(&self, session: &str) -> Result<Option<String>> {
+        self.db
+            .query_row(
+                "SELECT entry FROM items WHERE session = ?1 AND entry IS NOT NULL AND gone = 0 ORDER BY ord LIMIT 1",
+                [session],
+                |row| row.get(0),
+            )
+            .optional()
+            .map_err(sql)
+    }
+
     /// The one deletion: a provisional item the Transcript never held. Its row stays, marked
     /// gone, so a device that saw it learns to drop it.
-    pub fn drop_item(&self, session: &str, id: &str) -> Result<()> {
+    fn drop_item(&self, session: &str, id: &str) -> Result<()> {
         let seq = self.next()?;
         self.db
             .execute("UPDATE items SET gone = 1, seq = ?3 WHERE session = ?1 AND id = ?2", params![session, id, seq])
@@ -231,22 +269,17 @@ impl Log {
     }
 }
 
-/// Turns one session's Conversation lines into the Session log's rows and summary.
+/// Turns one session's follower events into the Session log's rows and summary.
 pub struct Writer {
     pub session: String,
-    /// The provisional items shown now, in order, with what each last held.
-    live: Vec<(String, Value)>,
+    rows: Rows,
     summary: Value,
-    switches: u64,
-    /// The log's head when this writer began: a follower numbers its screen items from one
-    /// again, so the log keeps them apart by this.
-    epoch: i64,
 }
 
 impl Writer {
     pub fn new(session: &str, log: &Log) -> Result<Self> {
         let summary = log.session(session)?.unwrap_or_else(|| json!({"permissions": []}));
-        Ok(Writer { session: session.to_string(), live: Vec::new(), summary, switches: 0, epoch: log.head()? })
+        Ok(Writer { session: session.to_string(), rows: Rows::new(log.head()?), summary })
     }
 
     /// The Transcript cursor the session was last read to, so a restart picks up there.
@@ -254,21 +287,19 @@ impl Writer {
         self.summary["cursor"].as_str()
     }
 
-    pub fn apply(&mut self, log: &Log, lines: &[Value]) -> Result<()> {
-        self.apply_with(log, lines, None)
-    }
-
-    /// As `apply`, also taking what herdr says of the pane: its folder, the Agent's name and
-    /// how many turns it has finished.
-    pub fn apply_with(&mut self, log: &Log, lines: &[Value], pane: Option<&Value>) -> Result<()> {
+    /// Writes `events`, also taking what herdr says of the pane: its folder, the Agent's
+    /// name and how many turns it has finished.
+    pub fn apply(&mut self, log: &Log, events: &[Event], pane: Option<&Value>) -> Result<()> {
         let before = self.summary.clone();
         if let Some(pane) = pane {
             self.summary["cwd"] = pane["cwd"].clone();
             self.summary["name"] = pane["name"].clone();
             self.summary["done"] = pane["completion_seq"].clone();
         }
-        for line in lines {
-            self.line(log, line)?;
+        for event in events {
+            for change in self.event(event) {
+                log.change(&self.session, change)?;
+            }
         }
         if self.summary != before {
             log.put_session(&self.session, &self.summary)?;
@@ -276,99 +307,42 @@ impl Writer {
         Ok(())
     }
 
-    fn line(&mut self, log: &Log, line: &Value) -> Result<()> {
-        let session = self.session.clone();
-        match line["t"].as_str().unwrap_or_default() {
-            "hello" => {
-                self.summary["agent"] = line["agent"].clone();
-                self.summary["transcript"] = line["transcript"].clone();
+    fn event(&mut self, event: &Event) -> Vec<Change> {
+        match event {
+            Event::Hello { agent, transcript } => {
+                self.summary["agent"] = agent.clone().into();
+                self.summary["transcript"] = transcript.clone().into();
             }
-            "entry" => self.entry(log, line)?,
-            "live" => {
-                self.summary["status"] = line["status"].clone();
-                let items: Vec<Value> = line["items"].as_array().cloned().unwrap_or_default();
-                let shown: Vec<String> = items.iter().filter_map(|item| item["id"].as_str()).map(|id| self.own(id)).collect();
-                for (id, _) in &self.live {
-                    if !shown.contains(id) {
-                        log.drop_item(&session, id)?;
-                    }
-                }
-                let held: HashMap<String, Value> = std::mem::take(&mut self.live).into_iter().collect();
-                for item in items {
-                    let Some(id) = item["id"].as_str().map(|id| self.own(id)) else { continue };
-                    if held.get(&id) != Some(&item) {
-                        log.put_item(&session, &id, None, false, None, &item)?;
-                    }
-                    self.live.push((id, item));
-                }
+            Event::Entry { entry, replaces } => {
+                self.summary["last"] = entry.at.clone().into();
+                return vec![self.rows.land(entry, replaces.as_deref())];
             }
-            "switch" => {
-                self.switches += 1;
-                let id = format!("switch.{}.{}", log.head()?, self.switches);
-                let body = json!({"id": id, "kind": "switch", "summary": line["reason"], "transcript": line["transcript"]});
-                self.place_final(log, &id, None, &body)?;
-                self.summary["transcript"] = line["transcript"].clone();
+            Event::Live(shown) => {
+                self.summary["status"] = shown.status.clone().into();
+                return self.rows.show(&shown.items);
             }
-            "state" => self.summary["state"] = line["state"].clone(),
-            "background" => self.summary["background"] = line["tasks"].clone(),
-            "cursor" => self.summary["cursor"] = line["cursor"].clone(),
-            "permission" => {
-                let id = line["id"].clone();
+            Event::Switch { reason, transcript } => {
+                self.summary["transcript"] = transcript.clone().into();
+                return vec![self.rows.switch(reason, transcript)];
+            }
+            Event::State(state) => self.summary["state"] = state.clone().into(),
+            Event::Background(tasks) => self.summary["background"] = tasks.clone(),
+            Event::Cursor(cursor) => self.summary["cursor"] = cursor.clone().into(),
+            Event::Permission(line) => {
                 let mut list: Vec<Value> = self.summary["permissions"].as_array().cloned().unwrap_or_default();
-                list.retain(|open| open["id"] != id);
+                list.retain(|open| open["id"] != line["id"]);
                 let mut open = line.clone();
                 open.as_object_mut().map(|open| open.remove("t"));
                 list.push(open);
                 self.summary["permissions"] = list.into();
             }
-            "permission_done" => {
+            Event::PermissionDone(id) => {
                 let mut list: Vec<Value> = self.summary["permissions"].as_array().cloned().unwrap_or_default();
-                list.retain(|open| open["id"] != line["id"]);
+                list.retain(|open| open["id"] != id.as_str());
                 self.summary["permissions"] = list.into();
             }
-            _ => {}
+            Event::Ping => {}
         }
-        Ok(())
-    }
-
-    /// A Transcript entry: it rewrites the provisional item it replaces, or the item that
-    /// already holds it after a restart, or lands above every provisional item.
-    fn entry(&mut self, log: &Log, line: &Value) -> Result<()> {
-        let mut entry = line.clone();
-        let fields = entry.as_object_mut().expect("an entry is an object");
-        fields.remove("t");
-        let replaces = fields.remove("replaces").and_then(|id| id.as_str().map(|id| self.own(id)));
-        let entry_id = entry["id"].as_str().unwrap_or_default().to_string();
-        if entry["at"].is_string() {
-            self.summary["last"] = entry["at"].clone();
-        }
-        if let Some(id) = replaces {
-            let at = self.live.iter().position(|(live, _)| *live == id);
-            if let Some(at) = at {
-                self.live.remove(at);
-            }
-            return log.put_item(&self.session, &id, None, true, Some(&entry_id), &entry);
-        }
-        if let Some(id) = log.item_of(&self.session, &entry_id)? {
-            return log.put_item(&self.session, &id, None, true, Some(&entry_id), &entry);
-        }
-        self.place_final(log, &entry_id, Some(&entry_id), &entry)
-    }
-
-    fn own(&self, live: &str) -> String {
-        format!("{live}.{}", self.epoch)
-    }
-
-    fn place_final(&mut self, log: &Log, id: &str, entry: Option<&str>, body: &Value) -> Result<()> {
-        let first = match self.live.first() {
-            Some((live, _)) => log.ord_of(&self.session, live)?,
-            None => None,
-        };
-        if let Some(first) = first {
-            for (offset, (live, _)) in self.live.iter().enumerate().rev() {
-                log.move_item(&self.session, live, first + 1 + offset as i64)?;
-            }
-        }
-        log.put_item(&self.session, id, first, true, entry, body)
+        Vec::new()
     }
 }

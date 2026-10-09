@@ -14,7 +14,7 @@ use std::time::{Duration, Instant};
 
 use serde_json::{json, Value};
 
-use crate::follower::{transcript_path, Follower, Herdr, Source};
+use crate::follower::{transcript_path, Event, Follower, Herdr, Source};
 use crate::log::{Log, Writer};
 use crate::{Transcript, AGENTS};
 
@@ -97,8 +97,8 @@ impl Machine {
             if let Some(followed) = self.sessions.get_mut(key) {
                 followed.seen = now;
                 followed.follower.tick(pane, now)?;
-                let lines = followed.follower.drain();
-                followed.writer.apply_with(&self.log, &lines, Some(pane))?;
+                let events = followed.follower.drain();
+                followed.writer.apply(&self.log, &events, Some(pane))?;
                 continue;
             }
             let writer = Writer::new(key, &self.log)?;
@@ -106,8 +106,8 @@ impl Machine {
             let since = writer.cursor().map(str::to_string);
             follower.start(pane, since.as_deref())?;
             let mut followed = Followed { follower, writer, seen: now };
-            let lines = followed.follower.drain();
-            followed.writer.apply_with(&self.log, &lines, Some(pane))?;
+            let events = followed.follower.drain();
+            followed.writer.apply(&self.log, &events, Some(pane))?;
             self.sessions.insert(key.to_string(), followed);
         }
         let gone: Vec<String> = self
@@ -118,7 +118,7 @@ impl Machine {
             .collect();
         for key in gone {
             let mut followed = self.sessions.remove(&key).expect("listed above");
-            followed.writer.apply(&self.log, &[json!({"t": "state", "state": "ended"}), json!({"t": "live", "items": [], "status": ""})])?;
+            followed.writer.apply(&self.log, &[Event::State("ended".into()), Event::Live(Default::default())], None)?;
         }
         Ok(())
     }
@@ -132,12 +132,11 @@ impl Machine {
         let Some((agent, path)) = self.sessions.get(session).and_then(|followed| followed.follower.transcript()) else {
             return Ok((page, false));
         };
-        let first = self.log.page(session, i64::MAX, usize::MAX)?;
-        let Some(oldest) = first.iter().find_map(|item| item["entry"]["id"].as_str().filter(|id| !id.starts_with("live."))) else {
+        let Some(oldest) = self.log.first_entry(session)? else {
             return Ok((page, false));
         };
         let mut transcript = Transcript::new(&agent, path).expect("agent is supported");
-        let Some((older, more)) = transcript.history(oldest, limit).map_err(|err| err.to_string())? else {
+        let Some((older, more)) = transcript.history(&oldest, limit).map_err(|err| err.to_string())? else {
             return Ok((page, false));
         };
         let start = self.log.first_ord(session)?.unwrap_or(0);

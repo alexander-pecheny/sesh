@@ -4,7 +4,7 @@ use std::path::Path;
 use std::time::{Duration, Instant};
 
 use serde_json::{json, Value};
-use sesh_transcript::follower::{entry_line, herdr, transcript_path, Follower, Herdr};
+use sesh_transcript::follower::{entry_line, herdr, transcript_path, Event, Follower, Herdr};
 use sesh_transcript::vault::{self, Vault};
 use sesh_transcript::{replay, serve, Transcript, AGENTS, PROTOCOL, VERSION};
 
@@ -212,7 +212,7 @@ fn follow(args: &[String]) -> Exit {
     let (pane, agent) = agent_pane(&target)?;
     let mut follower = Follower::new(agent, last, Box::new(Herdr));
     follower.start(&pane, options.get("since").copied())?;
-    print_lines(&follower.drain())?;
+    print_events(&follower.drain())?;
     let mut agent_seen = Instant::now();
     let mut pinged = Instant::now();
     loop {
@@ -221,7 +221,7 @@ fn follow(args: &[String]) -> Exit {
             return Ok(0);
         }
         if pinged.elapsed() > PING {
-            follower.emit(json!({"t": "ping"}))?;
+            follower.emit(Event::Ping)?;
             pinged = Instant::now();
         }
         match target.pane() {
@@ -232,7 +232,7 @@ fn follow(args: &[String]) -> Exit {
             _ if agent_seen.elapsed() > AGENT_GONE_AFTER => return Ok(0),
             _ => {}
         }
-        print_lines(&follower.drain())?;
+        print_events(&follower.drain())?;
     }
 }
 
@@ -390,6 +390,10 @@ fn vault(args: &[String]) -> Exit {
         _ => return usage(),
     };
     print_lines(&lines)
+}
+
+fn print_events(events: &[Event]) -> Exit {
+    print_lines(&events.iter().map(Event::line).collect::<Vec<_>>())
 }
 
 fn print_lines(lines: &[Value]) -> Exit {

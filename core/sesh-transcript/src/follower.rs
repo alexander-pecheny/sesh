@@ -8,7 +8,8 @@ use std::time::Instant;
 
 use serde_json::{json, Value};
 
-use crate::screen::{Live, Menu, View};
+use crate::reconcile::{Reconciler, Shown};
+use crate::screen::{Menu, View};
 use crate::{permission, Entry, Transcript, AGENTS, PROTOCOL};
 
 /// While a session's Transcript cannot be found, look again every this many polls.
@@ -132,6 +133,47 @@ fn find_file(dir: &Path, depth: usize, matches: &dyn Fn(&str) -> bool) -> Option
 }
 
 
+/// What a follower tells of its session: the Writer puts it in the Session log, and `follow`
+/// prints it as protocol 2 spells it.
+#[derive(Clone, Debug, PartialEq)]
+pub enum Event {
+    Hello { agent: String, transcript: String },
+    /// A Transcript entry, naming the shown item it replaces.
+    Entry { entry: Entry, replaces: Option<String> },
+    Live(Shown),
+    Switch { reason: String, transcript: String },
+    State(String),
+    Background(Value),
+    Cursor(String),
+    /// A `permission` line, as `permission` makes it.
+    Permission(Value),
+    PermissionDone(String),
+    Ping,
+}
+
+impl Event {
+    pub fn line(&self) -> Value {
+        match self {
+            Event::Hello { agent, transcript } => json!({"t": "hello", "protocol": PROTOCOL, "agent": agent, "transcript": transcript}),
+            Event::Entry { entry, replaces } => {
+                let mut line = entry_line(entry);
+                if let Some(id) = replaces {
+                    line["replaces"] = id.clone().into();
+                }
+                line
+            }
+            Event::Live(shown) => json!({"t": "live", "items": shown.items, "status": shown.status}),
+            Event::Switch { reason, transcript } => json!({"t": "switch", "reason": reason, "transcript": transcript}),
+            Event::State(state) => json!({"t": "state", "state": state}),
+            Event::Background(tasks) => json!({"t": "background", "tasks": tasks}),
+            Event::Cursor(cursor) => json!({"t": "cursor", "cursor": cursor}),
+            Event::Permission(line) => line.clone(),
+            Event::PermissionDone(id) => json!({"t": "permission_done", "id": id}),
+            Event::Ping => json!({"t": "ping"}),
+        }
+    }
+}
+
 pub struct Follower {
     agent: String,
     last: usize,
@@ -149,11 +191,11 @@ pub struct Follower {
     /// What herdr last said the Agent was doing.
     reported: Option<String>,
     /// What Claude's screen shows beyond the Transcript.
-    pub(crate) live: Live,
-    /// The `live` line last sent.
-    sent: Value,
-    /// Lines written and not yet passed on.
-    out: Vec<Value>,
+    pub(crate) live: Reconciler,
+    /// What was last sent of it.
+    sent: Option<Shown>,
+    /// Events not yet passed on.
+    out: Vec<Event>,
     /// The time of the current tick: the clock, or a recording's.
     now: Instant,
     source: Box<dyn Source>,
@@ -177,14 +219,14 @@ impl Follower {
             wrote: false,
             background: json!([]),
             reported: None,
-            live: Live::default(),
-            sent: Value::Null,
+            live: Reconciler::default(),
+            sent: None,
             menu: None,
         }
     }
 
-    pub fn emit(&mut self, line: Value) -> Result<(), String> {
-        self.out.push(line);
+    pub fn emit(&mut self, event: Event) -> Result<(), String> {
+        self.out.push(event);
         self.wrote = true;
         Ok(())
     }
@@ -194,8 +236,8 @@ impl Follower {
         self.transcript.as_ref().map(|transcript| (self.agent.clone(), transcript.path.clone()))
     }
 
-    /// The lines written since the last call, for whoever passes them on.
-    pub fn drain(&mut self) -> Vec<Value> {
+    /// The events since the last call, for whoever passes them on.
+    pub fn drain(&mut self) -> Vec<Event> {
         std::mem::take(&mut self.out)
     }
 
@@ -204,12 +246,7 @@ impl Follower {
         let found = transcript_path(pane);
         let path = found.as_deref();
         self.lost = path.is_none().then_some(1);
-        self.emit(json!({
-            "t": "hello",
-            "protocol": PROTOCOL,
-            "agent": self.agent,
-            "transcript": path.unwrap_or_default(),
-        }))?;
+        self.emit(Event::Hello { agent: self.agent.clone(), transcript: path.unwrap_or_default().to_string() })?;
         if let Some(path) = path {
             let cursor = since.and_then(|cursor| cursor.split_once(':'));
             let mut transcript = Transcript::new(&self.agent, path).expect("agent is supported");
@@ -282,13 +319,13 @@ impl Follower {
             return Ok(());
         }
         if let Some(done) = self.menu.take() {
-            self.emit(json!({"t": "permission_done", "id": done}))?;
+            self.emit(Event::PermissionDone(done))?;
         }
         let (Some(id), Some(menu)) = (id, menu) else {
             return Ok(());
         };
         let options: Vec<Value> = menu.options.iter().map(|(key, label)| json!({"key": key, "label": label})).collect();
-        self.emit(json!({"t": "permission", "id": id, "tool": "menu", "summary": menu.title, "options": options}))?;
+        self.emit(Event::Permission(json!({"t": "permission", "id": id, "tool": "menu", "summary": menu.title, "options": options})))?;
         self.menu = Some(id);
         Ok(())
     }
@@ -344,7 +381,7 @@ impl Follower {
         let mark = transcript.entries.len();
         if transcript.read(None).map_err(|err| err.to_string())? {
             let path = transcript.path.to_string_lossy().into_owned();
-            self.emit(json!({"t": "switch", "reason": "fork", "transcript": path}))?;
+            self.emit(Event::Switch { reason: "fork".into(), transcript: path })?;
             let entries = transcript.entries.clone();
             self.transcript = Some(transcript);
             let start = entries.len().saturating_sub(self.last);
@@ -364,11 +401,8 @@ impl Follower {
             self.live.deliver(entry, now);
         }
         for entry in entries {
-            let mut line = entry_line(entry);
-            if let Some(id) = self.live.deliver(entry, now) {
-                line["replaces"] = id.into();
-            }
-            self.emit(line)?;
+            let replaces = self.live.deliver(entry, now);
+            self.emit(Event::Entry { entry: entry.clone(), replaces })?;
         }
         Ok(())
     }
@@ -385,13 +419,13 @@ impl Follower {
                 self.live.see(view, now);
             }
         }
-        let line = self.live.line(now);
-        if line == self.sent {
+        let shown = self.live.shown(now);
+        if self.sent.as_ref() == Some(&shown) {
             return Ok(());
         }
-        self.sent = line.clone();
+        self.sent = Some(shown.clone());
         let wrote = self.wrote;
-        self.emit(line)?;
+        self.emit(Event::Live(shown))?;
         self.wrote = wrote;
         Ok(())
     }
@@ -411,7 +445,7 @@ impl Follower {
             return Ok(());
         }
         if let Some((done, false)) = self.permission.take() {
-            self.emit(json!({"t": "permission_done", "id": done}))?;
+            self.emit(Event::PermissionDone(done))?;
         }
         let Some(id) = id else {
             return Ok(());
@@ -419,14 +453,12 @@ impl Follower {
         let tool = pending["tool"].as_str().unwrap_or_default();
         let question = tool == "AskUserQuestion";
         self.permission = Some((id.to_string(), question));
-        let line = match &self.transcript {
-            Some(transcript) if question => {
-                entry_line(&transcript.open_question(&pending["input"]))
-            }
+        let event = match &self.transcript {
+            Some(transcript) if question => Event::Entry { entry: transcript.open_question(&pending["input"]), replaces: None },
             _ if question => return Ok(()),
-            _ => permission(&self.agent, id, tool, &pending["input"]),
+            _ => Event::Permission(permission(&self.agent, id, tool, &pending["input"])),
         };
-        self.emit(line)
+        self.emit(event)
     }
 
     /// herdr's state, except that Claude with its turn over is only waiting on background
@@ -440,7 +472,7 @@ impl Follower {
         });
         let state = if reported == "working" && waiting { "background".to_string() } else { reported };
         if self.state.as_deref() != Some(state.as_str()) {
-            self.emit(json!({"t": "state", "state": state}))?;
+            self.emit(Event::State(state.clone()))?;
             self.state = Some(state);
         }
         Ok(())
@@ -461,33 +493,19 @@ impl Follower {
             .unwrap_or_default();
         if background != self.background {
             self.background = background.clone();
-            self.emit(json!({"t": "background", "tasks": background}))?;
+            self.emit(Event::Background(background))?;
         }
         let cursor = match &self.transcript {
             Some(transcript) => format!("{}:{}", transcript.offset, transcript.path.display()),
             None => "0:".to_string(),
         };
-        self.emit(json!({"t": "cursor", "cursor": cursor}))
+        self.emit(Event::Cursor(cursor))
     }
 }
 
-/// `SESH_TRACE=DIR` keeps every screen a debug build reads, timed, to replay it later.
-
-#[cfg(debug_assertions)]
-fn trace(ansi: &str) {
-    let Ok(dir) = std::env::var("SESH_TRACE") else { return };
-    let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap_or_default();
-    let _ = std::fs::write(format!("{dir}/{}.ansi", now.as_micros()), ansi);
-}
-
 /// The screen, once two reads agree: a read can land in the middle of Claude's redraw.
-fn settled(source: &mut dyn Source, pane_id: &str, live: &Live) -> Option<View> {
-    let mut read = || {
-        let ansi = source.read(pane_id, true).ok()?;
-        #[cfg(debug_assertions)]
-        trace(&ansi);
-        View::read(&ansi)
-    };
+fn settled(source: &mut dyn Source, pane_id: &str, live: &Reconciler) -> Option<View> {
+    let mut read = || View::read(&source.read(pane_id, true).ok()?);
     let mut view = read()?;
     if !live.changed(&view) {
         return Some(view);
@@ -515,14 +533,14 @@ pub fn entry_line(entry: &Entry) -> Value {
     line
 }
 
-pub fn switch(pane: &Value, path: &str) -> Value {
+fn switch(pane: &Value, path: &str) -> Event {
     let reason = match pane["agent_session"]["start"].as_str() {
         Some(reason @ ("clear" | "resume" | "compact")) => reason,
         Some("startup" | "new") => "new",
         Some("fork" | "branch") => "fork",
         _ => "other",
     };
-    json!({"t": "switch", "reason": reason, "transcript": path})
+    Event::Switch { reason: reason.into(), transcript: path.into() }
 }
 
 
@@ -550,7 +568,7 @@ mod tests {
         let now = Instant::now();
         follower.live.see(View::read(&screen).unwrap(), now);
         std::fs::remove_dir_all(&dir).unwrap();
-        assert_eq!(follower.live.line(now)["items"], json!([]));
+        assert_eq!(follower.live.shown(now).items, []);
     }
 
     #[test]

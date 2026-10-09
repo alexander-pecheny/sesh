@@ -5,6 +5,7 @@ pub use claude::Background;
 mod codex;
 pub mod follower;
 pub mod log;
+pub mod reconcile;
 pub mod replay;
 pub mod screen;
 pub mod serve;

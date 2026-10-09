@@ -19,18 +19,6 @@ fn replies(view: &View) -> Vec<String> {
         .collect()
 }
 
-fn said(kind: &'static str, text: &str) -> Entry {
-    Entry { kind, text: Some(text.into()), ..Entry::default() }
-}
-
-fn bash(command: &str) -> Entry {
-    Entry { kind: "tool", tool: Some("bash"), command: Some(command.into()), ..Entry::default() }
-}
-
-fn items(live: &Live, now: Instant) -> Vec<Value> {
-    live.line(now)["items"].as_array().unwrap().clone()
-}
-
 const ABOUT: &str = "**About calc.py**\n\n**calc.py** is an untracked file in this repository, next to a README.md. I have not opened it yet, so I can say only what its name suggests: a small `calc` module of arithmetic helpers. The [Python docs](about:blank) describe the conventions I will follow when I extend it.\n\nThree things matter before I change it:\n\n- The file has never been committed, so git holds no earlier copy.\n- Any new function should match the style already in the file.\n- The edit should touch nothing but the new function.\n\nThe plan has three steps:\n\n1. Run a six-second shell command.\n2. Read the file.\n3. Add `sub(a, b)` with Edit.";
 
 #[test]
@@ -94,81 +82,6 @@ fn a_running_command_reads_without_its_timer() {
 }
 
 #[test]
-fn replies_past_the_transcript_become_items_until_it_delivers_them() {
-    let now = Instant::now();
-    let mut live = Live::default();
-    live.deliver(&said("user", "First write two short paragraphs about calc.py using **bold**, `inline code`, a bullet list of three items, a numbered list, a level-2 heading and a link to https://example.com. Then run the shell command `sleep 6 && echo done` with a description. Then read calc.py, then add a sub(a, b) function to it with Edit. Then write a small markdown table of the functions, and finish with one sentence."), now);
-    live.see(view("streaming"), now);
-    let shown = items(&live, now);
-    assert_eq!(shown.len(), 1);
-    assert_eq!(shown[0]["kind"], "text");
-    assert_eq!(shown[0]["text"], ABOUT);
-    let id = shown[0]["id"].as_str().unwrap().to_string();
-    // The screen scrolls: the reply's top goes, a table follows.
-    live.see(view("table"), now);
-    let shown = items(&live, now);
-    assert_eq!(shown.len(), 2);
-    assert_eq!((shown[0]["id"].as_str(), shown[0]["text"].as_str()), (Some(id.as_str()), Some(ABOUT)));
-    assert!(shown[1]["text"].as_str().unwrap().starts_with("| Function | Operation |"));
-    let transcript = "## About calc.py\n\n**calc.py** is an untracked file in this repository, next to a README.md. I have not opened it yet, so I can say only what its name suggests: a small `calc` module of arithmetic helpers. The [Python docs](https://example.com) describe the conventions I will follow when I extend it.";
-    assert_eq!(live.deliver(&said("text", transcript), now), Some(id));
-    assert_eq!(items(&live, now).len(), 1);
-    live.see(view("table"), now);
-    assert_eq!(items(&live, now).len(), 1, "a delivered reply still on the screen comes back");
-}
-
-#[test]
-fn a_command_shows_once_the_transcript_has_had_time_to_name_it() {
-    let now = Instant::now();
-    let mut live = Live::default();
-    for text in ["Step 1: I will check whether TodoWrite is available, since it is not in my tool list.", "TodoWrite does not exist in this session, so I skip step 1 and move to step 2."] {
-        live.deliver(&said("text", text), now);
-    }
-    live.see(view("running"), now);
-    assert!(items(&live, now).is_empty());
-    let later = now + TOOL_DELAY;
-    let shown = items(&live, later);
-    assert_eq!((shown[0]["tool"].as_str(), shown[0]["command"].as_str()), (Some("bash"), Some("sleep 4; ls")));
-    let id = shown[0]["id"].as_str().map(str::to_string);
-    assert_eq!(live.deliver(&bash("sleep 4; ls"), later), id);
-    assert!(items(&live, later).is_empty());
-    // One the Transcript names in time never shows.
-    live.see(view("running"), later);
-    assert!(items(&live, later + TOOL_DELAY).is_empty());
-}
-
-#[test]
-fn a_command_run_again_in_a_later_turn_shows_again() {
-    let now = Instant::now();
-    let mut live = Live::default();
-    live.deliver(&bash("sleep 4; ls"), now);
-    live.deliver(&said("user", "Do these one at a time"), now);
-    live.see(view("running"), now);
-    let shown = items(&live, now + TOOL_DELAY);
-    assert_eq!(shown.last().unwrap()["command"], "sleep 4; ls");
-}
-
-#[test]
-fn a_half_drawn_screen_counts_as_a_change_and_items_end_after_the_turn() {
-    let now = Instant::now();
-    let mut live = Live::default();
-    live.see(view("before-redraw"), now);
-    assert!(live.changed(&view("redraw")));
-    assert!(!live.changed(&view("before-redraw")));
-    assert!(!items(&live, now).is_empty());
-    live.working(false, now);
-    assert!(!items(&live, now).is_empty() && live.watching(now));
-    live.working(false, now + GRACE);
-    assert!(items(&live, now + GRACE).is_empty() && !live.watching(now + GRACE));
-}
-
-#[test]
-fn words_drop_marks_addresses_and_list_markers() {
-    assert_eq!(words("## A [link](https://x.y/z) and `code`\n\n1. one\n   a. two"), "alinkandcodeonetwo");
-    assert_eq!(words(ABOUT), words(&ABOUT.replace("about:blank", "https://example.com")));
-}
-
-#[test]
 fn claude_wraps_its_markdown_so_marks_count_toward_the_width() {
     let streaming = view("link-streaming");
     let replies = replies(&streaming);
@@ -176,15 +89,6 @@ fn claude_wraps_its_markdown_so_marks_count_toward_the_width() {
     let slide = replies.iter().find(|reply| reply.starts_with("The slide rule")).unwrap();
     assert!(!slide.contains('\n'), "{slide}");
     assert!(slide.contains("**William Oughtred** set two such scales"));
-}
-
-#[test]
-fn the_spinner_word_stays_while_a_long_reply_hides_the_spinner() {
-    let now = Instant::now();
-    let mut live = Live::default();
-    live.see(view("streaming"), now);
-    live.see(view("no-spinner"), now);
-    assert_eq!(live.line(now)["status"], "Newspapering…");
 }
 
 #[test]
@@ -226,100 +130,10 @@ fn a_link_wrapped_across_rows_keeps_one_space() {
 }
 
 #[test]
-fn a_line_claude_hides_while_its_link_streams_stays() {
-    let now = Instant::now();
-    let mut live = Live::default();
-    live.see(view("link-streaming"), now);
-    let before = items(&live, now);
-    live.see(view("link-hidden"), now);
-    assert_eq!(items(&live, now), before);
-    assert!(before.last().unwrap()["text"].as_str().unwrap().ends_with("More on the [history of the slide"));
-}
-
-/// `REPLAY=DIR cargo test replay -- --ignored --nocapture` plays a recording, DIR/log.jsonl
-/// of screen frames and Transcript lines, through `Live`.
-#[test]
-#[ignore]
-fn replay() {
-    let dir = std::env::var("REPLAY").unwrap();
-    let path = std::env::temp_dir().join(format!("replay-{}.jsonl", std::process::id()));
-    // REPLAY_BEFORE names the session's Transcript, whose lines before the recording the
-    // helper already knew.
-    let log = std::fs::read_to_string(format!("{dir}/log.jsonl")).unwrap();
-    let first_line = log.lines().filter_map(|line| serde_json::from_str::<Value>(line).ok()).find_map(|event| event["line"]["uuid"].as_str().map(str::to_string));
-    let before: String = std::env::var("REPLAY_BEFORE")
-        .map(|file| {
-            std::fs::read_to_string(file).unwrap().lines()
-                .take_while(|line| first_line.as_deref().is_none_or(|uuid| !line.contains(uuid)))
-                .map(|line| format!("{line}\n"))
-                .collect()
-        })
-        .unwrap_or_default();
-    std::fs::write(&path, before).unwrap();
-    let mut transcript = crate::Transcript::new("claude", &path).unwrap();
-    let mut live = Live::default();
-    transcript.read(None).unwrap();
-    for entry in &transcript.entries {
-        live.deliver(entry, Instant::now());
-    }
-    let start = Instant::now();
-    let mut first: Option<f64> = None;
-    let mut last = Value::Null;
-    for line in std::fs::read_to_string(format!("{dir}/log.jsonl")).unwrap().lines() {
-        let event: Value = serde_json::from_str(line).unwrap();
-        let t = event["t"].as_f64().unwrap();
-        let at = t - *first.get_or_insert(t);
-        let now = start + Duration::from_secs_f64(at);
-        if let Some(line) = event.get("line") {
-            let mut file = std::fs::OpenOptions::new().append(true).open(&path).unwrap();
-            std::io::Write::write_all(&mut file, format!("{line}\n").as_bytes()).unwrap();
-            let mark = transcript.entries.len();
-            transcript.read(None).unwrap();
-            for entry in &transcript.entries[mark..] {
-                if let Some(id) = live.deliver(entry, now) {
-                    println!("{at:7.2} replaced {id} by {} {:?}", entry.kind, entry.summary);
-                }
-            }
-            continue;
-        }
-        let ansi = std::fs::read_to_string(format!("{dir}/{}", event["frame"].as_str().unwrap())).unwrap();
-        let Some(view) = View::read(&ansi) else {
-            println!("{at:7.2} no prompt box in {}", event["frame"]);
-            continue;
-        };
-        live.see(view, now);
-        let line = live.line(now);
-        if line["items"] != last["items"] {
-            let tails: Vec<String> = line["items"]
-                .as_array()
-                .unwrap()
-                .iter()
-                .map(|item| {
-                    let text = item["text"].as_str().or(item["command"].as_str()).unwrap_or_default();
-                    let tail: String = text.chars().rev().take(30).collect::<Vec<_>>().into_iter().rev().collect();
-                    format!("{}:{}", item["id"].as_str().unwrap().rsplit('.').next().unwrap(), tail.replace('\n', "⏎"))
-                })
-                .collect();
-            println!("{at:7.2} {} {tails:?}", event["frame"]);
-        }
-        last = line;
-    }
-    std::fs::remove_file(&path).unwrap();
-}
-
-#[test]
 fn a_menu_no_hook_reported_is_read_off_the_screen() {
     let screen = "⏺ Bash(rm -rf build)\n\n────────────────────────────────\n Bash command\n\n   rm -rf build\n   Remove the build folder\n\n This command was flagged for review.\n Do you want to proceed?\n ❯ 1. Yes\n   2. No, and tell Claude what to do differently (esc)\n\n Esc to cancel · Tab to amend\n";
     let menu = Menu::read(screen).unwrap();
     assert_eq!(menu.title, "Bash command\nrm -rf build\nRemove the build folder\nThis command was flagged for review.\nDo you want to proceed?");
     assert_eq!(menu.options, vec![("1".into(), "Yes".into()), ("2".into(), "No, and tell Claude what to do differently (esc)".into())]);
     assert_eq!(Menu::read("────────────────\n❯ \n────────────────\n"), None);
-}
-
-#[test]
-fn a_link_reads_the_same_on_screen_as_in_the_transcript() {
-    let transcript = "The PR is open: [#239290](https://github.com/ppl-ai/agi/pull/239290), \"Flag friction\".";
-    let screen = "The PR is open: #239290 (https://github.com/ppl-ai/agi/pull/239290), \"Flag friction\".";
-    assert_eq!(words(transcript), words(screen));
-    assert_eq!(words("see https://example.com/a now"), words("see now"));
 }

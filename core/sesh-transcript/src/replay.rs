@@ -1,5 +1,6 @@
 //! Replays a recording through the same Machine the follower runs, on the recording's own
-//! clock, and reports the Session log it ends with and any item it ever showed twice.
+//! clock, and reports the Session log it ends with and what a device watching it saw at each
+//! tick: any message shown twice, any item that moved.
 
 use std::cell::RefCell;
 use std::collections::HashMap;
@@ -40,12 +41,22 @@ impl Source for Recorded {
 pub struct Outcome {
     /// Each session's items at the end, in order, as `kind: text`.
     pub items: HashMap<String, Vec<String>>,
-    /// Every moment a message showed twice at once.
+    /// Every moment a device showed a message twice at once.
     pub doubles: Vec<String>,
+    /// Every item a device saw change its place after it landed.
+    pub moves: Vec<String>,
+    /// The `item` lines a device watching every session was sent, tick by tick.
+    pub ticks: Vec<Tick>,
     /// How many items were ever shown from the screen before the Transcript had them.
     pub provisional: usize,
     /// What a device watching every session from the start was sent, as `attach` prints it.
     pub lines: Vec<Value>,
+}
+
+pub struct Tick {
+    /// The recording's time, in milliseconds.
+    pub at: u64,
+    pub items: Vec<Value>,
 }
 
 pub fn replay(recording: &Path, work: &Path) -> Result<Outcome> {
@@ -67,6 +78,9 @@ pub fn replay(recording: &Path, work: &Path) -> Result<Outcome> {
     let mut moved: HashMap<String, PathBuf> = HashMap::new();
     let start = Instant::now();
     let mut doubles = Vec::new();
+    let mut moves = Vec::new();
+    let mut ticks = Vec::new();
+    let mut device = Device::default();
     let mut provisional = std::collections::HashSet::new();
     let mut lines = vec![json!({"t": "hello", "protocol": crate::serve::PROTOCOL, "version": crate::VERSION})];
     let mut watched: HashMap<String, i64> = HashMap::new();
@@ -87,7 +101,11 @@ pub fn replay(recording: &Path, work: &Path) -> Result<Outcome> {
         let Some(panes) = event["panes"].as_array() else { continue };
         let panes: Vec<Value> = panes.iter().map(|pane| relocate(pane, &mut moved, work)).collect();
         machine.tick(&panes, start + Duration::from_millis(at))?;
+        let sent = lines.len();
         watch(&machine.log, &panes, &mut watched, &mut summaries, &mut lines)?;
+        let items: Vec<Value> = lines[sent..].iter().filter(|line| line["t"] == "item").cloned().collect();
+        device.see(&items, at, &mut moves, &mut doubles);
+        ticks.push(Tick { at, items });
         for pane in &panes {
             let session = pane["pane_id"].as_str().unwrap_or_default();
             for item in machine.log.last(session, usize::MAX)? {
@@ -96,17 +114,35 @@ pub fn replay(recording: &Path, work: &Path) -> Result<Outcome> {
                 }
             }
         }
-        for (session, shown) in shown(&machine.log, &panes)? {
-            let mut seen = std::collections::HashSet::new();
-            for text in shown.iter().filter(|text| text.starts_with("user:") || text.starts_with("text:")) {
-                if !seen.insert(text) {
-                    doubles.push(format!("{session} at {at} ms: {text}"));
-                }
+    }
+    let panes: Vec<Value> = events.iter().filter_map(|event| event["panes"].as_array()).flatten().cloned().collect();
+    Ok(Outcome { items: shown(&machine.log, &panes)?.into_iter().collect(), doubles, moves, ticks, provisional: provisional.len(), lines })
+}
+
+/// The rows a device holds, by session and id.
+#[derive(Default)]
+struct Device(HashMap<(String, String), Value>);
+
+impl Device {
+    /// Takes in one tick's rows, noting any that moved and any message then shown twice.
+    fn see(&mut self, items: &[Value], at: u64, moves: &mut Vec<String>, doubles: &mut Vec<String>) {
+        for item in items {
+            let key = (item["session"].as_str().unwrap_or_default().to_string(), item["id"].as_str().unwrap_or_default().to_string());
+            if let Some(held) = self.0.get(&key).filter(|held| held["ord"] != item["ord"]) {
+                moves.push(format!("{} at {at} ms: {} from {} to {}", key.0, key.1, held["ord"], item["ord"]));
+            }
+            self.0.insert(key, item.clone());
+        }
+        let mut seen = std::collections::HashSet::new();
+        for item in self.0.values().filter(|item| item["gone"] == false) {
+            let (session, entry) = (item["session"].as_str().unwrap_or_default(), &item["entry"]);
+            let kind = entry["kind"].as_str().unwrap_or_default();
+            let text = format!("{kind}: {}", entry["text"].as_str().unwrap_or_default().trim());
+            if matches!(kind, "user" | "text") && !seen.insert((session, text.clone())) {
+                doubles.push(format!("{session} at {at} ms: {text}"));
             }
         }
     }
-    let panes: Vec<Value> = events.iter().filter_map(|event| event["panes"].as_array()).flatten().cloned().collect();
-    Ok(Outcome { items: shown(&machine.log, &panes)?.into_iter().collect(), doubles, provisional: provisional.len(), lines })
 }
 
 /// What `serve` sends a device that watches each pane from its first tick on.
@@ -182,8 +218,8 @@ fn relocate(pane: &Value, moved: &mut HashMap<String, PathBuf>, work: &Path) -> 
     pane
 }
 
-/// `sesh-transcript replay FILE`: the items each session ends with, then any doubles; with
-/// `--lines`, what a device watching it was sent instead.
+/// `sesh-transcript replay FILE`: the items each session ends with, then any doubles and
+/// moves; with `--lines`, what a device watching it was sent instead.
 pub fn print(recording: &Path, sent: bool) -> Result<i32> {
     let work = std::env::temp_dir().join(format!("sesh-replay-{}", std::process::id()));
     let outcome = replay(recording, &work)?;
@@ -201,5 +237,8 @@ pub fn print(recording: &Path, sent: bool) -> Result<i32> {
     for double in &outcome.doubles {
         println!("{}", json!({"double": double}));
     }
-    Ok(if outcome.doubles.is_empty() { 0 } else { 1 })
+    for moved in &outcome.moves {
+        println!("{}", json!({"moved": moved}));
+    }
+    Ok(if outcome.doubles.is_empty() && outcome.moves.is_empty() { 0 } else { 1 })
 }
