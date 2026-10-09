@@ -304,10 +304,15 @@ final class Library: ObservableObject {
     /// Every Task and folder by how recently it changed, for a list to keep while the user
     /// aims at it: a Task moving up as its Agent writes would move under the finger or pointer.
     func order() -> [String: Int] {
-        let all = vaults.flatMap { vault in
-            (vault.all(.task) + vault.all(.folder)).map { ($0.id, changed($0, in: vault)) }
+        var ranks: [String: Int] = [:]
+        func walk(_ parent: String?, in vault: Vault) {
+            for record in children(of: parent, in: vault, order: [:]) {
+                ranks[record.id] = ranks.count
+                if record.kind == .folder { walk(record.id, in: vault) }
+            }
         }
-        return Dictionary(all.sorted { $0.1 > $1.1 }.enumerated().map { ($1.0, $0) }, uniquingKeysWith: { a, _ in a })
+        vaults.forEach { walk(nil, in: $0) }
+        return ranks
     }
 
     /// The folders and Tasks directly inside `parent` in a kept `order`, those new to it first;

@@ -9,6 +9,7 @@ struct Sidebar: View {
     @State private var closing: Closing?
     /// The order of the Tasks, kept while the pointer is over them.
     @State private var order: [String: Int] = [:]
+    @State private var leaving: Task<Void, Never>?
 
     struct Closing: Identifiable {
         let vault: Vault
@@ -42,7 +43,18 @@ struct Sidebar: View {
         }
         .listStyle(.sidebar)
         .environment(\.taskOrder, order)
-        .onHover { order = $0 ? library.order() : [:] }
+        .onHover { inside in
+            leaving?.cancel()
+            if inside {
+                if order.isEmpty { order = library.order() }
+            } else {
+                // A pointer resting on the edge would otherwise reorder the list at every twitch.
+                leaving = Task {
+                    try? await Task.sleep(for: .seconds(1))
+                    if !Task.isCancelled { order = [:] }
+                }
+            }
+        }
         #if DEBUG
         // A hidden window draws no translucent material, so a snapshot needs a solid one.
         .scrollContentBackground(UserDefaults.standard.string(forKey: "snapshot") == nil ? .automatic : .hidden)
