@@ -176,4 +176,14 @@ enum Names {
         if let first = slug.first, !first.isLetter { slug = "c-" + slug }
         return String(slug.prefix(32))
     }
+
+    /// `name`, or `name-2`, `name-3` and so on when another Agent already goes by it.
+    static func free(_ name: String, taken: Set<String>) -> String {
+        var free = name, n = 1
+        while taken.contains(free) {
+            n += 1
+            free = slug(name.prefix(32 - "-\(n)".count) + "-\(n)")
+        }
+        return free
+    }
 }

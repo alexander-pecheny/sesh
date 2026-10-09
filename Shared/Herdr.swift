@@ -23,8 +23,9 @@ enum Herdr {
 
     /// Starts `agent` in a fresh `pane` and waits until it can take a prompt. On failure the
     /// pane is closed, so no half-started Agent lingers, and the reason comes back.
-    static func launch(_ agent: Agent, name: String, pane: String, resuming transcript: String? = nil,
+    static func launch(_ agent: Agent, name wanted: String, pane: String, resuming transcript: String? = nil,
                        config: String? = nil, on runner: Runner) async -> String? {
+        let name = Names.free(wanted, taken: await agentNames(on: runner))
         if agent == .claude, let config, !config.isEmpty {
             _ = await runner.run("herdr pane run \(quote(pane)) \(quote("export CLAUDE_CONFIG_DIR=\(shellPath(config))"))")
         }
@@ -162,6 +163,20 @@ enum Herdr {
 
     static func closeWorkspace(_ workspace: String, on runner: Runner) async {
         _ = await runner.run("herdr workspace close \(quote(workspace))")
+    }
+
+    /// The names herdr's running Agents go by.
+    static func agentNames(on runner: Runner) async -> Set<String> {
+        struct List: Decodable {
+            struct Result: Decodable {
+                struct Agent: Decodable { let name: String? }
+                let agents: [Agent]
+            }
+            let result: Result
+        }
+        let ran = await runner.run("herdr agent list")
+        let list = try? JSONDecoder().decode(List.self, from: Data(ran.out.utf8))
+        return Set(list?.result.agents.compactMap(\.name) ?? [])
     }
 
     /// The Workspaces herdr has open right now, by id, with their labels.

@@ -183,4 +183,11 @@ final class TaskCommandTests: XCTestCase {
         XCTAssertEqual(Start.recent(repos, home: "/Users/me"), ["~/src/app", "/opt/lib", "~", "/Users/meg/x"])
         XCTAssertEqual(Start.recent(repos, home: nil), repos)
     }
+
+    func testASecondAgentOfTheTaskTakesTheNextFreeName() {
+        XCTAssertEqual(Names.free("fix-claude", taken: ["other"]), "fix-claude")
+        XCTAssertEqual(Names.free("fix-claude", taken: ["fix-claude", "fix-claude-2"]), "fix-claude-3")
+        let long = String(repeating: "a", count: 32)
+        XCTAssertEqual(Names.free(long, taken: [long]), String(repeating: "a", count: 30) + "-2")
+    }
 }
