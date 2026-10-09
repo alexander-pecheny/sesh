@@ -24,7 +24,16 @@ struct TaskView: View {
                     .padding(.horizontal, Metric.pad)
                     .help("Starting \(pending.agent.title) on \(pending.machine)")
                 }
-                if let task = vault.records[id] { AddMenu(vault: vault, task: task) }
+                if let task = vault.records[id] {
+                    AddMenu(vault: vault, task: task) { opening in
+                        if opening { ProgressView().controlSize(.small) } else { Image(systemName: "plus") }
+                    }
+                    .menuStyle(.borderlessButton)
+                    .menuIndicator(.hidden)
+                    .fixedSize()
+                    .padding(.horizontal, Metric.gap)
+                    .help("New Tab")
+                }
                 Spacer()
                 if let task = vault.records[id], task.body.path != nil, let branch = task.body.branch {
                     Label("\(branch) on \(TaskActions.machine(task.body.machine).title)", systemImage: "arrow.triangle.branch")
@@ -50,17 +59,7 @@ struct TaskView: View {
         }
         .navigationTitle(vault.records[id]?.body.title ?? "Task")
         .confirmsClosing(library)
-        .alert("End this Agent session?", isPresented: Binding(get: { library.ending != nil }, set: { if !$0 { library.ending = nil } })) {
-            Button("End", role: .destructive) {
-                if let session = library.ending { Task { await library.end(session) } }
-            }
-            Button("Cancel", role: .cancel) {}
-        } message: {
-            Text("The Agent is still at work and stops at once. Its Conversation stays in the Task, and Resume picks it up again.")
-        }
-        .alert("Sesh could not resume it", isPresented: Binding(get: { library.resumeProblem != nil }, set: { if !$0 { library.resumeProblem = nil } })) {
-            Button("OK", role: .cancel) {}
-        } message: { Text(library.resumeProblem ?? "") }
+        .confirmsEnding(library)
         #if DEBUG
         // `-start claude` starts an Agent session in the chosen Task, for tests with no menus.
         .task {
@@ -98,7 +97,7 @@ private struct TabButton: View {
     var body: some View {
         HStack(spacing: Metric.tiny) {
             Button { library.open(tab, in: task) } label: {
-                Label(title, systemImage: icon).lineLimit(1).contentShape(.rect)
+                Label(tab.title(in: vault), systemImage: tab.icon).lineLimit(1).contentShape(.rect)
                     .foregroundStyle(session.map(library.ended) == true ? .secondary : .primary)
             }
             .buttonStyle(.plain)
@@ -113,34 +112,11 @@ private struct TabButton: View {
         .padding(.horizontal, Metric.pad)
         .padding(.vertical, Metric.tiny)
         .background(selected ? Color.primary.opacity(0.1) : .clear, in: .rect(cornerRadius: 6))
-        .draggable(dragged)
+        // A session or Document Tab can be dropped on another Task in the sidebar.
+        .draggable(tab.record ?? "")
         .sheet(item: $naming) { NameSheet(naming: $0) }
         .contextMenu {
-            if !recordID.isEmpty, let record = vault.records[recordID] {
-                Button("Rename…") { naming = .init(goal: .rename(record), vault: vault, parent: nil) }
-            }
-            if case .document(let id) = tab, let path = vault.records[id]?.body.path {
-                Button("Copy Path") { Pasteboard.copy(path) }
-            }
-            if let session {
-                if library.ended(session) {
-                    Button("Resume Agent session") { Task { await library.resume(session) } }
-                } else if !library.resuming.contains(session.id) {
-                    Button("Close Tab and End \(session.body.agent.flatMap(Agent.init)?.title ?? "Agent") Session") {
-                        library.close(tab, in: task)
-                        library.askToEnd(session)
-                    }
-                }
-                Divider()
-            }
-            if !recordID.isEmpty {
-                Menu("Move to Task") {
-                    ForEach(vault.all(.task).filter { $0.id != task && $0.body.archived != true }
-                        .sorted { ($0.body.title ?? "") < ($1.body.title ?? "") }) { other in
-                        Button(other.body.title ?? "Untitled") { library.move(recordID, to: other.id) }
-                    }
-                }
-            }
+            TabMenuItems(vault: vault, task: task, tab: tab) { naming = .init(goal: .rename($0), vault: vault, parent: nil) }
         }
     }
 
@@ -154,105 +130,6 @@ private struct TabButton: View {
         guard let position = index.firstIndex(of: tab), position < 9 else { return nil }
         return KeyboardShortcut(KeyEquivalent(Character("\(position + 1)")))
     }
-
-    private var recordID: String {
-        switch tab {
-        case .session(let id), .document(let id): id
-        case .journal, .terminal, .subagent: ""
-        }
-    }
-
-    /// A session or Document Tab can be dropped on another Task in the sidebar.
-    private var dragged: String { recordID }
-
-    private var icon: String {
-        switch tab {
-        case .journal: "book"
-        case .session: "bubble.left.and.text.bubble.right"
-        case .document: "doc.text"
-        case .terminal: "terminal"
-        case .subagent: "person.2"
-        }
-    }
-
-    private var title: String {
-        switch tab {
-        case .journal: "Journal"
-        case .session(let id), .document(let id): vault.records[id]?.body.title ?? "Untitled"
-        case .terminal: "Terminal"
-        case .subagent(_, _, let title): title
-        }
-    }
-}
-
-/// New Tabs for the Task, and every Agent session it has had, to reopen.
-private struct AddMenu: View {
-    @EnvironmentObject private var library: Library
-    @ObservedObject var vault: Vault
-    let task: Record
-    @State private var problem: String?
-    @State private var agent: Agent?
-    @State private var opening = false
-
-    var body: some View {
-        Menu {
-            Section {
-                ForEach(Agent.allCases) { agent in
-                    Button("New \(agent.title) session…") { self.agent = agent }
-                }
-                let machines = TaskActions.machines(for: task, in: vault)
-                ForEach(machines) { machine in
-                    Button(machines.count > 1 ? "New Terminal on \(machine.title)" : "New Terminal") {
-                        opening = true
-                        Task {
-                            problem = await library.openTerminal(in: task, on: machine)
-                            opening = false
-                        }
-                    }
-                    .disabled(opening)
-                }
-            }
-            Section {
-                Button("New Document") {
-                    let document = vault.create(.document, .init(title: "Untitled", text: "", task: task.id, edited: 0))
-                    library.open(.document(document.id), in: task.id)
-                }
-            }
-            let sessions = vault.children(.session, task: task.id).sorted { ($0.body.position ?? 0) < ($1.body.position ?? 0) }
-            ForEach([false, true], id: \.self) { ended in
-                let group = sessions.filter { library.ended($0) == ended }
-                if !group.isEmpty {
-                    Section(ended ? "Ended Agent sessions" : "Running Agent sessions") {
-                        ForEach(group) { session in
-                            Button(session.body.title ?? "Agent session") { library.open(.session(session.id), in: task.id) }
-                        }
-                    }
-                }
-            }
-            let documents = vault.children(.document, task: task.id).sorted { ($0.body.title ?? "") < ($1.body.title ?? "") }
-            if !documents.isEmpty {
-                Section("Documents") {
-                    ForEach(documents) { document in
-                        Button(document.body.title ?? "Untitled") { library.open(.document(document.id), in: task.id) }
-                    }
-                }
-            }
-        } label: {
-            if opening { ProgressView().controlSize(.small) } else { Image(systemName: "plus") }
-        }
-        .menuStyle(.borderlessButton)
-        .menuIndicator(.hidden)
-        .fixedSize()
-        .padding(.horizontal, Metric.gap)
-        .help("New Tab")
-        .sheet(item: $agent) { agent in
-            StartSessionSheet(vault: vault, task: task, agent: agent) { problem = $0 }
-        }
-        .alert("Sesh could not start it", isPresented: Binding(get: { problem != nil }, set: { if !$0 { problem = nil } })) {
-            Button("OK", role: .cancel) {}
-        } message: { Text(problem ?? "") }
-    }
-
 }
 
 /// What the current Tab shows, apart so the Task view stays simple to type-check.
@@ -355,18 +232,7 @@ private struct SessionTab: View {
         .overlay(alignment: .topTrailing) {
             if conversation?.pane != nil { faces }
         }
-        // An Agent that exits by itself leaves a bare shell; its Conversation comes from the copy.
-        .onChange(of: vault.records[id].map(library.ended) ?? false) { _, ended in
-            if ended, conversation?.pane != nil { library.reload(id) }
-        }
-        .task(id: library.reloads[id, default: 0]) {
-            guard let session = vault.records[id] else { return }
-            conversation = await library.conversation(for: session)
-            #if DEBUG
-            // `-reveal ITEM` scrolls to one entry, for tests with no clicking.
-            if let item = UserDefaults.standard.string(forKey: "reveal") { await conversation?.reveal(item) }
-            #endif
-        }
+        .loadsConversation($conversation, of: id, in: vault, library: library)
     }
 
     private var faces: some View {

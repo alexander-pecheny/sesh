@@ -114,3 +114,19 @@ private struct Offscreen: NSViewRepresentable {
     func updateNSView(_ view: NSView, context: Context) {}
 }
 #endif
+
+extension Library {
+    /// The selected Task's current Tab, unless it is the Journal, which never closes.
+    func closeCurrent() {
+        guard let task = selection, let tab = current[task], tab != .journal else { return }
+        close(tab, in: task)
+    }
+
+    /// Moves to the selected Task's next or previous Tab, round from the last to the Journal.
+    func cycle(by step: Int) {
+        guard let task = selection else { return }
+        let all = [TabItem.journal] + (tabs[task] ?? [])
+        let index = all.firstIndex(of: current[task] ?? .journal) ?? 0
+        current[task] = all[(index + step + all.count) % all.count]
+    }
+}

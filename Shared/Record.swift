@@ -41,3 +41,32 @@ struct Record: Codable, Identifiable, Equatable {
     var seq: Int = 0
     var deleted = false
 }
+
+/// The records of one Vault, read and written; the Vault keeps them in step with its Host.
+@MainActor
+protocol Records: AnyObject {
+    var records: [String: Record] { get }
+    func write(_ record: Record)
+}
+
+extension Records {
+    func all(_ kind: Record.Kind) -> [Record] {
+        records.values.filter { $0.kind == kind && !$0.deleted }
+    }
+
+    func children(_ kind: Record.Kind, task: String) -> [Record] {
+        all(kind).filter { $0.body.task == task }
+    }
+
+    func create(_ kind: Record.Kind, _ body: Record.Body) -> Record {
+        let record = Record(id: UUID().uuidString.lowercased(), kind: kind, body: body)
+        write(record)
+        return record
+    }
+
+    func delete(_ record: Record) {
+        var record = record
+        record.deleted = true
+        write(record)
+    }
+}

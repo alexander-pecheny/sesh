@@ -36,7 +36,16 @@ struct TaskScreen: View {
                     .onChange(of: current) { _, tab in withAnimation { scroller.scrollTo(tab) } }
                     .onAppear { scroller.scrollTo(current) }
                 }
-                if let task = vault.records[id] { AddMenu(vault: vault, task: task) }
+                if let task = vault.records[id] {
+                    AddMenu(vault: vault, task: task) { opening in
+                        Group {
+                            if opening { ProgressView() } else { Image.lucide("plus", size: Metric.title) }
+                        }
+                        .foregroundStyle(flavour(.mauve))
+                        .frame(width: Metric.control, height: Metric.control)
+                    }
+                    .accessibilityLabel("New Tab")
+                }
             }
             .frame(height: 40)
             .background(flavour(.mantle))
@@ -56,11 +65,7 @@ struct TaskScreen: View {
                         }
                         Button("Rename") { sheet = .rename(vault, task) }
                         if task.body.archived == true {
-                            Button("Reopen") {
-                                var record = task
-                                record.body.archived = false
-                                vault.write(record)
-                            }
+                            Button("Reopen") { Tree.reopen(task, in: vault) }
                         } else {
                             Button("Close Task…", role: .destructive) { sheet = .close(vault, task) }
                         }
@@ -69,17 +74,7 @@ struct TaskScreen: View {
             }
         }
         .sheet(item: $sheet) { $0.view }
-        .alert("End this Agent session?", isPresented: Binding(get: { library.ending != nil }, set: { if !$0 { library.ending = nil } })) {
-            Button("End", role: .destructive) {
-                if let session = library.ending { Task { await library.end(session) } }
-            }
-            Button("Cancel", role: .cancel) {}
-        } message: {
-            Text("The Agent is still at work and stops at once. Its Conversation stays in the Task, and Resume picks it up again.")
-        }
-        .alert("Sesh could not resume it", isPresented: Binding(get: { library.resumeProblem != nil }, set: { if !$0 { library.resumeProblem = nil } })) {
-            Button("OK", role: .cancel) {}
-        } message: { Text(library.resumeProblem ?? "") }
+        .confirmsEnding(library)
     }
 }
 
@@ -96,8 +91,8 @@ private struct TabChip: View {
 
     var body: some View {
         HStack(spacing: Metric.tiny) {
-            Image(systemName: icon).imageScale(.small)
-            Text(title).lineLimit(1)
+            Image(systemName: tab.icon).imageScale(.small)
+            Text(tab.title(in: vault)).lineLimit(1)
             if case .session(let id) = tab, let session = vault.records[id] { MarkView(mark: library.mark(of: session)) }
             if selected, tab != .journal {
                 Button { library.close(tab, in: task) } label: {
@@ -108,7 +103,7 @@ private struct TabChip: View {
                 .buttonStyle(.plain)
                 .padding(.vertical, -Metric.gap)
                 .padding(.trailing, -Metric.gap)
-                .accessibilityLabel("Close \(title)")
+                .accessibilityLabel("Close \(tab.title(in: vault))")
             }
         }
         .font(.ui(Metric.note))
@@ -123,130 +118,8 @@ private struct TabChip: View {
         .accessibilityAddTraits(selected ? .isSelected : [])
         .sheet(item: $sheet) { $0.view }
         .contextMenu {
-            if !recordID.isEmpty, let record = vault.records[recordID] {
-                Button("Rename") { sheet = .rename(vault, record) }
-            }
-            if tab != .journal {
-                Button("Close Tab") { library.close(tab, in: task) }
-            }
-            if case .session(let id) = tab, let session = vault.records[id] {
-                if library.ended(session) {
-                    Button("Resume Agent session") { Task { await library.resume(session) } }
-                } else if !library.resuming.contains(id) {
-                    Button("Close Tab and End \(session.body.agent.flatMap(Agent.init)?.title ?? "Agent") Session") {
-                        library.close(tab, in: task)
-                        library.askToEnd(session)
-                    }
-                }
-            }
-            if !recordID.isEmpty {
-                Menu("Move to Task") {
-                    ForEach(vault.all(.task).filter { $0.id != task && $0.body.archived != true }
-                        .sorted { ($0.body.title ?? "") < ($1.body.title ?? "") }) { other in
-                        Button(other.body.title ?? "Untitled") { library.move(recordID, to: other.id) }
-                    }
-                }
-            }
+            TabMenuItems(vault: vault, task: task, tab: tab) { sheet = .rename(vault, $0) }
         }
-    }
-
-    /// Sessions and Documents can move to another Task; a Terminal ends with its Tab.
-    private var recordID: String {
-        switch tab {
-        case .session(let id), .document(let id): id
-        case .journal, .subagent, .terminal: ""
-        }
-    }
-
-    private var icon: String {
-        switch tab {
-        case .journal: "book"
-        case .session: "bubble.left.and.text.bubble.right"
-        case .document: "doc.text"
-        case .terminal: "terminal"
-        case .subagent: "person.2"
-        }
-    }
-
-    private var title: String {
-        switch tab {
-        case .journal: "Journal"
-        case .session(let id), .document(let id): vault.records[id]?.body.title ?? "Untitled"
-        case .terminal: "Terminal"
-        case .subagent(_, _, let title): title
-        }
-    }
-}
-
-/// New Tabs for the Task, and every Agent session and Document it has had, to reopen.
-private struct AddMenu: View {
-    @Environment(\.colorScheme) private var colorScheme
-    @EnvironmentObject private var library: Library
-    @ObservedObject var vault: Vault
-    let task: Record
-    @State private var problem: String?
-    @State private var agent: Agent?
-    @State private var opening = false
-
-    private var flavour: Catppuccin.Flavour { colorScheme == .dark ? .mocha : .latte }
-
-    var body: some View {
-        Menu {
-            Section {
-                ForEach(Agent.allCases) { agent in
-                    Button("New \(agent.title) session…") { self.agent = agent }
-                }
-                let machines = TaskActions.machines(for: task, in: vault)
-                ForEach(machines) { machine in
-                    Button(machines.count > 1 ? "New Terminal on \(machine.title)" : "New Terminal") {
-                        opening = true
-                        Task {
-                            problem = await library.openTerminal(in: task, on: machine)
-                            opening = false
-                        }
-                    }
-                    .disabled(opening)
-                }
-            }
-            Section {
-                Button("New Document") {
-                    let document = vault.create(.document, .init(title: "Untitled", text: "", task: task.id, edited: 0))
-                    library.open(.document(document.id), in: task.id)
-                }
-            }
-            let sessions = vault.children(.session, task: task.id).sorted { ($0.body.position ?? 0) < ($1.body.position ?? 0) }
-            ForEach([false, true], id: \.self) { ended in
-                let group = sessions.filter { library.ended($0) == ended }
-                if !group.isEmpty {
-                    Section(ended ? "Ended Agent sessions" : "Running Agent sessions") {
-                        ForEach(group) { session in
-                            Button(session.body.title ?? "Agent session") { library.open(.session(session.id), in: task.id) }
-                        }
-                    }
-                }
-            }
-            let documents = vault.children(.document, task: task.id).sorted { ($0.body.title ?? "") < ($1.body.title ?? "") }
-            if !documents.isEmpty {
-                Section("Documents") {
-                    ForEach(documents) { document in
-                        Button(document.body.title ?? "Untitled") { library.open(.document(document.id), in: task.id) }
-                    }
-                }
-            }
-        } label: {
-            Group {
-                if opening { ProgressView() } else { Image.lucide("plus", size: Metric.title) }
-            }
-            .foregroundStyle(flavour(.mauve))
-            .frame(width: Metric.control, height: Metric.control)
-        }
-        .accessibilityLabel("New Tab")
-        .sheet(item: $agent) { agent in
-            StartSessionSheet(vault: vault, task: task, agent: agent) { problem = $0 }
-        }
-        .alert("Sesh could not start it", isPresented: Binding(get: { problem != nil }, set: { if !$0 { problem = nil } })) {
-            Button("OK", role: .cancel) {}
-        } message: { Text(problem ?? "") }
     }
 }
 
@@ -313,13 +186,6 @@ private struct SessionScreen: View {
                 }
             }
         }
-        // An Agent that exits by itself leaves a bare shell; its Conversation comes from the copy.
-        .onChange(of: vault.records[id].map(library.ended) ?? false) { _, ended in
-            if ended, conversation?.pane != nil { library.reload(id) }
-        }
-        .task(id: library.reloads[id, default: 0]) {
-            guard let session = vault.records[id] else { return }
-            conversation = await library.conversation(for: session)
-        }
+        .loadsConversation($conversation, of: id, in: vault, library: library)
     }
 }

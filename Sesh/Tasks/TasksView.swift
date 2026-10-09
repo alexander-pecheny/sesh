@@ -174,7 +174,7 @@ private struct FolderRow: View {
                 Menu("Move to") { MoveTargets(vault: vault, moving: folder) }
                 Divider()
                 Button("Delete Folder", role: .destructive) { Tree.deleteFolder(folder, in: vault) }
-                    .disabled(!Tree.children(of: folder.id, in: vault).isEmpty)
+                    .disabled(!Tree.canDelete(folder, in: vault))
             }
         }
     }
@@ -211,14 +211,14 @@ private struct TaskRow: View {
                 }
                 Divider()
                 if task.body.archived == true {
-                    Button("Reopen") { reopen() }
+                    Button("Reopen") { Tree.reopen(task, in: vault) }
                 } else {
                     Button("Close Task…", role: .destructive) { sheet = .close(vault, task) }
                 }
             }
             .swipeActions {
                 if task.body.archived == true {
-                    Button("Reopen") { reopen() }
+                    Button("Reopen") { Tree.reopen(task, in: vault) }
                 } else {
                     Button("Close") { sheet = .close(vault, task) }.tint(flavour(.peach))
                 }
@@ -237,12 +237,6 @@ private struct TaskRow: View {
             MarksView(marks: library.marks(ofTask: task.id))
         }
     }
-
-    private func reopen() {
-        var record = vault.records[task.id] ?? task
-        record.body.archived = false
-        vault.write(record)
-    }
 }
 
 /// Closed Tasks, out of the way but still readable and searchable.
@@ -255,7 +249,7 @@ private struct ArchiveGroup: View {
     private var flavour: Catppuccin.Flavour { colorScheme == .dark ? .mocha : .latte }
 
     var body: some View {
-        let archived = vault.all(.task).filter { $0.body.archived == true }.sorted { ($0.body.title ?? "") < ($1.body.title ?? "") }
+        let archived = Tree.archived(in: vault)
         if !archived.isEmpty {
             DisclosureGroup(isExpanded: $open) {
                 ForEach(archived) { TaskRow(vault: vault, task: $0, sheet: $sheet) }
@@ -299,25 +293,7 @@ private struct UnfiledRow: View {
 
     var body: some View {
         Menu {
-            Menu("Adopt into") {
-                ForEach(library.vaults) { vault in
-                    Section(vault.name) {
-                        ForEach(vault.all(.task).filter { $0.body.archived != true }.sorted { ($0.body.title ?? "") < ($1.body.title ?? "") }) { task in
-                            Button(task.body.title ?? "Untitled") { library.adopt(item, into: task.id) }
-                        }
-                    }
-                }
-            }
-            Menu("Adopt into a new Task") {
-                ForEach(library.vaults) { vault in
-                    Button(vault.name) {
-                        let task = vault.create(.task, .init(title: item.name, position: Tree.next(in: nil, of: vault)))
-                        library.adopt(item, into: task.id)
-                    }
-                }
-            }
-            Divider()
-            Button("Stop and Close…", role: .destructive) { stopping = true }
+            UnfiledMenuItems(item: item, stopping: $stopping)
         } label: {
             VStack(alignment: .leading, spacing: 2) {
                 Text(item.name).font(.ui(Metric.body)).foregroundStyle(flavour(.text)).lineLimit(1)
@@ -327,10 +303,6 @@ private struct UnfiledRow: View {
             .frame(maxWidth: .infinity, alignment: .leading)
             .contentShape(.rect)
         }
-        .confirmationDialog("Stop \(item.agent.title) in \(item.cwd)?", isPresented: $stopping, titleVisibility: .visible) {
-            Button("Stop and Close", role: .destructive) { Task { await library.stop(item) } }
-        } message: {
-            Text("The Agent is interrupted and its herdr pane closed. Nothing of it is kept in a Vault, as it was never adopted.")
-        }
+        .confirmsStopping(item, isPresented: $stopping, library: library)
     }
 }

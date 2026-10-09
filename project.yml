@@ -134,6 +134,8 @@ targets:
       - path: Shared/Record.swift
       - path: Shared/Git.swift
       - path: Shared/Close.swift
+      - path: Shared/Tree.swift
+      - path: Shared/Tabs.swift
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: me.pecheny.sesh.tests

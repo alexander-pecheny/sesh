@@ -4,7 +4,7 @@ import Foundation
 /// changes not yet accepted by the Vault's Host. Writes land here first and reach the Host
 /// whenever it is reachable (ADR 0008).
 @MainActor
-final class Vault: ObservableObject, Identifiable {
+final class Vault: ObservableObject, Identifiable, Records {
     /// The Vault's name on its Host, and the Host: an ssh alias, nil for the Mac. The phone
     /// also keeps which of its Hosts it reaches that alias by.
     struct Place: Codable, Hashable {
@@ -81,16 +81,6 @@ final class Vault: ObservableObject, Identifiable {
         try? JSONEncoder().encode(saved).write(to: file, options: .atomic)
     }
 
-    // MARK: Reading
-
-    func all(_ kind: Record.Kind) -> [Record] {
-        records.values.filter { $0.kind == kind && !$0.deleted }
-    }
-
-    func children(_ kind: Record.Kind, task: String) -> [Record] {
-        all(kind).filter { $0.body.task == task }
-    }
-
     // MARK: Writing
 
     /// Changes a record here at once and queues it for the Host.
@@ -104,18 +94,6 @@ final class Vault: ObservableObject, Identifiable {
         pending = queue.count
         save()
         Task { await flush() }
-    }
-
-    func create(_ kind: Record.Kind, _ body: Record.Body) -> Record {
-        let record = Record(id: UUID().uuidString.lowercased(), kind: kind, body: body)
-        write(record)
-        return record
-    }
-
-    func delete(_ record: Record) {
-        var record = record
-        record.deleted = true
-        write(record)
     }
 
     // MARK: Talking to the Host

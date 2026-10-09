@@ -180,7 +180,7 @@ private struct FolderRow: View {
                     Button("Rename") { naming = .init(goal: .rename(folder), vault: vault, parent: nil) }
                     Divider()
                     Button("Delete Folder", role: .destructive) { Tree.deleteFolder(folder, in: vault) }
-                        .disabled(!Tree.children(of: folder.id, in: vault).isEmpty || Tree.holdsArchived(folder.id, in: vault))
+                        .disabled(!Tree.canDelete(folder, in: vault))
                         .help("Only an empty folder can be deleted, archived Tasks included")
                 }
         }
@@ -217,13 +217,7 @@ private struct TaskRow: View {
                 }
                 Divider()
                 if task.body.archived == true {
-                    Button("Reopen") {
-                        var record = vault.records[task.id] ?? task
-                        record.body.archived = false
-                        // Its folder may have gone while it was archived; it comes back at the top.
-                        if let parent = record.body.parent, vault.records[parent]?.deleted != false { record.body.parent = nil }
-                        vault.write(record)
-                    }
+                    Button("Reopen") { Tree.reopen(task, in: vault) }
                 } else {
                     Button("Close Task…") { closing = true }
                 }
@@ -354,32 +348,8 @@ private struct UnfiledRow: View {
         }
         .draggable(Library.unfiledPrefix + item.id)
         .help("Drag onto a Task to adopt it")
-        .contextMenu {
-            Menu("Adopt into") {
-                ForEach(library.vaults) { vault in
-                    Section(vault.name) {
-                        ForEach(vault.all(.task).filter { $0.body.archived != true }.sorted { ($0.body.title ?? "") < ($1.body.title ?? "") }) { task in
-                            Button(task.body.title ?? "Untitled") { library.adopt(item, into: task.id) }
-                        }
-                    }
-                }
-            }
-            Menu("Adopt into a new Task") {
-                ForEach(library.vaults) { vault in
-                    Button(vault.name) {
-                        let task = vault.create(.task, .init(title: item.name, position: Tree.next(in: nil, of: vault)))
-                        library.adopt(item, into: task.id)
-                    }
-                }
-            }
-            Divider()
-            Button("Stop and Close…", role: .destructive) { stopping = true }
-        }
-        .confirmationDialog("Stop \(item.agent.title) in \(item.cwd)?", isPresented: $stopping) {
-            Button("Stop and Close", role: .destructive) { Task { await library.stop(item) } }
-        } message: {
-            Text("The Agent is interrupted and its herdr pane closed. Nothing of it is kept in a Vault, as it was never adopted.")
-        }
+        .contextMenu { UnfiledMenuItems(item: item, stopping: $stopping) }
+        .confirmsStopping(item, isPresented: $stopping, library: library)
     }
 }
 
@@ -390,7 +360,7 @@ private struct ArchiveGroup: View {
     @State private var open = false
 
     var body: some View {
-        let archived = vault.all(.task).filter { $0.body.archived == true }.sorted { ($0.body.title ?? "") < ($1.body.title ?? "") }
+        let archived = Tree.archived(in: vault)
         if !archived.isEmpty {
             DisclosureGroup(isExpanded: $open) {
                 ForEach(archived) { TaskRow(vault: vault, task: $0, naming: $naming).tag($0.id) }
@@ -399,5 +369,19 @@ private struct ArchiveGroup: View {
                     .selectionDisabled()
             }
         }
+    }
+}
+
+extension Library {
+    static let unfiledPrefix = "unfiled:"
+
+    /// Something dropped on a Task: an Unfiled Agent session, or an Agent session or Document
+    /// of another Task. Whether it was taken.
+    func receive(_ dropped: String, into task: String) -> Bool {
+        guard dropped.hasPrefix(Self.unfiledPrefix) else { return move(dropped, to: task) }
+        let id = String(dropped.dropFirst(Self.unfiledPrefix.count))
+        guard let item = unfiled.values.joined().first(where: { $0.id == id }) else { return false }
+        adopt(item, into: task)
+        return true
     }
 }

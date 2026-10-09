@@ -25,8 +25,7 @@ final class Library: ObservableObject {
     /// A Task from its title alone, selected at once; its branch is named in the background.
     @discardableResult
     func newTask(_ title: String, in vault: Vault, parent: String?) -> Record {
-        let task = vault.create(.task, .init(
-            title: title, parent: parent, position: Tree.next(in: parent, of: vault), edited: Int64(Date().timeIntervalSince1970 * 1000)))
+        let task = Tree.newTask(title, parent: parent, in: vault)
         TaskActions.nameBranch(of: task, in: vault)
         selection = task.id
         return task
@@ -395,7 +394,9 @@ final class Library: ObservableObject {
         open(.session(session.id), in: task)
     }
 
-    static let unfiledPrefix = "unfiled:"
+    func adoptIntoNewTask(_ item: Unfiled, in vault: Vault) {
+        adopt(item, into: newTask(item.name, in: vault, parent: nil).id)
+    }
 
     // MARK: Subagents
 
@@ -570,19 +571,6 @@ final class Library: ObservableObject {
         return true
     }
 
-    /// Something dropped on a Task: an Unfiled Agent session, or an Agent session or Document
-    /// of another Task. Whether it was taken.
-    @discardableResult
-    func receive(_ dropped: String, into task: String) -> Bool {
-        if dropped.hasPrefix(Self.unfiledPrefix) {
-            let id = String(dropped.dropFirst(Self.unfiledPrefix.count))
-            guard let item = unfiled.values.joined().first(where: { $0.id == id }) else { return false }
-            adopt(item, into: task)
-            return true
-        }
-        return move(dropped, to: task)
-    }
-
     /// Moves an Agent session or Document to another Task of the same Vault, Tab and all.
     @discardableResult
     func move(_ id: String, to task: String) -> Bool {
@@ -600,20 +588,6 @@ final class Library: ObservableObject {
         if tab != .journal, !(tabs[task] ?? []).contains(tab) { tabs[task, default: []].append(tab) }
         current[task] = tab
         selection = task
-    }
-
-    /// The selected Task's current Tab, unless it is the Journal, which never closes.
-    func closeCurrent() {
-        guard let task = selection, let tab = current[task], tab != .journal else { return }
-        close(tab, in: task)
-    }
-
-    /// Moves to the selected Task's next or previous Tab, round from the last to the Journal.
-    func cycle(by step: Int) {
-        guard let task = selection else { return }
-        let all = [TabItem.journal] + (tabs[task] ?? [])
-        let index = all.firstIndex(of: current[task] ?? .journal) ?? 0
-        current[task] = all[(index + step + all.count) % all.count]
     }
 
     /// A Tab whose closing would lose something, held until the user confirms.
@@ -666,15 +640,3 @@ final class Library: ObservableObject {
     }
 }
 
-/// One Tab of a Task. Sessions and Documents are records; a Terminal lives only while open.
-enum TabItem: Hashable, Identifiable, Codable {
-    case journal
-    case session(String)
-    case document(String)
-    /// A shell in a herdr pane, recorded in the Vault so it reopens after a restart.
-    case terminal(String)
-    /// A Claude subagent's own Transcript, read-only, opened from its parent's Conversation.
-    case subagent(session: String, path: String, title: String)
-
-    var id: Self { self }
-}
