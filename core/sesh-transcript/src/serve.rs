@@ -2,7 +2,7 @@
 //! there into the Session log, and serves devices over a local socket (ADR 0012).
 
 use std::cell::RefCell;
-use std::collections::HashMap;
+use std::collections::{HashMap, VecDeque};
 use std::fs::{File, OpenOptions};
 use std::io::{BufRead as _, BufReader, ErrorKind, Read as _, Write as _};
 use std::os::unix::net::{UnixListener, UnixStream};
@@ -19,7 +19,7 @@ use serde_json::{json, Value};
 use crate::agent::{transcript_path, Agent};
 use crate::follower::{Event, Follower, Herdr, Input, Source};
 use crate::log::{Log, Writer};
-use crate::reconcile::{HANDED, QUEUED, SENT};
+use crate::reconcile::{HANDED, LOST, QUEUED, SENT};
 use crate::Transcript;
 
 pub const PROTOCOL: u64 = 5;
@@ -37,6 +37,8 @@ const OPENING: usize = 80;
 const START_WAIT: Duration = Duration::from_secs(3);
 /// How long a follower asked to leave gives the acts it took to be played and answered.
 const LEAVE_WAIT: Duration = Duration::from_secs(5);
+/// How many requests a follower remembers taking, so one asked again is not played twice.
+const TAKEN: usize = 64;
 
 type Result<T> = std::result::Result<T, String>;
 
@@ -112,12 +114,14 @@ pub struct Machine {
     failed: (mpsc::Sender<Failed>, mpsc::Receiver<Failed>),
     /// The time of the last tick: the clock, or a recording's.
     now: Instant,
+    /// The ids of the requests taken lately, which a device that heard no answer asks again.
+    taken: VecDeque<String>,
 }
 
 impl Machine {
     pub fn new(log: Log, source: Shared) -> Self {
         let (hands, failed): (Hands, _) = (Arc::new(|| Box::new(Herdr)), mpsc::channel());
-        Machine { log, source, sessions: HashMap::new(), panes: Vec::new(), hands, acts: HashMap::new(), playing: Arc::default(), leaving: None, failed, now: Instant::now() }
+        Machine { log, source, sessions: HashMap::new(), panes: Vec::new(), hands, acts: HashMap::new(), playing: Arc::default(), leaving: None, failed, now: Instant::now(), taken: VecDeque::new() }
     }
 
     pub fn with_hands(self, hands: Hands) -> Self {
@@ -195,6 +199,15 @@ impl Machine {
             let _ = reply.send(json!({"t": "leaving", "op": request["op"]}));
             return;
         }
+        if let Some(asked) = request["request"].as_str() {
+            if self.taken.iter().any(|taken| taken == asked) {
+                return drop(reply.send(json!({"t": "done", "op": request["op"], "session": session})));
+            }
+            self.taken.push_back(asked.to_string());
+            if self.taken.len() > TAKEN {
+                self.taken.pop_front();
+            }
+        }
         match self.message(session, &request) {
             Ok(Some(play)) => self.play(session, play, reply),
             Ok(None) => drop(reply.send(json!({"t": "done", "op": request["op"], "session": session}))),
@@ -205,6 +218,11 @@ impl Machine {
     /// What an act does to the session's messages (ADR 0015), and what then goes to the pane.
     fn message(&mut self, session: &str, request: &Value) -> Result<Option<Value>> {
         let (op, id) = (request["op"].as_str().unwrap_or_default(), request["id"].as_str().unwrap_or_default());
+        // A message is played once: one the log holds already, from this follower or one before
+        // it, was taken, unless the Agent lost it and the user sends it again.
+        if op == "send" && !id.is_empty() && self.log.item(session, id)?.is_some_and(|item| item["gone"] == false && item["entry"]["state"] != LOST) {
+            return Ok(None);
+        }
         let ours = matches!(op, "unqueue" | "hand");
         let followed = match self.sessions.get_mut(session) {
             Some(followed) if ours || op == "send" && !id.is_empty() => followed,
@@ -580,6 +598,11 @@ pub fn attach(requests: &[Value]) -> Result<i32> {
 /// (ADR 0012): `page` prints the page's lines, and an act fails with the follower's error.
 /// An act a leaving follower refuses goes to the newer one once it answers.
 pub fn ask(request: &Value) -> Result<i32> {
+    // Asked again after a silent hang-up, the request keeps its id, so it is played once.
+    let stamp = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap_or_default().as_nanos();
+    let mut request = request.clone();
+    request["request"] = format!("{}.{stamp}", std::process::id()).into();
+    let request = &request;
     let mut stream = connect()?;
     let deadline = Instant::now() + LEAVE_WAIT + START_WAIT;
     loop {
@@ -797,6 +820,53 @@ mod tests {
         fn input(&mut self, _: &str, _: &Input) -> Result<()> {
             Err("no such pane".into())
         }
+    }
+
+    /// herdr noting every input at once.
+    struct Noted(Arc<Mutex<Vec<Input>>>);
+
+    impl Source for Noted {
+        fn panes(&mut self) -> Result<Vec<Value>> {
+            Ok(Vec::new())
+        }
+
+        fn read(&mut self, _: &str, _: bool) -> Result<String> {
+            Ok(String::new())
+        }
+
+        fn input(&mut self, _: &str, input: &Input) -> Result<()> {
+            self.0.lock().unwrap().push(input.clone());
+            Ok(())
+        }
+    }
+
+    #[test]
+    fn a_message_asked_again_is_played_once_by_this_follower_and_the_next() {
+        let dir = std::env::temp_dir().join(format!("sesh-again-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let panes = [json!({"pane_id": "w1:p1", "agent": "codex", "agent_status": "idle"})];
+        let played = Arc::new(Mutex::new(Vec::new()));
+        let machine = |played: &Arc<Mutex<Vec<Input>>>| {
+            let played = played.clone();
+            Machine::new(Log::open(&dir.join("sessions.db")).unwrap(), Shared(Rc::new(RefCell::new(Quiet))))
+                .with_hands(Arc::new(move || Box::new(Noted(played.clone()))))
+        };
+        let send = |machine: &mut Machine, request: &str| {
+            let (reply, replies) = mpsc::channel();
+            machine.act("w1:p1", json!({"op": "send", "id": "sent.1", "text": "hello", "request": request}), reply);
+            assert_eq!(replies.recv_timeout(Duration::from_secs(5)).unwrap()["t"], "done");
+        };
+        let start = Instant::now();
+        let mut older = machine(&played);
+        older.tick(&panes, start).unwrap();
+        send(&mut older, "r1");
+        send(&mut older, "r1");
+        send(&mut older, "r2");
+        let mut newer = machine(&played);
+        newer.tick(&panes, start + TICK).unwrap();
+        send(&mut newer, "r1");
+        std::fs::remove_dir_all(&dir).unwrap();
+        assert_eq!(*played.lock().unwrap(), [Input::Prompt("hello".into())]);
     }
 
     #[test]

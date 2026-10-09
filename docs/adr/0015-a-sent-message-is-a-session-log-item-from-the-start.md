@@ -41,3 +41,10 @@ A message that waits has no place in the order until the Agent takes it: it move
 rows that land before it, and then goes after every row but the messages still waiting. One
 sent to an idle Agent is already there, so its row keeps its place from sent to final. A
 message written while its Agent starts is held on the device and sent once the Agent is up.
+
+A device that hears no answer asks again, perhaps of the newer follower that took over. The
+follower writes a message's item before it plays it, so a `send` whose id the Session log holds
+already is answered at once and not played again, unless the message was lost and the user
+sends it again. Every other request carries an id the follower remembers for a while, so it is
+not played twice by the same follower; across a takeover, `keys` and `stop` can repeat, while
+`answer` and `permit` find no menu open, and `unqueue` and `hand` find nothing left to do.

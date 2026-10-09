@@ -257,6 +257,11 @@ impl Log {
         Ok(())
     }
 
+    /// The item `id` of `session`, gone or not.
+    pub fn item(&self, session: &str, id: &str) -> Result<Option<Value>> {
+        Ok(self.items("WHERE session = ?1 AND id = ?2", [session, id])?.pop())
+    }
+
     /// Every item of `session` written after `seq`, oldest write first, as `item` lines.
     pub fn items_since(&self, session: &str, seq: i64) -> Result<Vec<Value>> {
         self.items("WHERE session = ?1 AND seq > ?2 ORDER BY seq", params![session, seq])

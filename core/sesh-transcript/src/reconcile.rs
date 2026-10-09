@@ -355,11 +355,14 @@ impl Reconciler {
         }
     }
 
-    /// Takes back a message the Agent was not given or did not take, and says whether it could.
+    /// Takes back a message the Agent was not given or did not take; false when the Agent has
+    /// it. One already gone is taken back already, as when a device asks again.
     pub fn unqueue(&mut self, id: &str) -> bool {
-        let count = self.messages.len();
-        self.messages.retain(|message| message.id != id || !matches!(message.state, QUEUED | LOST));
-        self.messages.len() < count
+        if self.messages.iter().any(|message| message.id == id && !matches!(message.state, QUEUED | LOST)) {
+            return false;
+        }
+        self.messages.retain(|message| message.id != id);
+        true
     }
 
     /// Drops a message whose send failed, which the device that sent it takes back.
