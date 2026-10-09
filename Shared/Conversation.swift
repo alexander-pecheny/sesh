@@ -337,7 +337,6 @@ final class Conversation: ObservableObject {
         let background: [Background]?
         let permissions: [Permission]?
         let more: Bool?
-        let seq: Int?
     }
 
     private var logItems: [String: LogItem] = [:]
@@ -352,16 +351,19 @@ final class Conversation: ObservableObject {
         didSet { loadCache() }
     }
 
+    /// Each helper version keeps a log of its own, numbered and ordered its own way, so a
+    /// cache is good only with the version that wrote it.
     private struct Cache: Codable {
         let seq: Int
         let items: [LogItem]
+        var version: String?
     }
     private static let kept = 80
     private var saving = false
 
     private func loadCache() {
         guard let cache, let data = try? Data(contentsOf: cache),
-              let kept = try? JSONDecoder().decode(Cache.self, from: data) else { return }
+              let kept = try? JSONDecoder().decode(Cache.self, from: data), kept.version == Helper.version else { return }
         logItems = Dictionary(kept.items.map { ($0.id, $0) }, uniquingKeysWith: { _, last in last })
         logSeq = kept.seq
         rebuild()
@@ -377,7 +379,7 @@ final class Conversation: ObservableObject {
             guard let self else { return }
             saving = false
             let items = logItems.values.sorted { $0.ord < $1.ord }.suffix(Self.kept)
-            guard let data = try? JSONEncoder().encode(Cache(seq: logSeq, items: Array(items))) else { return }
+            guard let data = try? JSONEncoder().encode(Cache(seq: logSeq, items: Array(items), version: Helper.version)) else { return }
             try? FileManager.default.createDirectory(at: cache.deletingLastPathComponent(), withIntermediateDirectories: true)
             try? data.write(to: cache, options: .atomic)
         }
@@ -427,8 +429,6 @@ final class Conversation: ObservableObject {
             background = line.background ?? []
             permissions = line.permissions ?? []
         case "opened":
-            // A fresh opening, as after the follower's log was replaced, numbers from its head.
-            if let seq = line.seq { logSeq = seq }
             loaded = true
             earlier = !logItems.isEmpty
         default: break
