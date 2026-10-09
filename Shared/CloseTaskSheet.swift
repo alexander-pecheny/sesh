@@ -33,7 +33,7 @@ struct CloseTaskSheet: View {
             if let plan {
                 Text(plan.sessions.count == 1 ? "Stops its Agent session." : "Stops its \(plan.sessions.count) Agent sessions.")
                 ForEach(plan.removed) {
-                    Text("Removes the Worktree at \($0.path) on \($0.place); the branch \($0.branch ?? "") stays.")
+                    Text("Removes the Worktree at \($0.path) on \($0.place)" + ($0.branch.map { "; the branch \($0) stays." } ?? "."))
                 }
                 Text("Archives the Task. Its Journal, Documents and Conversations stay searchable.")
             } else {

@@ -50,53 +50,61 @@ enum TaskActions {
         return await Herdr.tab(in: workspace, folder: folder, label: label, on: machine).map { ($0, folder) }
     }
 
-    /// Starts `agent` for the Task, in its Worktree of `repo` when one is given, and adopts the
-    /// new Agent session from birth. The session is made, and `made` told, once its pane is;
-    /// an Agent that then fails to start takes its session with it.
-    static func startSession(_ agent: Agent, for task: Record, on machine: Machine, repo: String?, in vault: Vault,
-                             made: (Record) -> Void) async -> Result<Record, Herdr.Failure> {
+    /// Starts `agent` for the Task, in a Worktree of `repo` when one is given: the Task's, or a
+    /// new one on `branch` for this session alone. It adopts the new Agent session from birth.
+    /// The session is made, and `made` told, once its pane is; an Agent that then fails to start
+    /// takes its session with it.
+    static func startSession(_ agent: Agent, for task: Record, on machine: Machine, repo given: String?, branch: String? = nil,
+                             in vault: Vault, made: (Record) -> Void) async -> Result<Record, Herdr.Failure> {
         if let problem = await machine.prepare() { return .failure(Herdr.Failure(problem)) }
-        var folder: String?, fresh: String?
+        var place = Start.Place(), repo = given
+        if let given, given.hasPrefix("~/") { repo = (await machine.run("printf %s \"$HOME\"")).out + given.dropFirst(1) }
         if let repo {
-            switch await worktree(for: task, repo: repo, on: machine, in: vault) {
+            let made = if let branch {
+                await Start.worktree(branch, of: repo, on: machine)
+            } else {
+                await worktree(for: task, repo: repo, on: machine, in: vault)
+            }
+            switch made {
             case .failure(let failure): return .failure(failure)
-            case .success(let made): (folder, fresh) = made
+            case .success(let made): place = made
             }
         }
         let current = vault.records[task.id] ?? task
-        let pane: String
-        if let fresh {
-            pane = fresh
-        } else {
-            switch await self.pane(for: current, on: machine, label: agent.title, folder: folder) {
+        if place.pane == nil {
+            switch await pane(for: current, on: machine, label: agent.title, folder: place.folder) {
             case .failure(let failure): return .failure(failure)
-            case .success(let value): (pane, folder) = (value.0.pane, value.1)
+            case .success(let value): (place.pane, place.folder) = (value.0.pane, value.1)
             }
         }
-        let count = vault.children(.session, task: task.id).filter { $0.body.agent == agent.rawValue }.count
-        var body = Record.Body(
-            title: count == 0 ? agent.title : "\(agent.title) \(count + 1)", task: task.id,
-            position: Double(Date().timeIntervalSince1970), machine: machine.alias, path: folder, pane: pane, agent: agent.rawValue)
-        body.repo = repo
-        let session = vault.create(.session, body)
+        let session = Start.session(agent, for: task.id, on: machine.alias, at: place, repo: repo, in: vault)
         made(session)
         let name = Names.slug("\(current.body.title ?? "task")-\(agent.rawValue)")
-        if let problem = await Herdr.launch(agent, name: name, pane: pane, config: claudeConfig(vault, on: machine), on: machine) {
+        if let problem = await Herdr.launch(agent, name: name, pane: place.pane ?? "", config: claudeConfig(vault, on: machine), on: machine) {
             vault.delete(vault.records[session.id] ?? session)
             return .failure(Herdr.Failure(problem))
         }
         return .success(vault.records[session.id] ?? session)
     }
 
+    /// The Task's own branch, or the one its title suggests while a model is still naming it.
+    static func branch(of task: Record, on machine: Machine) -> String {
+        if let named = task.body.branch, !named.hasSuffix("/") { return named }
+        return branch(for: task.body.title ?? "Task", user: user(on: machine))
+    }
+
     /// The Task's Worktree of `repo` on `machine`, made on first use with the Task's branch, and
     /// the fresh Workspace's own pane when it was made just now.
-    static func worktree(for task: Record, repo given: String, on machine: Machine, in vault: Vault) async -> Result<(String, String?), Herdr.Failure> {
-        let repo = given.hasPrefix("~/") ? (await machine.run("printf %s \"$HOME\"")).out + given.dropFirst(1) : given
+    static func worktree(for task: Record, repo: String, on machine: Machine, in vault: Vault) async -> Result<Start.Place, Herdr.Failure> {
         let current = vault.records[task.id] ?? task
-        if let path = current.body.path, current.body.repo == repo, current.body.machine == machine.alias { return .success((path, nil)) }
-        let known = vault.children(.session, task: task.id)
-            .first { $0.body.repo == repo && $0.body.machine == machine.alias && $0.body.path != nil && $0.body.path != repo }
-        if let path = known?.body.path { return .success((path, nil)) }
+        if let path = current.body.path, current.body.repo == repo, current.body.machine == machine.alias {
+            return .success(Start.Place(folder: path, branch: current.body.branch))
+        }
+        let known = vault.children(.session, task: task.id).first {
+            $0.body.repo == repo && $0.body.machine == machine.alias && $0.body.path != nil && $0.body.path != repo
+                && ($0.body.branch ?? current.body.branch) == current.body.branch
+        }
+        if let path = known?.body.path { return .success(Start.Place(folder: path, branch: current.body.branch)) }
         let title = current.body.title ?? "Task"
         let user = user(on: machine)
         let branch: String
@@ -114,7 +122,10 @@ enum TaskActions {
         let made = born
             ? await Herdr.worktree(repo, branch: branch, label: title, on: machine)
             : await Herdr.workspace(repo, label: title, on: machine)
-        guard current.body.path == nil else { return made.map { ($0.path ?? repo, $0.pane) } }
+        let place = { (opened: Herdr.Opened) in
+            Start.Place(folder: opened.path ?? repo, pane: opened.pane, branch: born ? opened.branch ?? branch : nil)
+        }
+        guard current.body.path == nil else { return made.map(place) }
         switch made {
         case .failure(let failure): return .failure(failure)
         case .success(let opened):
@@ -125,7 +136,7 @@ enum TaskActions {
             if born { record.body.branch = opened.branch ?? branch }
             record.body.workspace = opened.workspace
             vault.write(record)
-            return .success((opened.path ?? repo, opened.pane))
+            return .success(place(opened))
         }
     }
 

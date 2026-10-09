@@ -35,17 +35,15 @@ struct TaskView: View {
                     .help("New Tab")
                 }
                 Spacer()
-                if let task = vault.records[id], task.body.path != nil, let branch = task.body.branch {
-                    Label("\(branch) on \(TaskActions.machine(task.body.machine).title)", systemImage: "arrow.triangle.branch")
+                if let task = vault.records[id], let worktree = current.worktree(of: task, in: vault) {
+                    Label("\(worktree.branch) on \(TaskActions.machine(worktree.machine).title)", systemImage: "arrow.triangle.branch")
                         .font(.caption).foregroundStyle(.secondary).lineLimit(1)
-                        .help(task.body.path ?? "")
+                        .help(worktree.path)
                         .contextMenu {
-                            Button("Copy Branch Name") { Pasteboard.copy(branch) }
-                            if let path = task.body.path {
-                                Button("Copy Worktree Path") { Pasteboard.copy(path) }
-                                if task.body.machine == nil {
-                                    Button("Show in Finder") { NSWorkspace.shared.activateFileViewerSelecting([URL(filePath: path)]) }
-                                }
+                            Button("Copy Branch Name") { Pasteboard.copy(worktree.branch) }
+                            Button("Copy Worktree Path") { Pasteboard.copy(worktree.path) }
+                            if worktree.machine == nil {
+                                Button("Show in Finder") { NSWorkspace.shared.activateFileViewerSelecting([URL(filePath: worktree.path)]) }
                             }
                         }
                 }

@@ -14,6 +14,17 @@ enum Git {
         return ran.ok ? ran.out.trimmingCharacters(in: .whitespacesAndNewlines) : ""
     }
 
+    /// The local branches of `repo`; none when it is not a repository yet.
+    static func branches(of repo: String, on runner: Runner) async -> Set<String> {
+        let ran = await runner.run("git -C \(shellPath(repo)) for-each-ref --format='%(refname:short)' refs/heads")
+        return ran.ok ? Set(ran.out.split(separator: "\n").map(String.init)) : []
+    }
+
+    /// A new linked worktree of `repo` at `path` on a new `branch`, from what `repo` has checked out.
+    static func addWorktree(_ path: String, branch: String, of repo: String, on runner: Runner) async -> Ran {
+        await runner.run("git -C \(quote(repo)) worktree add -b \(quote(branch)) \(quote(path))")
+    }
+
     /// Removes the linked worktree at `path` of `repo`, keeping its branch.
     static func removeWorktree(_ path: String, of repo: String, force: Bool, on runner: Runner) async -> Ran {
         await runner.run("git -C \(quote(repo)) worktree remove \(quote(path))\(force ? " --force" : "")")

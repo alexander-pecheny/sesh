@@ -60,8 +60,10 @@ struct TaskScreen: View {
             if let task = vault.records[id] {
                 ToolbarItem(placement: .topBarTrailing) {
                     Menu {
-                        if task.body.path != nil, let branch = task.body.branch {
-                            Section("\(branch) on \(TaskActions.machine(task.body.machine).title)") {}
+                        if let worktree = current.worktree(of: task, in: vault) {
+                            Section {
+                                Label("\(worktree.branch) on \(TaskActions.machine(worktree.machine).title)", systemImage: "arrow.triangle.branch")
+                            }
                         }
                         Button("Rename") { sheet = .rename(vault, task) }
                         if task.body.archived == true {

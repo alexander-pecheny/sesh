@@ -2,7 +2,7 @@ import XCTest
 
 /// A Vault's records with no Host behind them.
 @MainActor
-private final class Memory: Records {
+final class Memory: Records {
     var records: [String: Record] = [:]
     func write(_ record: Record) { records[record.id] = record }
 }
@@ -154,5 +154,27 @@ final class TaskCommandTests: XCTestCase {
         XCTAssertEqual(menu.sections[2].items.map(\.action), [.open(.session(early.id)), .open(.session(late.id))])
         XCTAssertEqual(menu.sections[3].items.map(\.action), [.open(.session(gone.id))])
         XCTAssertEqual(menu.sections[4].items.map(\.action), [.open(.document(a.id)), .open(.document(b.id))])
+    }
+
+    func testANewWorktreesBranchTakesTheNextFreeNumber() {
+        XCTAssertEqual(Start.nextBranch(after: "me/fix", taken: ["main", "me/fix"]), "me/fix-2")
+        XCTAssertEqual(Start.nextBranch(after: "me/fix", taken: ["me/fix", "me/fix-2", "me/fix-3", "me/fix-5"]), "me/fix-4")
+    }
+
+    func testTheHeaderNamesTheWorktreeOfTheTabShown() {
+        let task = vault.create(.task, .init(title: "Own", machine: "vps", path: "/w/own", branch: "me/own", repo: "/src/app"))
+        let parallel = vault.create(.session, .init(task: task.id, path: "/w/own-2", branch: "me/own-2", repo: "/src/app"))
+        let old = vault.create(.session, .init(task: task.id, machine: "vps", path: "/w/own", repo: "/src/app"))
+        let home = vault.create(.tab, .init(task: task.id, machine: "vps", path: "/home/me", kind: "terminal"))
+        let inMain = vault.create(.tab, .init(task: task.id, machine: "vps", path: "/w/own", kind: "terminal"))
+        let document = make(.document, "Plan", task: task.id)
+        let main = TabItem.Worktree(branch: "me/own", machine: "vps", path: "/w/own")
+        XCTAssertEqual(TabItem.journal.worktree(of: task, in: vault), main)
+        XCTAssertEqual(TabItem.document(document.id).worktree(of: task, in: vault), main)
+        XCTAssertEqual(TabItem.session(parallel.id).worktree(of: task, in: vault), .init(branch: "me/own-2", machine: nil, path: "/w/own-2"))
+        XCTAssertEqual(TabItem.subagent(session: parallel.id, path: "/t.jsonl", title: "Explore").worktree(of: task, in: vault)?.branch, "me/own-2")
+        XCTAssertEqual(TabItem.session(old.id).worktree(of: task, in: vault), main)
+        XCTAssertEqual(TabItem.terminal(inMain.id).worktree(of: task, in: vault), main)
+        XCTAssertNil(TabItem.terminal(home.id).worktree(of: task, in: vault))
     }
 }

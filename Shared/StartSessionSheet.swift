@@ -1,7 +1,8 @@
 import SwiftUI
 
 /// What a new Agent session works on: a repository used lately, another one, or none. A
-/// repository gets the Task's Worktree on first use, on the branch named for the Task.
+/// repository gets the Task's Worktree on first use, on the branch named for the Task, or a new
+/// Worktree of its own for a session working in parallel.
 struct StartSessionSheet: View {
     @Environment(\.dismiss) private var dismiss
     @EnvironmentObject private var library: Library
@@ -13,6 +14,8 @@ struct StartSessionSheet: View {
     @State private var choice = Self.other
     @State private var typed = ""
     @State private var config = ""
+    @State private var parallel = false
+    @State private var newBranch = ""
     @FocusState private var focused: Bool
 
     private static let other = "\u{0}other"
@@ -28,8 +31,10 @@ struct StartSessionSheet: View {
         default: choice
         }
     }
-    private var ready: Bool { choice != Self.other || !path.isEmpty }
-    private var branch: String? { vault.records[task.id]?.body.branch }
+    private var ready: Bool { (choice != Self.other || !path.isEmpty) && fresh?.isEmpty != true }
+    private var main: String { machine.map { TaskActions.branch(of: vault.records[task.id] ?? task, on: $0) } ?? "" }
+    /// The branch of the session's own new Worktree, when it gets one.
+    private var fresh: String? { parallel && repo != nil ? newBranch.trimmingCharacters(in: .whitespaces) : nil }
 
     var body: some View {
         #if os(macOS)
@@ -71,10 +76,23 @@ struct StartSessionSheet: View {
                     TextField("Claude config folder", text: $config, prompt: Text("~/.claude"))
                 }
             } footer: {
-                if choice == Self.other {
-                    Text("A folder that does not exist yet becomes a new repository.")
-                } else if repo != nil {
-                    Text("A Worktree on \(branch ?? "the Task's branch") is made in it the first time.")
+                if choice == Self.other { Text("A folder that does not exist yet becomes a new repository.") }
+            }
+            if repo != nil {
+                Section {
+                    Picker("Worktree", selection: $parallel) {
+                        Text("The Task's (\(main))").tag(false)
+                        Text("A new one").tag(true)
+                    }
+                    if parallel {
+                        LabeledContent("Branch") {
+                            TextField("Branch", text: $newBranch).labelsHidden().multilineTextAlignment(.trailing).onSubmit(start)
+                        }
+                    }
+                } footer: {
+                    Text(parallel
+                        ? "This session works in a Worktree of its own; the Task's stays as it is."
+                        : "A Worktree on \(main) is made in the repository the first time.")
                 }
             }
         }
@@ -83,6 +101,7 @@ struct StartSessionSheet: View {
             choose()
         }
         .onChange(of: alias) { choose() }
+        .task(id: "\(alias ?? "")|\(repo ?? "")|\(parallel)") { await suggest() }
     }
 
     @ToolbarContentBuilder private var buttons: some ToolbarContent {
@@ -98,10 +117,19 @@ struct StartSessionSheet: View {
         focused = choice == Self.other
     }
 
+    /// Offers the Task's branch with the next number no branch of the repository has yet.
+    private func suggest() async {
+        guard parallel, let repo, let machine else { return }
+        let taken = await Git.branches(of: repo, on: machine)
+        guard !Task.isCancelled else { return }
+        newBranch = Start.nextBranch(after: main, taken: taken)
+    }
+
     private func start() {
         guard ready, let machine else { return }
         if agent == .claude { TaskActions.setClaudeConfig(config.trimmingCharacters(in: .whitespaces), vault, on: machine) }
-        library.start(agent, for: vault.records[task.id] ?? task, on: machine, repo: repo, problem: problem)
+        library.start(agent, for: vault.records[task.id] ?? task, on: machine, repo: repo,
+                      branch: fresh, problem: problem)
         dismiss()
     }
 }

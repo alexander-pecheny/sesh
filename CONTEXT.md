@@ -115,21 +115,24 @@ _Avoid_: attachment, transfer, image
 One piece of the user's work, with its Journal and its Tabs, known by a title in plain
 words, such as "Fix the flaky login test". Tasks sit in folders and subfolders, in the
 order the user puts them. The Tabs of one Task may run on different Hosts, and some only on the Mac.
-Every Task belongs to one Vault. A Task usually has one Worktree, where its new Tabs
+Every Task belongs to one Vault. A Task usually has a main Worktree, where its new Tabs
 start; a Task without one starts them in the home folder.
 _Avoid_: project, ticket, note
 
 **Worktree**:
-The git worktree a Task works in, on a Vault Host or on the Mac, usually on its own
-branch. Its branch and folder are suggested from the Task's title and never renamed; its
-herdr Workspace carries the title itself. A Task has at most one.
+A git worktree a Task works in, on a Vault Host or on the Mac, usually on its own
+branch. A Task has one main Worktree, where its new Tabs start by default, and may have
+more, each made for an Agent session that works in parallel on its own branch. The main
+one's branch and folder are suggested from the Task's title; no Worktree is ever renamed.
+The main one's herdr Workspace carries the title itself, and a session's own Worktree
+opens its Tab in that Workspace too.
 _Avoid_: branch copy, checkout, project
 
 **Close**:
 To finish a Task: its Transcripts are copied into the Vault one last time, its Agents are
-stopped, its Worktree is removed with the branch kept, and the Task is archived. Its
-Journal, Documents and Conversations stay readable and searchable, and it can be reopened.
-Uncommitted work in the Worktree is given up only when the user says so.
+stopped, every one of its Worktrees is removed with its branch kept, and the Task is
+archived. Its Journal, Documents and Conversations stay readable and searchable, and it can
+be reopened. Uncommitted work in a Worktree is given up only when the user says so.
 _Avoid_: delete, archive, done
 
 **Vault**:

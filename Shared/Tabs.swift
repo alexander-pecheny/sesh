@@ -30,6 +30,30 @@ enum TabItem: Hashable, Identifiable, Codable {
         }
     }
 
+    /// A Worktree as the Task's header names it.
+    struct Worktree: Equatable {
+        let branch: String
+        let machine: String?
+        let path: String
+    }
+
+    /// The Worktree the Tab works in: an Agent session's or a Terminal's own, the Task's main one
+    /// for the rest. Nil when that folder is no Worktree Sesh knows the branch of.
+    @MainActor
+    func worktree(of task: Record, in vault: some Records) -> Worktree? {
+        let main = task.body
+        let own: Record.Body
+        switch self {
+        case .session(let id), .terminal(let id), .subagent(let id, _, _):
+            guard let record = vault.records[id] else { return nil }
+            own = record.body
+        case .journal, .document: own = main
+        }
+        guard let path = own.path else { return nil }
+        let branch = own.branch ?? (own.machine == main.machine && path == main.path ? main.branch : nil)
+        return branch.map { Worktree(branch: $0, machine: own.machine, path: path) }
+    }
+
     @MainActor
     func title(in vault: some Records) -> String {
         switch self {

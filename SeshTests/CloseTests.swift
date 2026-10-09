@@ -23,6 +23,8 @@ private final class Box: Runner {
         let args = command.components(separatedBy: "'").enumerated().filter { $0.offset % 2 == 1 }.map(\.element)
         let force = command.hasSuffix("--force")
         if command.hasPrefix("[ -f ") { return Ran(status: linked.contains(args[0]) ? 0 : 1, out: "", err: "") }
+        if command == "printf %s \"$HOME\"" { return Ran(status: 0, out: "/home/me", err: "") }
+        if command.contains(" worktree add ") { linked.insert(args[2]) }
         if command.hasSuffix("status --porcelain") { return Ran(status: 0, out: dirty[args[0]] ?? "", err: "") }
         if command == "herdr workspace list" {
             let list = workspaces.keys.map { #"{"workspace_id":"\#($0)","label":"Fix it"}"# }.joined(separator: ",")
@@ -125,6 +127,25 @@ final class CloseTests: XCTestCase {
         XCTAssertEqual(plan.removed.map(\.path), ["/src/app-fix", "/src/lib-fix"])
         XCTAssertEqual(plan.dirty.map(\.place), ["box"])
         XCTAssertEqual(plan.dirty.map(\.uncommitted), ["?? notes.md"])
+    }
+
+    func testASessionsOwnWorktreeLeavesTheTasksAloneAndIsInThePlan() async {
+        let vault = Memory()
+        box.linked = ["/src/app-fix"]
+        var body = task(path: "/src/app-fix").body
+        body.machine = "box"
+        let main = Record(id: "t1", kind: .task, body: body)
+        vault.write(main)
+        guard case .success(let place) = await Start.worktree("me/fix-it-2", of: "/src/app", on: box) else { return XCTFail() }
+        XCTAssertEqual(box.commands.last, "git -C '/src/app' worktree add -b 'me/fix-it-2' '/home/me/.herdr/worktrees/app/me-fix-it-2'")
+        let session = Start.session(.claude, for: "t1", on: "box", at: place, repo: "/src/app", in: vault)
+        XCTAssertEqual(vault.records["t1"], main)
+        XCTAssertEqual(session.body.path, "/home/me/.herdr/worktrees/app/me-fix-it-2")
+        XCTAssertEqual(session.body.branch, "me/fix-it-2")
+        XCTAssertEqual(session.body.machine, "box")
+        let plan = await close(main, [session]).plan()
+        XCTAssertEqual(plan.removed.map(\.path), ["/src/app-fix", "/home/me/.herdr/worktrees/app/me-fix-it-2"])
+        XCTAssertEqual(plan.removed.map(\.branch), ["me/fix-it", "me/fix-it-2"])
     }
 
     func testAFailedRemovalStillTriesTheNextAndSaysWhich() async {

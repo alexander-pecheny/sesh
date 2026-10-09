@@ -47,17 +47,17 @@ struct Close {
     let copy: ([Record]) async -> Void
 
     func plan() async -> Plan {
-        let own = task.body.path.map { [(task.body.machine, task.body.repo ?? $0, $0)] } ?? []
-        let others = sessions.compactMap { session -> (String?, String, String)? in
+        let own = task.body.path.map { [(task.body.machine, task.body.repo ?? $0, $0, task.body.branch)] } ?? []
+        let others = sessions.compactMap { session -> (String?, String, String, String?)? in
             guard let repo = session.body.repo, let path = session.body.path, path != repo else { return nil }
-            return (session.body.machine, repo, path)
+            return (session.body.machine, repo, path, session.body.branch ?? task.body.branch)
         }
         var seen = Set<String>(), worktrees: [Worktree] = []
-        for (machine, repo, path) in own + others where seen.insert("\(machine ?? ""):\(path)").inserted {
+        for (machine, repo, path, branch) in own + others where seen.insert("\(machine ?? ""):\(path)").inserted {
             let runner = runner(machine)
             let linked = await Git.linked(path, on: runner)
             worktrees.append(Worktree(
-                machine: machine, place: runner.title, repo: repo, path: path, branch: task.body.branch, linked: linked,
+                machine: machine, place: runner.title, repo: repo, path: path, branch: branch, linked: linked,
                 uncommitted: linked ? await Git.uncommitted(path, on: runner) : ""))
         }
         let open = await Herdr.workspaces(on: runner(task.body.machine))

@@ -33,13 +33,14 @@ final class Library: ObservableObject {
 
     /// Opens the new session's Tab as soon as its pane exists; what the user writes before the
     /// Agent can take a prompt waits in its queue.
-    func start(_ agent: Agent, for task: Record, on machine: Machine, repo: String? = nil, problem: @escaping (String) -> Void) {
+    func start(_ agent: Agent, for task: Record, on machine: Machine, repo: String? = nil, branch: String? = nil,
+               problem: @escaping (String) -> Void) {
         guard let vault = vault(of: task.id) else { return }
         let pending = Starting(agent: agent, machine: machine.title)
         starting[task.id, default: []].append(pending)
         Task {
             var shown: Record?
-            let result = await TaskActions.startSession(agent, for: task, on: machine, repo: repo, in: vault) { session in
+            let result = await TaskActions.startSession(agent, for: task, on: machine, repo: repo, branch: branch, in: vault) { session in
                 shown = session
                 starting[task.id]?.removeAll { $0 == pending }
                 launching.insert(session.id)
