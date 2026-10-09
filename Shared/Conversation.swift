@@ -1,160 +1,27 @@
 import SwiftUI
 
-/// One Agent session as chat, built from the lines Sesh's transcript helper prints. The
-/// helper has already turned every Agent's Transcript into the same entries (ADR 0006).
+/// One Agent session as chat, shown from its Session log.
 @MainActor
 final class Conversation: ObservableObject {
-    static let protocols: Set<Int> = [1, 2]
-    /// The first protocol that can page back through a Transcript with `history`.
-    private static let paging = 2
     private static let page = 50
 
-    struct Entry: Codable, Identifiable, Hashable {
-        let id: String
-        let kind: String
-        let summary: String
-        /// When the Agent wrote it, as ISO 8601.
-        var at: String?
-        var text: String?
-        var images: [String]?
-        var seconds: Double?
-        var tool: String?
-        var name: String?
-        var file: String?
-        var command: String?
-        var description: String?
-        var call: String?
-        var diff: String?
-        var added: Int?
-        var removed: Int?
-        var error: Bool?
-        var truncated: Bool?
-        var items: [Todo]?
-        var questions: [Question]?
-        var answers: [String]?
-    }
-
-    struct Todo: Codable, Equatable, Hashable {
-        let text: String
-        let status: String
-    }
-
-    struct Question: Codable, Hashable {
-        struct Option: Codable, Hashable {
-            let label: String
-            let description: String?
-        }
-        let question: String
-        let header: String?
-        let multi: Bool?
-        let options: [Option]
-    }
-
-    struct Permission: Decodable, Identifiable, Hashable {
-        let id: String
-        let tool: String
-        let summary: String
-        let command: String?
-        let file: String?
-        let reason: String?
-        /// A menu read off the screen, with no hook to describe it: its choices, each picked by a key.
-        let options: [Choice]?
-
-        struct Choice: Decodable, Equatable, Hashable {
-            let key: String
-            let label: String
-        }
-    }
-
-    enum Item: Identifiable, Equatable {
-        case entry(Entry)
-        case switched(id: Int, reason: String)
-
-        var id: String {
-            switch self {
-            case .entry(let entry): entry.id
-            case .switched(let id, _): "switch-\(id)"
-            }
-        }
-    }
-
-    private struct Line: Decodable {
-        let t: String
-        let `protocol`: Int?
-        let agent: String?
-        let transcript: String?
-        let state: String?
-        let reason: String?
-        let cursor: String?
-        let id: String?
-        let more: Bool?
-        let status: String?
-        let items: [Entry]?
-        let replaces: String?
-    }
-
-    @Published private(set) var items: [Item] = []
-    @Published private(set) var results: [String: Entry] = [:]
-    @Published private(set) var todo: Entry?
-    @Published private(set) var permissions: [Permission] = []
-    /// What the Agent's screen shows that its Transcript does not hold yet, as entries shown
-    /// after the rest until the Transcript's own take their places.
-    @Published private(set) var live: [Entry] = []
+    private var log = SessionLog()
+    @Published private(set) var rows: [SessionLog.Row] = []
+    @Published private(set) var results: [String: SessionLog.Entry] = [:]
+    @Published private(set) var todo: SessionLog.Entry?
+    @Published private(set) var permissions: [SessionLog.Permission] = []
     /// The status line on the Agent's screen.
     @Published private(set) var status = ""
-    /// The live item whose row an entry took over, by the entry's id, so the row stays put.
-    private(set) var rowKeys: [String: String] = [:]
-    /// When each live item first showed, since the screen does not date it.
-    private var firstSeen: [String: String] = [:]
-    private static let dates: ISO8601DateFormatter = {
-        let dates = ISO8601DateFormatter()
-        dates.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
-        return dates
-    }()
 
-    #if DEBUG
-    /// `-liveLog PATH` appends each `live` line as the app takes it, timed, to measure how far
-    /// the chat trails the terminal.
-    private static let liveLog = UserDefaults.standard.string(forKey: "liveLog").flatMap { FileHandle(forWritingAtPath: $0) }
-
-    private static func log(_ line: String) {
-        liveLog?.seekToEndOfFile()
-        liveLog?.write(Data("\(Date().timeIntervalSince1970)\t\(line)\n".utf8))
-    }
-    #endif
-
-    /// The row an entry is drawn in: the live item's it replaced, else its own.
-    func rowKey(_ id: String) -> String { rowKeys[id] ?? id }
-
-    nonisolated static func isLive(_ id: String) -> Bool { id.hasPrefix("live.") }
-
-    /// Everything the chat shows, in order: the Transcript's entries, then the live items.
-    /// Claude saves a question, and the text before it, only once it is answered, so the
-    /// question its hook reported stays last.
-    var shown: [Item] {
-        guard let question = openQuestion else { return items + live.map(Item.entry) }
-        return items.dropLast() + live.map(Item.entry) + [question]
-    }
-
-    private var openQuestion: Item? {
-        guard case .entry(let entry)? = items.last, entry.kind == "question", results[entry.id] == nil else { return nil }
-        return items.last
-    }
+    /// The row an entry is drawn in: the screen item's it took over, else its own.
+    func rowKey(_ id: String) -> String { log.rowKey(id) }
 
     /// What the Agent left running in the background, a command or a subagent.
-    @Published private(set) var background: [Background] = []
-
-    struct Background: Decodable, Equatable, Identifiable {
-        let call: String
-        let label: String
-        /// A subagent, which has a Transcript of its own, rather than a command.
-        var agent: Bool?
-        var id: String { call }
-    }
+    @Published private(set) var background: [SessionLog.Background] = []
 
     /// The entry of the tool call that started `call`, if it is loaded.
     func entry(forCall call: String) -> String? {
-        items.lazy.map(\.id).first { $0.hasSuffix(".call.\(call)") }
+        rows.lazy.flatMap(\.entries).map(\.id).first { $0.hasSuffix(".call.\(call)") }
     }
     @Published private(set) var state = ""
     @Published private(set) var agent: Agent?
@@ -192,8 +59,8 @@ final class Conversation: ObservableObject {
     /// The repository the Agent works in, for linking `#213` to its pull request.
     @Published var repo: Repo?
     /// Keeps one entry as a Bookmark; nil where there is no Journal to keep it in.
-    var bookmark: ((Entry) -> Void)?
-    var copyLink: ((Entry) -> Void)?
+    var bookmark: ((SessionLog.Entry) -> Void)?
+    var copyLink: ((SessionLog.Entry) -> Void)?
     /// What is typed and not sent; it outlives the view, which goes with every switch of Task.
     var draft = "" { didSet { if draft != oldValue { saveDraft?(draft) } } }
     var saveDraft: ((String) -> Void)?
@@ -214,10 +81,9 @@ final class Conversation: ObservableObject {
     var openSubagent: ((_ call: String, _ title: String) -> Void)?
     /// The Transcript the helper is reading now.
     private(set) var transcript: String?
-    /// Whether the helper has sent the first batch of entries, which ends with a cursor.
+    /// Whether the helper has sent the first batch of entries.
     @Published private(set) var loaded = false
     private(set) weak var runner: Runner?
-    private var cursor: String?
     private var loading = false
     private var expanded: Set<String> = []
     private var images: [String: PlatformImage] = [:]
@@ -251,10 +117,8 @@ final class Conversation: ObservableObject {
         // A helper still being installed would fail, and a failed follow is not retried.
         await prepare?()
         while !Task.isCancelled, let runner {
-            let since = cursor.map { " --since \(quote($0))" } ?? ""
-            let ended = await runner.stream("\(Helper.path) follow \(target)\(since)") { [weak self] in
-                self?.apply($0)
-            }
+            let since = log.cursor.map { " --since \(quote($0))" } ?? ""
+            let ended = await runner.stream("\(Helper.path) follow \(target)\(since)") { [weak self] in self?.receive($0) }
             guard !Task.isCancelled else { return }
             if ended.status == 0 { return problem = "This Agent session has ended." }
             if ended.status > 0 { return problem = ended.problem }
@@ -262,86 +126,63 @@ final class Conversation: ObservableObject {
         }
     }
 
-    func apply(_ text: String) {
-        let data = Data(text.utf8)
-        guard let line = try? JSONDecoder().decode(Line.self, from: data) else { return }
-        switch line.t {
-        case "hello":
-            agent = line.agent.flatMap(Agent.init) ?? agent
-            transcript = line.transcript.flatMap { $0.isEmpty ? nil : $0 } ?? transcript
-            if let number = line.protocol, !Self.protocols.contains(number) {
-                problem = "The Host's helper speaks protocol \(number), which this Sesh does not know. Update Sesh."
-            }
-            earlier = (line.protocol ?? 0) >= Self.paging
-        case "entry":
-            guard let entry = try? JSONDecoder().decode(Entry.self, from: data) else { return }
-            if let replaced = line.replaces, let index = live.firstIndex(where: { $0.id == replaced }) {
-                rowKeys[entry.id] = replaced
-                live.removeFirst(index + 1)
-            }
-            add(entry)
-        case "state":
-            state = line.state ?? state
-            if state != "working", !waiting.isEmpty { Task { await sendQueued() } }
-        case "switch":
-            items.append(.switched(id: items.count, reason: line.reason ?? "other"))
-            todo = nil
-            earlier = false
-        case "permission":
-            guard let permission = try? JSONDecoder().decode(Permission.self, from: data) else { return }
-            permissions.removeAll { $0.id == permission.id }
-            permissions.append(permission)
-        case "permission_done": permissions.removeAll { $0.id == line.id }
-        case "live":
-            #if DEBUG
-            Self.log(text)
-            #endif
-            status = line.status ?? ""
-            let now = Self.dates.string(from: Date())
-            live = (line.items ?? []).map { item in
-                var item = item
-                item.at = firstSeen[item.id] ?? now
-                firstSeen[item.id] = item.at
-                return item
-            }
-        case "background":
-            struct Tasks: Decodable { let tasks: [Background] }
-            background = (try? JSONDecoder().decode(Tasks.self, from: data))?.tasks ?? []
-        case "cursor":
-            cursor = line.cursor
-            // A new Agent session has no Transcript until its first message, so nothing is older;
-            // every reconnect says hello again, so this is checked each time.
-            if items.isEmpty { earlier = false }
-            loaded = true
-        default: break
+    /// Follows the pane's Session log (ADR 0010); after a drop it asks again from the last
+    /// item it has.
+    private func attach(_ pane: String) async {
+        await prepare?()
+        while !Task.isCancelled, let runner {
+            let watch = log.seq > 0 ? "\(pane):\(log.seq)" : pane
+            let ended = await runner.stream("\(Helper.path) attach --watch \(quote(watch))") { [weak self] in self?.receive($0) }
+            guard !Task.isCancelled else { return }
+            if ended.status > 0, !ended.problem.isEmpty { problem = ended.problem }
+            try? await Task.sleep(for: .seconds(2))
         }
     }
 
-    // MARK: The Session log (ADR 0010)
-
-    private struct LogItem: Codable {
-        let id: String
-        let ord: Int
-        let seq: Int
-        let final: Bool
-        let gone: Bool
-        let entry: Entry
+    /// Takes one line the helper printed. Lines that arrive together, as the opening batch
+    /// does, are shown in one go.
+    func receive(_ line: String) {
+        log.feed(line)
+        guard !publishing else { return }
+        publishing = true
+        DispatchQueue.main.async { [weak self] in self?.publish() }
     }
 
-    private struct LogLine: Decodable {
-        let t: String
-        let state: String?
-        let status: String?
-        let agent: String?
-        let transcript: String?
-        let background: [Background]?
-        let permissions: [Permission]?
-        let more: Bool?
+    private var publishing = false
+    private var savedSeq = 0
+
+    private func publish() {
+        publishing = false
+        if rows != log.rows { rows = log.rows }
+        if results != log.results { results = log.results }
+        if todo != log.todo { todo = log.todo }
+        if permissions != log.permissions { permissions = log.permissions }
+        if background != log.background { background = log.background }
+        if status != log.status { status = log.status }
+        if earlier != log.earlier { earlier = log.earlier }
+        if loaded != log.loaded { loaded = log.loaded }
+        transcript = log.transcript ?? transcript
+        if let named = log.agent.flatMap(Agent.init), named != agent { agent = named }
+        if let failed = log.problem {
+            problem = failed
+            log.problem = nil
+        }
+        if state != log.state {
+            state = log.state
+            if state != "working", !waiting.isEmpty { Task { await sendQueued() } }
+        }
+        if queued.contains(where: \.handed) {
+            let said = rows.flatMap(\.entries).filter { $0.kind == "user" && !SessionLog.isLive($0.id) }.compactMap(\.text)
+            queued.removeAll { message in
+                message.handed && said.contains { $0.contains(message.text.trimmingCharacters(in: .whitespacesAndNewlines)) }
+            }
+        }
+        if log.seq != savedSeq {
+            savedSeq = log.seq
+            saveCache()
+        }
     }
 
-    private var logItems: [String: LogItem] = [:]
-    private var logSeq = 0
-    private var rebuilding = false
     /// Runs before the first attach, as a machine must have its helper first.
     var prepare: (() async -> Void)?
 
@@ -355,7 +196,7 @@ final class Conversation: ObservableObject {
     /// cache is good only with the version that wrote it.
     private struct Cache: Codable {
         let seq: Int
-        let items: [LogItem]
+        let items: [SessionLog.Item]
         var version: String?
     }
     private static let kept = 80
@@ -364,11 +205,9 @@ final class Conversation: ObservableObject {
     private func loadCache() {
         guard let cache, let data = try? Data(contentsOf: cache),
               let kept = try? JSONDecoder().decode(Cache.self, from: data), kept.version == Helper.version else { return }
-        logItems = Dictionary(kept.items.map { ($0.id, $0) }, uniquingKeysWith: { _, last in last })
-        logSeq = kept.seq
-        rebuild()
-        loaded = true
-        earlier = true
+        log.restore(kept.items, seq: kept.seq)
+        savedSeq = kept.seq
+        publish()
     }
 
     /// Written a second after the last change, not on every screen update.
@@ -378,122 +217,9 @@ final class Conversation: ObservableObject {
         DispatchQueue.main.asyncAfter(deadline: .now() + 1) { [weak self] in
             guard let self else { return }
             saving = false
-            let items = logItems.values.sorted { $0.ord < $1.ord }.suffix(Self.kept)
-            guard let data = try? JSONEncoder().encode(Cache(seq: logSeq, items: Array(items), version: Helper.version)) else { return }
+            guard let data = try? JSONEncoder().encode(Cache(seq: log.seq, items: log.kept(Self.kept), version: Helper.version)) else { return }
             try? FileManager.default.createDirectory(at: cache.deletingLastPathComponent(), withIntermediateDirectories: true)
             try? data.write(to: cache, options: .atomic)
-        }
-    }
-
-    /// Items that arrive together, as the opening batch does, are shown in one go.
-    private func scheduleRebuild() {
-        guard !rebuilding else { return }
-        rebuilding = true
-        DispatchQueue.main.async { [weak self] in
-            guard let self else { return }
-            rebuilding = false
-            rebuild()
-            saveCache()
-        }
-    }
-
-    /// Follows the pane's Session log; after a drop it asks again from the last item it has.
-    private func attach(_ pane: String) async {
-        await prepare?()
-        while !Task.isCancelled, let runner {
-            let watch = logSeq > 0 ? "\(pane):\(logSeq)" : pane
-            let ended = await runner.stream("\(Helper.path) attach --watch \(quote(watch))") { [weak self] in self?.applyLog($0) }
-            guard !Task.isCancelled else { return }
-            if ended.status > 0, !ended.problem.isEmpty { problem = ended.problem }
-            try? await Task.sleep(for: .seconds(2))
-        }
-    }
-
-    private func applyLog(_ text: String) {
-        let data = Data(text.utf8)
-        guard let line = try? JSONDecoder().decode(LogLine.self, from: data) else { return }
-        switch line.t {
-        case "item":
-            guard let item = try? JSONDecoder().decode(LogItem.self, from: data) else { return }
-            logSeq = max(logSeq, item.seq)
-            if item.gone { logItems[item.id] = nil } else { logItems[item.id] = item }
-            scheduleRebuild()
-        case "session":
-            if let state = line.state, state != self.state {
-                self.state = state
-                if state != "working", !waiting.isEmpty { Task { await sendQueued() } }
-            }
-            status = line.status ?? ""
-            agent = line.agent.flatMap(Agent.init) ?? agent
-            transcript = line.transcript ?? transcript
-            background = line.background ?? []
-            permissions = line.permissions ?? []
-        case "opened":
-            loaded = true
-            earlier = !logItems.isEmpty
-        default: break
-        }
-    }
-
-    /// The log's items as the Conversation shows them: final ones in order, then the screen's,
-    /// each row keyed by the item, so a screen row the Transcript takes over stays put.
-    private func rebuild() {
-        let sorted = logItems.values.sorted { $0.ord < $1.ord }
-        var rows: [Item] = []
-        var shownLive: [Entry] = []
-        for item in sorted {
-            var entry = item.entry
-            switch entry.kind {
-            case "result": if let call = entry.call { results[call] = entry }
-            case "todo": todo = entry
-            case "switch": rows.append(.switched(id: item.ord, reason: entry.summary))
-            default:
-                if item.final {
-                    if item.id != entry.id { rowKeys[entry.id] = item.id }
-                    if entry.kind == "user", let text = entry.text {
-                        queued.removeAll { $0.handed && text.contains($0.text.trimmingCharacters(in: .whitespacesAndNewlines)) }
-                    }
-                    rows.append(.entry(entry))
-                } else {
-                    entry.at = entry.at ?? firstSeen[item.id] ?? Self.dates.string(from: Date())
-                    firstSeen[item.id] = entry.at
-                    shownLive.append(entry)
-                }
-            }
-        }
-        if rows != items { items = rows }
-        if shownLive != live { live = shownLive }
-    }
-
-    /// One page of the log before its first item, read from the Transcript where needed.
-    private func loadEarlierFromLog(_ pane: String) async {
-        guard let runner, let first = logItems.values.map(\.ord).min() else { return earlier = false }
-        let ran = await runner.run("\(Helper.path) page \(quote(pane)) --before \(first) --limit \(Self.page)")
-        guard ran.ok else { return earlier = false }
-        var more = false
-        for text in ran.out.split(separator: "\n") {
-            let data = Data(text.utf8)
-            if let line = try? JSONDecoder().decode(LogLine.self, from: data), line.t == "page_done" { more = line.more ?? false }
-            if let item = try? JSONDecoder().decode(LogItem.self, from: data), !item.gone { logItems[item.id] = item }
-        }
-        rebuild()
-        saveCache()
-        earlier = more
-    }
-
-    private func add(_ entry: Entry) {
-        if entry.kind == "user", let text = entry.text {
-            queued.removeAll { $0.handed && text.contains($0.text.trimmingCharacters(in: .whitespacesAndNewlines)) }
-        }
-        switch entry.kind {
-        case "result": if let call = entry.call { results[call] = entry }
-        case "todo": todo = entry
-        default:
-            if let index = items.firstIndex(where: { $0.id == entry.id }) {
-                items[index] = .entry(entry)
-            } else {
-                items.insert(.entry(entry), at: items.count - (openQuestion == nil ? 0 : 1))
-            }
         }
     }
 
@@ -501,42 +227,31 @@ final class Conversation: ObservableObject {
     /// leaves the Conversation at its oldest entry.
     func reveal(_ id: String) async {
         for _ in 0..<50 where !loaded { try? await Task.sleep(for: .milliseconds(200)) }
-        while !items.contains(where: { $0.id == id }), earlier {
-            let count = items.count
+        while !rows.contains(where: { $0.contains(id) }), earlier {
+            let count = rows.count
             await loadEarlier()
-            if items.count == count { break }
+            if rows.count == count { break }
         }
-        focus = items.contains(where: { $0.id == id }) ? id : items.first?.id
+        focus = rows.contains(where: { $0.contains(id) }) ? id : rows.lazy.flatMap(\.entries).first?.id
     }
 
     /// Fetches the page of entries before the first one shown and puts it above.
     func loadEarlier() async {
-        if case .pane(let pane) = source {
-            guard earlier, !loading else { return }
-            loading = true
-            defer { loading = false }
-            return await loadEarlierFromLog(pane)
+        guard earlier, !loading, let runner else { return }
+        guard let first = log.first else {
+            log.earlier = false
+            return publish()
         }
-        guard earlier, !loading, let runner,
-              let first = items.lazy.compactMap({ if case .entry(let entry) = $0 { entry } else { nil } }).first
-        else { return }
         loading = true
         defer { loading = false }
-        let ran = await runner.run("\(Helper.path) history \(target) --before \(quote(first.id)) --last \(Self.page)")
-        guard ran.ok else { return earlier = false }
-        var older: [Item] = []
-        for text in ran.out.split(separator: "\n") {
-            let data = Data(text.utf8)
-            guard let line = try? JSONDecoder().decode(Line.self, from: data) else { continue }
-            if line.t == "history" { earlier = line.more ?? false }
-            guard line.t == "entry", let entry = try? JSONDecoder().decode(Entry.self, from: data) else { continue }
-            switch entry.kind {
-            case "result": if let call = entry.call { results[call] = results[call] ?? entry }
-            case "todo": todo = todo ?? entry
-            default: if !items.contains(where: { $0.id == entry.id }) { older.append(.entry(entry)) }
-            }
+        let command = switch source {
+        case .pane(let pane): "\(Helper.path) page \(quote(pane)) --before \(first.ord) --limit \(Self.page)"
+        case .file: "\(Helper.path) history \(target) --before \(quote(first.entry.id)) --last \(Self.page)"
         }
-        items.insert(contentsOf: older, at: 0)
+        let ran = await runner.run(command)
+        if ran.ok { log.page(ran.out) } else { log.earlier = false }
+        publish()
+        saveCache()
     }
 
     // MARK: Talking to the Agent
@@ -621,7 +336,7 @@ final class Conversation: ObservableObject {
     }
 
     /// Picks a choice in a menu read off the Agent's screen.
-    func choose(_ choice: Permission.Choice) async {
+    func choose(_ choice: SessionLog.Permission.Choice) async {
         guard let pane else { return }
         problem = await run("herdr pane send-keys \(quote(pane)) \(quote(choice.key))")
     }
@@ -651,14 +366,15 @@ final class Conversation: ObservableObject {
     }
 
     /// The helper cuts long output down; the whole entry is fetched the first time it is opened.
-    func expand(_ result: Entry) async {
+    func expand(_ result: SessionLog.Entry) async {
         guard result.truncated == true, let runner, expanded.insert(result.id).inserted else { return }
         let ran = await runner.run("\(Helper.path) entry \(target) \(quote(result.id))")
-        guard ran.ok, let entry = try? JSONDecoder().decode(Entry.self, from: Data(ran.out.utf8)) else {
+        guard ran.ok, let entry = try? JSONDecoder().decode(SessionLog.Entry.self, from: Data(ran.out.utf8)) else {
             expanded.remove(result.id)
             return
         }
-        add(entry)
+        log.expand(entry)
+        publish()
     }
 
     func image(_ path: String) async -> PlatformImage? {

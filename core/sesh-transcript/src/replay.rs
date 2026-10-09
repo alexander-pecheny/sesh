@@ -44,6 +44,8 @@ pub struct Outcome {
     pub doubles: Vec<String>,
     /// How many items were ever shown from the screen before the Transcript had them.
     pub provisional: usize,
+    /// What a device watching every session from the start was sent, as `attach` prints it.
+    pub lines: Vec<Value>,
 }
 
 pub fn replay(recording: &Path, work: &Path) -> Result<Outcome> {
@@ -66,6 +68,9 @@ pub fn replay(recording: &Path, work: &Path) -> Result<Outcome> {
     let start = Instant::now();
     let mut doubles = Vec::new();
     let mut provisional = std::collections::HashSet::new();
+    let mut lines = vec![json!({"t": "hello", "protocol": crate::serve::PROTOCOL, "version": crate::VERSION})];
+    let mut watched: HashMap<String, i64> = HashMap::new();
+    let mut summaries = 0;
     for event in &events {
         let at = event["at"].as_u64().unwrap_or(0);
         *now.borrow_mut() = at;
@@ -82,6 +87,7 @@ pub fn replay(recording: &Path, work: &Path) -> Result<Outcome> {
         let Some(panes) = event["panes"].as_array() else { continue };
         let panes: Vec<Value> = panes.iter().map(|pane| relocate(pane, &mut moved, work)).collect();
         machine.tick(&panes, start + Duration::from_millis(at))?;
+        watch(&machine.log, &panes, &mut watched, &mut summaries, &mut lines)?;
         for pane in &panes {
             let session = pane["pane_id"].as_str().unwrap_or_default();
             for item in machine.log.last(session, usize::MAX)? {
@@ -100,7 +106,31 @@ pub fn replay(recording: &Path, work: &Path) -> Result<Outcome> {
         }
     }
     let panes: Vec<Value> = events.iter().filter_map(|event| event["panes"].as_array()).flatten().cloned().collect();
-    Ok(Outcome { items: shown(&machine.log, &panes)?.into_iter().collect(), doubles, provisional: provisional.len() })
+    Ok(Outcome { items: shown(&machine.log, &panes)?.into_iter().collect(), doubles, provisional: provisional.len(), lines })
+}
+
+/// What `serve` sends a device that watches each pane from its first tick on.
+fn watch(log: &Log, panes: &[Value], watched: &mut HashMap<String, i64>, summaries: &mut i64, lines: &mut Vec<Value>) -> Result<()> {
+    for pane in panes {
+        let session = pane["pane_id"].as_str().unwrap_or_default();
+        if !watched.contains_key(session) {
+            let head = log.head()?;
+            lines.extend(log.last(session, usize::MAX)?);
+            lines.push(json!({"t": "opened", "session": session, "seq": head}));
+            watched.insert(session.to_string(), head);
+        }
+    }
+    for line in log.sessions_since(*summaries)? {
+        *summaries = line["seq"].as_i64().unwrap_or(*summaries);
+        lines.push(line);
+    }
+    for (session, seen) in watched.iter_mut() {
+        for line in log.items_since(session, *seen)? {
+            *seen = line["seq"].as_i64().unwrap_or(*seen);
+            lines.push(line);
+        }
+    }
+    Ok(())
 }
 
 /// Each session's items as `kind: text`, in order.
@@ -152,11 +182,16 @@ fn relocate(pane: &Value, moved: &mut HashMap<String, PathBuf>, work: &Path) -> 
     pane
 }
 
-/// `sesh-transcript replay FILE`: the items each session ends with, then any doubles.
-pub fn print(recording: &Path) -> Result<i32> {
+/// `sesh-transcript replay FILE`: the items each session ends with, then any doubles; with
+/// `--lines`, what a device watching it was sent instead.
+pub fn print(recording: &Path, sent: bool) -> Result<i32> {
     let work = std::env::temp_dir().join(format!("sesh-replay-{}", std::process::id()));
     let outcome = replay(recording, &work)?;
     let _ = std::fs::remove_dir_all(&work);
+    if sent {
+        outcome.lines.iter().for_each(|line| println!("{line}"));
+        return Ok(0);
+    }
     let mut sessions: Vec<_> = outcome.items.into_iter().collect();
     sessions.sort();
     for (session, items) in sessions {

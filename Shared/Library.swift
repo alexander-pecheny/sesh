@@ -111,9 +111,7 @@ final class Library: ObservableObject {
             conversation.prepare = { _ = await machine.prepare() }
             conversation.openPath = { [weak self, weak conversation] path in
                 guard let self, let vault = self.vault(of: session.id), let current = vault.records[session.id] else { return }
-                let wrote = (conversation?.items ?? []).compactMap { item -> String? in
-                if case .entry(let entry) = item { entry.file } else { nil }
-            }
+                let wrote = (conversation?.rows ?? []).flatMap(\.entries).compactMap(\.file)
             Task { await TaskActions.open(path, from: current, wrote: wrote, in: vault, library: self) }
             }
         }
@@ -206,7 +204,7 @@ final class Library: ObservableObject {
         let name: String?
         let done: UInt64?
         let last: String?
-        let background: [Conversation.Background]?
+        let background: [SessionLog.Background]?
     }
 
     /// Every session's summary, by machine and pane.
@@ -436,9 +434,7 @@ final class Library: ObservableObject {
                                         runner: TaskActions.machine(session.body.machine))
         conversation.openPath = { [weak self, weak conversation] file in
             guard let self, let vault = self.vault(of: session.id), let current = vault.records[session.id] else { return }
-            let wrote = (conversation?.items ?? []).compactMap { item -> String? in
-                if case .entry(let entry) = item { entry.file } else { nil }
-            }
+            let wrote = (conversation?.rows ?? []).flatMap(\.entries).compactMap(\.file)
             Task { await TaskActions.open(file, from: current, wrote: wrote, in: vault, library: self) }
         }
         conversation.openSubagent = { [weak self, weak conversation] call, title in
@@ -553,7 +549,7 @@ final class Library: ObservableObject {
         URL(string: "sesh://\(vault)/\(session)/\(item)")
     }
 
-    func copyLink(_ entry: Conversation.Entry, in session: String) {
+    func copyLink(_ entry: SessionLog.Entry, in session: String) {
         guard let vault = vault(of: session), let url = Self.link(vault: vault.name, session: session, item: entry.id) else { return }
         #if os(macOS)
         NSPasteboard.general.clearContents()
@@ -564,7 +560,7 @@ final class Library: ObservableObject {
     }
 
     /// An Entry in the session's Task quoting the item, with a link back to it.
-    func bookmark(_ entry: Conversation.Entry, in session: String) {
+    func bookmark(_ entry: SessionLog.Entry, in session: String) {
         guard let vault = vault(of: session), let record = vault.records[session], let task = record.body.task,
               let url = Self.link(vault: vault.name, session: session, item: entry.id) else { return }
         let source = (entry.text?.isEmpty == false ? entry.text : nil) ?? entry.summary

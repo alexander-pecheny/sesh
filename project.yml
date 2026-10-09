@@ -96,6 +96,8 @@ targets:
         product: cmark-gfm
       - package: cmark
         product: cmark-gfm-extensions
+    scheme:
+      testTargets: [SeshTests]
     settings:
       base:
         PRODUCT_NAME: Sesh
@@ -115,3 +117,17 @@ targets:
           PRODUCT_NAME: Sesh Dev
           PRODUCT_BUNDLE_IDENTIFIER: me.pecheny.sesh.mac.dev
           SESH_URL_SCHEME: sesh-dev
+
+  # Hostless: it compiles the plain Swift it tests, so it needs neither app nor framework.
+  SeshTests:
+    type: bundle.unit-test
+    platform: macOS
+    sources:
+      - path: SeshTests
+        excludes: [Fixtures]
+      - path: Shared/SessionLog.swift
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: me.pecheny.sesh.tests
+        GENERATE_INFOPLIST_FILE: YES
+        CODE_SIGN_IDENTITY: "-"

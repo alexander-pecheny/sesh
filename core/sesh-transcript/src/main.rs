@@ -20,7 +20,7 @@ const PING: Duration = Duration::from_secs(30);
 const DEFAULT_LAST: usize = 50;
 const USAGE: &str = "usage: sesh-transcript --version | follow --protocol | follow <pane> [--since CURSOR] [--last N]
        | serve [--foreground] [--record DIR --pane PANE] | attach [--sessions] [--watch KEY[:SEQ]]...
-       | page KEY --before ORD [--limit N] | replay FILE
+       | page KEY --before ORD [--limit N] | replay FILE [--lines]
        | history <pane> --before ID [--last N] | entry <pane> ID
        | answer <pane> --json ANSWERS | permit <pane> allow|deny | background <pane>...
        | vault init DIR | vault pull|follow DIR [--since SEQ] | vault push DIR FILE
@@ -44,7 +44,8 @@ fn main() {
         Some("attach") => attach(rest),
         Some("page") => page(rest),
         Some("replay") => match rest {
-            [file] => replay::print(std::path::Path::new(file)),
+            [file] => replay::print(std::path::Path::new(file), false),
+            [file, flag] if flag == "--lines" => replay::print(std::path::Path::new(file), true),
             _ => usage(),
         },
         Some("history") => history(rest),

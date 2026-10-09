@@ -38,10 +38,10 @@ struct ConversationView: View {
 
     /// Pages back while the reader stays near the top and herdr has more.
     private func loadEarlier() async {
-        while nearTop, conversation.earlier, !conversation.items.isEmpty {
-            let count = conversation.items.count
+        while nearTop, conversation.earlier, !conversation.rows.isEmpty {
+            let count = conversation.rows.count
             await conversation.loadEarlier()
-            if conversation.items.count == count { return }
+            if conversation.rows.count == count { return }
             // The view says where the reader is only once it has laid the page out.
             try? await Task.sleep(for: .milliseconds(150))
         }
@@ -152,11 +152,11 @@ struct ConversationView: View {
                  hold: conversation.opened.hashValue,
                  spacing: Self.rowSpacing, inset: Metric.wide)
             .onChange(of: nearTop) { if nearTop { Task { await loadEarlier() } } }
-            .onChange(of: conversation.items.count) { if nearTop { Task { await loadEarlier() } } }
+            .onChange(of: conversation.rows.count) { if nearTop { Task { await loadEarlier() } } }
             .animation(.easeOut(duration: 1), value: conversation.focus)
     }
 
-    private func rowView(_ row: Row) -> some View {
+    private func rowView(_ row: SessionLog.Row) -> some View {
         RowView(row: row, conversation: conversation)
             .padding(Metric.tiny)
             .background(
@@ -170,7 +170,7 @@ struct ConversationView: View {
     /// The row the focused entry is in, for the native list to bring to the top.
     private var revealedRow: String? {
         guard let focus = conversation.focus else { return nil }
-        return Row.rows(conversation.shown, key: conversation.rowKey).first { $0.contains(focus) }?.id
+        return conversation.rows.first { $0.contains(focus) }?.id
     }
 
     /// Everything the native list shows, each row versioned by what it draws.
@@ -181,26 +181,10 @@ struct ConversationView: View {
         }
         var items: [ChatList.Item] = []
         if conversation.earlier { items.append(item(ChatList.earlier, 0, ProgressView().frame(maxWidth: .infinity))) }
-        for row in Row.rows(conversation.shown, key: conversation.rowKey) {
-            // A fingerprint, not the whole text: this runs on every keystroke and screen update.
+        for row in conversation.rows {
             var hasher = Hasher()
-            func mark(_ entry: Conversation.Entry) {
-                hasher.combine(entry.id)
-                hasher.combine(entry.kind)
-                hasher.combine(entry.text?.utf8.count)
-                hasher.combine(entry.summary.utf8.count)
-                hasher.combine(conversation.opened.contains(conversation.rowKey(entry.id)))
-                if let result = entry.call.flatMap({ conversation.results[$0] }) {
-                    hasher.combine(result.id)
-                    hasher.combine(result.text?.utf8.count)
-                    hasher.combine(result.truncated)
-                }
-            }
-            switch row.content {
-            case .item(.entry(let entry)): mark(entry)
-            case .item(.switched(_, let reason)): hasher.combine(reason)
-            case .lookups(let entries): entries.forEach(mark)
-            }
+            hasher.combine(row.version)
+            hasher.combine(conversation.opened.contains(row.id))
             hasher.combine(conversation.focus.map(row.contains))
             hasher.combine(today)
             items.append(item(row.id, hasher.finalize(), rowView(row)))
@@ -319,10 +303,7 @@ struct ConversationView: View {
         if fresh { DispatchQueue.main.async { field.focus() } }
         let conversation = conversation
         field.recall = { [weak conversation] in
-            conversation?.items.reversed().lazy.compactMap { item -> String? in
-                guard case .entry(let entry) = item, entry.kind == "user", let text = entry.text, !text.isEmpty else { return nil }
-                return text
-            }.first
+            conversation?.rows.flatMap(\.entries).last { $0.kind == "user" && $0.text?.isEmpty == false }?.text
         }
         #if os(macOS)
         field.pasteImage = { [weak conversation] data, ext in
@@ -339,7 +320,7 @@ struct ConversationView: View {
     }
 
     /// An action on a message, followed by a word that it happened.
-    private func confirmed(_ action: ((Conversation.Entry) -> Void)?, _ words: String) -> ((Conversation.Entry) -> Void)? {
+    private func confirmed(_ action: ((SessionLog.Entry) -> Void)?, _ words: String) -> ((SessionLog.Entry) -> Void)? {
         action.map { action in
             { entry in
                 action(entry)
@@ -413,11 +394,11 @@ private struct AgentText: View {
 /// icons on hover: text that can be selected keeps its own context menu.
 private struct Bookmarkable: ViewModifier {
     @Environment(\.colorScheme) private var colorScheme
-    let entry: Conversation.Entry?
+    let entry: SessionLog.Entry?
     /// A live item, which the Transcript will hold soon: it takes the room its icons will need.
     let live: Bool
-    let keep: ((Conversation.Entry) -> Void)?
-    let copy: ((Conversation.Entry) -> Void)?
+    let keep: ((SessionLog.Entry) -> Void)?
+    let copy: ((SessionLog.Entry) -> Void)?
     /// How wide a reply's text column is, so the icon sits at its corner, not the window's.
     let column: CGFloat?
     /// The row's own words, for Copy and, on the phone, Select Text.
@@ -493,8 +474,8 @@ private struct Bookmarkable: ViewModifier {
 }
 
 extension View {
-    fileprivate func bookmarkable(_ entry: Conversation.Entry?, live: Bool, keep: ((Conversation.Entry) -> Void)?,
-                                  copy: ((Conversation.Entry) -> Void)?, column: CGFloat?, text: String?,
+    fileprivate func bookmarkable(_ entry: SessionLog.Entry?, live: Bool, keep: ((SessionLog.Entry) -> Void)?,
+                                  copy: ((SessionLog.Entry) -> Void)?, column: CGFloat?, text: String?,
                                   copyText: @escaping (String) -> Void, select: @escaping (String) -> Void) -> some View {
         modifier(Bookmarkable(entry: entry, live: live, keep: keep, copy: copy, column: column, text: text, copyText: copyText, select: select))
     }
@@ -580,74 +561,36 @@ private struct BackgroundLine: View {
     }
 }
 
-/// What the list shows: one entry, or a run of reads, searches and fetches as one line.
-private struct Row: Identifiable {
-    enum Content {
-        case item(Conversation.Item)
-        case lookups([Conversation.Entry])
-    }
-
-    var content: Content
-    /// The first entry's row: an entry that replaced a live item keeps that item's row.
-    let id: String
-
-    func contains(_ id: String) -> Bool {
-        switch content {
-        case .item(let item): item.id == id
-        case .lookups(let entries): entries.contains { $0.id == id }
-        }
-    }
-
+/// What the list needs of a row beyond what it draws.
+private extension SessionLog.Row {
     /// A reply set in the prose column, rather than a card, a bubble or a table, which takes
     /// the whole width and caps each cell instead.
     var prose: Bool {
-        guard case .item(.entry(let entry)) = content, entry.kind == "text" else { return false }
+        guard case .entry(let entry) = content, entry.kind == "text" else { return false }
         return !Cmark.hasTable(entry.text ?? "")
     }
 
-    var live: Bool { Conversation.isLive(id) }
+    var live: Bool { SessionLog.isLive(id) }
 
     /// What Copy puts on the clipboard: the words, or the command or file a tool worked on.
     var text: String? {
         switch content {
-        case .item(.switched): nil
+        case .switched: nil
         case .lookups(let entries): entries.map { $0.file ?? $0.command ?? $0.summary }.joined(separator: "\n")
-        case .item(.entry(let entry)):
+        case .entry(let entry):
             entry.kind == "tool" ? entry.command ?? entry.file ?? entry.summary : entry.text ?? entry.summary
         }
     }
 
     /// The entry a Bookmark of this row keeps; a live item is not in the Transcript yet.
-    var entry: Conversation.Entry? {
-        let entry: Conversation.Entry? = switch content {
-        case .item(.entry(let entry)): entry
-        case .lookups(let entries): entries.first
-        case .item(.switched): nil
-        }
-        return entry.flatMap { Conversation.isLive($0.id) ? nil : $0 }
-    }
-
-    static func rows(_ items: [Conversation.Item], key: (String) -> String) -> [Row] {
-        var rows: [Row] = []
-        for item in items {
-            guard case .entry(let entry) = item, entry.kind == "tool",
-                  ["read", "search", "fetch"].contains(entry.tool) else {
-                rows.append(Row(content: .item(item), id: key(item.id)))
-                continue
-            }
-            if case .lookups(let run)? = rows.last?.content {
-                rows[rows.count - 1].content = .lookups(run + [entry])
-            } else {
-                rows.append(Row(content: .lookups([entry]), id: key(entry.id)))
-            }
-        }
-        return rows
+    var entry: SessionLog.Entry? {
+        entries.first.flatMap { SessionLog.isLive($0.id) ? nil : $0 }
     }
 }
 
 private struct RowView: View {
     @Environment(\.colorScheme) private var colorScheme
-    let row: Row
+    let row: SessionLog.Row
     @ObservedObject var conversation: Conversation
 
     private var flavour: Catppuccin.Flavour { colorScheme == .dark ? .mocha : .latte }
@@ -655,8 +598,8 @@ private struct RowView: View {
     var body: some View {
         switch row.content {
         case .lookups(let entries): Lookups(entries: entries, open: conversation.isOpen(entries[0].id), openPath: conversation.openPath)
-        case .item(.switched(_, let reason)): SwitchDivider(reason: reason)
-        case .item(.entry(let entry)):
+        case .switched(let reason): SwitchDivider(reason: reason)
+        case .entry(let entry):
             switch entry.kind {
             case "user": UserBubble(entry: entry, conversation: conversation)
             case "text":
@@ -692,7 +635,7 @@ private enum Bubble {
 
 private struct UserBubble: View {
     @Environment(\.colorScheme) private var colorScheme
-    let entry: Conversation.Entry
+    let entry: SessionLog.Entry
     let conversation: Conversation
 
     private var flavour: Catppuccin.Flavour { colorScheme == .dark ? .mocha : .latte }
@@ -997,7 +940,7 @@ struct Markdown: View {
 
 private struct Thinking: View {
     @Environment(\.colorScheme) private var colorScheme
-    let entry: Conversation.Entry
+    let entry: SessionLog.Entry
     @Binding var open: Bool
 
     private var flavour: Catppuccin.Flavour { colorScheme == .dark ? .mocha : .latte }
@@ -1228,8 +1171,8 @@ private struct Card<Header: View, Detail: View>: View {
 
 private struct ToolCard: View {
     @Environment(\.colorScheme) private var colorScheme
-    let entry: Conversation.Entry
-    let result: Conversation.Entry?
+    let entry: SessionLog.Entry
+    let result: SessionLog.Entry?
     let conversation: Conversation
 
     private var flavour: Catppuccin.Flavour { colorScheme == .dark ? .mocha : .latte }
@@ -1372,7 +1315,7 @@ private struct Diff: View {
 
 private struct Lookups: View {
     @Environment(\.colorScheme) private var colorScheme
-    let entries: [Conversation.Entry]
+    let entries: [SessionLog.Entry]
     @Binding var open: Bool
     let openPath: ((String) -> Void)?
 
@@ -1418,15 +1361,15 @@ private struct Lookups: View {
 
 private struct QuestionCard: View {
     @Environment(\.colorScheme) private var colorScheme
-    let entry: Conversation.Entry
-    let result: Conversation.Entry?
+    let entry: SessionLog.Entry
+    let result: SessionLog.Entry?
     let conversation: Conversation
     @State private var picked: [Int: Set<String>]
     @State private var typed: [Int: String]
     @State private var sending = false
     @State private var problem: String?
 
-    init(entry: Conversation.Entry, result: Conversation.Entry?, conversation: Conversation) {
+    init(entry: SessionLog.Entry, result: SessionLog.Entry?, conversation: Conversation) {
         self.entry = entry
         self.result = result
         self.conversation = conversation
@@ -1436,7 +1379,7 @@ private struct QuestionCard: View {
     }
 
     private var flavour: Catppuccin.Flavour { colorScheme == .dark ? .mocha : .latte }
-    private var questions: [Conversation.Question] { entry.questions ?? [] }
+    private var questions: [SessionLog.Question] { entry.questions ?? [] }
 
     var body: some View {
         VStack(alignment: .leading, spacing: Metric.wide) {
@@ -1489,7 +1432,7 @@ private struct QuestionCard: View {
         questions.indices.allSatisfy { !picked[$0, default: []].isEmpty || !typed[$0, default: ""].isEmpty }
     }
 
-    private func choice(_ option: Conversation.Question.Option, multi: Bool, in index: Int) -> some View {
+    private func choice(_ option: SessionLog.Question.Option, multi: Bool, in index: Int) -> some View {
         let on = picked[index, default: []].contains(option.label)
         return Button {
             var set = multi ? picked[index, default: []] : []
@@ -1525,7 +1468,7 @@ private struct QuestionCard: View {
 
 private struct PermissionCard: View {
     @Environment(\.colorScheme) private var colorScheme
-    let permission: Conversation.Permission
+    let permission: SessionLog.Permission
     let conversation: Conversation
     @State private var answering = false
 
@@ -1599,7 +1542,7 @@ private struct PermissionCard: View {
     }
 
     /// Answered, the card stays until the Agent moves on; a second tap would land as a keystroke.
-    private func pick(_ choice: Conversation.Permission.Choice) async {
+    private func pick(_ choice: SessionLog.Permission.Choice) async {
         answering = true
         await conversation.choose(choice)
         if conversation.problem != nil { answering = false }
@@ -1616,7 +1559,7 @@ private struct PermissionCard: View {
 /// The open permission's answers as keys, which work wherever the card is scrolled to; typed
 /// keys alone go to the message box.
 private struct PermissionKeys: View {
-    let permission: Conversation.Permission
+    let permission: SessionLog.Permission
     let conversation: Conversation
     @State private var answering = false
 
@@ -1650,12 +1593,12 @@ private struct PermissionKeys: View {
 
 private struct TodoBar: View {
     @Environment(\.colorScheme) private var colorScheme
-    let items: [Conversation.Todo]
+    let items: [SessionLog.Todo]
     @State private var open = false
 
     private var flavour: Catppuccin.Flavour { colorScheme == .dark ? .mocha : .latte }
     private var done: Int { items.filter { $0.status == "completed" }.count }
-    private var current: Conversation.Todo? {
+    private var current: SessionLog.Todo? {
         items.first { $0.status == "in_progress" } ?? items.first { $0.status == "pending" }
     }
 

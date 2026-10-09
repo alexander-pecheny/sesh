@@ -18,7 +18,7 @@ struct FixtureView: View {
         let live = max(all.count - 20, 0)
         for (index, line) in all.enumerated() {
             let delay = index < live ? Double(index / 20) * 0.1 : Double(live / 20) * 0.1 + Double(index - live + 1)
-            DispatchQueue.main.asyncAfter(deadline: .now() + 0.5 + delay) { conversation.apply(String(line)) }
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.5 + delay) { conversation.receive(String(line)) }
         }
         _conversation = StateObject(wrappedValue: conversation)
     }
