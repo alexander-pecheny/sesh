@@ -59,6 +59,10 @@ e2e: build
 device:
     ./scripts/install-device.sh
 
+# Build Release and install it over /Applications/Sesh.app, quitting and reopening a running one.
+mac:
+    ./scripts/install-mac.sh
+
 # Publish docs/site to sesh.pecheny.me, served by Caddy on vps2day-ee.
 site:
     rsync -av --delete docs/site/ vps2day-ee:/home/ap/sesh_site/

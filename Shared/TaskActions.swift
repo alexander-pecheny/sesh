@@ -6,10 +6,24 @@ import Foundation
 enum TaskActions {
     static func machine(_ alias: String?) -> Machine { .named(alias) }
 
-    /// The machines a Task can start Tabs on: its Worktree's alone, or the Vault's and the Mac.
+    /// The machines a Task can start Tabs on: its Worktree's first, then the Vault's and the Mac.
     static func machines(for task: Record, in vault: Vault) -> [Machine] {
-        if task.body.path != nil { return [machine(task.body.machine)] }
-        return vault.place.alias == nil ? Machine.here : [vault.machine] + Machine.here
+        let own = task.body.path == nil ? [] : [machine(task.body.machine)]
+        let all = own + (vault.place.alias == nil ? Machine.here : [vault.machine] + Machine.here)
+        var seen = Set<Machine>()
+        return all.filter { seen.insert($0).inserted }
+    }
+
+    /// The folder Claude keeps its account in for a Vault's sessions on `machine`, as set on
+    /// this device; nil for Claude's own default.
+    static func claudeConfig(_ vault: Vault, on machine: Machine) -> String? {
+        (UserDefaults.standard.dictionary(forKey: "claudeConfig") as? [String: String])?["\(vault.place.name)|\(machine.id)"]
+    }
+
+    static func setClaudeConfig(_ config: String, _ vault: Vault, on machine: Machine) {
+        var all = UserDefaults.standard.dictionary(forKey: "claudeConfig") as? [String: String] ?? [:]
+        all["\(vault.place.name)|\(machine.id)"] = config.isEmpty ? nil : config
+        UserDefaults.standard.set(all, forKey: "claudeConfig")
     }
 
     /// The branch a title suggests, under the user's name as herdr's own branches are.
@@ -67,7 +81,7 @@ enum TaskActions {
         let session = vault.create(.session, body)
         made(session)
         let name = Names.slug("\(current.body.title ?? "task")-\(agent.rawValue)")
-        if let problem = await Herdr.launch(agent, name: name, pane: pane, on: machine) {
+        if let problem = await Herdr.launch(agent, name: name, pane: pane, config: claudeConfig(vault, on: machine), on: machine) {
             vault.delete(vault.records[session.id] ?? session)
             return .failure(Herdr.Failure(problem))
         }
@@ -91,17 +105,24 @@ enum TaskActions {
         } else {
             branch = await suggestBranch(for: title, user: user, in: vault) ?? self.branch(for: title, user: user)
         }
-        guard current.body.path == nil else {
-            return await Herdr.worktree(repo, branch: branch, label: title, on: machine).map { ($0.path ?? repo, $0.pane) }
-        }
-        switch await Herdr.worktree(repo, branch: branch, label: title, on: machine) {
+        // A missing or empty folder becomes a new repo. One with no commits yet has no HEAD to
+        // branch a worktree from, so it is used as is.
+        let folder = quote(repo)
+        let born = await machine.run(
+            "[ -n \"$(command ls -A \(folder) 2>/dev/null)\" ] || { mkdir -p \(folder) && command git -C \(folder) init -q; }; "
+                + "command git -C \(folder) rev-parse --verify -q HEAD").ok
+        let made = born
+            ? await Herdr.worktree(repo, branch: branch, label: title, on: machine)
+            : await Herdr.workspace(repo, label: title, on: machine)
+        guard current.body.path == nil else { return made.map { ($0.path ?? repo, $0.pane) } }
+        switch made {
         case .failure(let failure): return .failure(failure)
         case .success(let opened):
             var record = vault.records[task.id] ?? current
             record.body.machine = machine.alias
             record.body.repo = repo
-            record.body.path = opened.path
-            record.body.branch = opened.branch ?? branch
+            record.body.path = opened.path ?? repo
+            if born { record.body.branch = opened.branch ?? branch }
             record.body.workspace = opened.workspace
             vault.write(record)
             return .success((opened.path ?? repo, opened.pane))
@@ -188,7 +209,8 @@ enum TaskActions {
         case .success(let value): opened = value.0
         }
         let name = Names.slug("\(task.body.title ?? "task")-\(agent.rawValue)")
-        if let problem = await Herdr.launch(agent, name: name, pane: opened.pane, resuming: transcript, on: machine) { return problem }
+        if let problem = await Herdr.launch(
+            agent, name: name, pane: opened.pane, resuming: transcript, config: claudeConfig(vault, on: machine), on: machine) { return problem }
         var record = vault.records[session.id] ?? session
         record.body.pane = opened.pane
         vault.write(record)

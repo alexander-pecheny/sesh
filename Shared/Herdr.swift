@@ -13,7 +13,11 @@ enum Herdr {
 
     /// Starts `agent` in a fresh `pane` and waits until it can take a prompt. On failure the
     /// pane is closed, so no half-started Agent lingers, and the reason comes back.
-    static func launch(_ agent: Agent, name: String, pane: String, resuming transcript: String? = nil, on runner: Runner) async -> String? {
+    static func launch(_ agent: Agent, name: String, pane: String, resuming transcript: String? = nil,
+                       config: String? = nil, on runner: Runner) async -> String? {
+        if agent == .claude, let config, !config.isEmpty {
+            _ = await runner.run("herdr pane run \(quote(pane)) \(quote("export CLAUDE_CONFIG_DIR=\(shellPath(config))"))")
+        }
         var ran = await runner.run(
             "herdr agent start \(quote(name)) --kind \(agent.rawValue) --pane \(quote(pane)) --timeout 60000"
                 + " -- \(agent.flags(name, resuming: transcript))")

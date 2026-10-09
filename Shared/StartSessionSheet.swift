@@ -12,6 +12,7 @@ struct StartSessionSheet: View {
     @State private var alias: String?
     @State private var choice = Self.other
     @State private var typed = ""
+    @State private var config = ""
     @FocusState private var focused: Bool
 
     private static let other = "\u{0}other"
@@ -66,8 +67,15 @@ struct StartSessionSheet: View {
                         .focused($focused)
                         .onSubmit(start)
                 }
+                if agent == .claude {
+                    TextField("Claude config folder", text: $config, prompt: Text("~/.claude"))
+                }
             } footer: {
-                if repo != nil { Text("A Worktree on \(branch ?? "the Task's branch") is made in it the first time.") }
+                if choice == Self.other {
+                    Text("A folder that does not exist yet becomes a new repository.")
+                } else if repo != nil {
+                    Text("A Worktree on \(branch ?? "the Task's branch") is made in it the first time.")
+                }
             }
         }
         .onAppear {
@@ -82,13 +90,17 @@ struct StartSessionSheet: View {
         ToolbarItem(placement: .confirmationAction) { Button("Start", action: start).disabled(!ready) }
     }
 
+    private var machine: Machine? { machines.first { $0.alias == alias } ?? machines.first }
+
     private func choose() {
+        config = machine.flatMap { TaskActions.claudeConfig(vault, on: $0) } ?? ""
         choice = recents.first ?? Self.other
         focused = choice == Self.other
     }
 
     private func start() {
-        guard ready, let machine = machines.first(where: { $0.alias == alias }) ?? machines.first else { return }
+        guard ready, let machine else { return }
+        if agent == .claude { TaskActions.setClaudeConfig(config.trimmingCharacters(in: .whitespaces), vault, on: machine) }
         library.start(agent, for: vault.records[task.id] ?? task, on: machine, repo: repo, problem: problem)
         dismiss()
     }

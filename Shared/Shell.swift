@@ -84,7 +84,8 @@ struct Ran {
 
     /// herdr prints its errors as JSON on stderr; anything else is shown as it came.
     var problem: String {
-        let herdr = try? JSONDecoder().decode(HerdrError.self, from: Data(err.utf8))
+        let herdr = err.split(separator: "\n").lazy
+            .compactMap { try? JSONDecoder().decode(HerdrError.self, from: Data($0.utf8)) }.last
         let text = herdr?.error.message ?? err.trimmingCharacters(in: .whitespacesAndNewlines)
         return text.isEmpty ? "the command failed with status \(status)" : text
     }
