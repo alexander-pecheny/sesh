@@ -8,8 +8,8 @@ The Session log (ADR 0010) needs one process per machine that follows Agents whe
 a device is looking. Sesh starts it: when a device connects to a machine it runs
 `sesh-transcript serve`, which starts the follower in the background unless a lock file
 shows one already running. The follower outlives the connection and exits after hours with
-no Agent to follow, so the version Sesh pins is the version that runs, and a Host needs
-nothing installed. After a gap the follower first catches up from the Transcript, which is
+no Agent to follow, so a Host needs nothing installed; the newest build any device pins is the
+one that runs (ADR 0014). After a gap the follower first catches up from the Transcript, which is
 complete; only the provisional screen rows of the gap are lost, and the Transcript has
 replaced those anyway.
 
