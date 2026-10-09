@@ -10,6 +10,7 @@ private final class Box: Runner {
     /// Open Workspaces by id, with the Worktree each opened on.
     var workspaces: [String: String] = [:]
     var broken: Set<String> = []
+    var branches: Set<String> = []
     private(set) var commands: [String] = []
     private(set) lazy var follower = FollowerLink(self)
 
@@ -25,6 +26,7 @@ private final class Box: Runner {
         if command.hasPrefix("[ -f ") { return Ran(status: linked.contains(args[0]) ? 0 : 1, out: "", err: "") }
         if command == "printf %s \"$HOME\"" { return Ran(status: 0, out: "/home/me", err: "") }
         if command.contains(" worktree add ") { linked.insert(args[2]) }
+        if command.contains(" for-each-ref ") { return Ran(status: 0, out: branches.joined(separator: "\n"), err: "") }
         if command.hasSuffix("status --porcelain") { return Ran(status: 0, out: dirty[args[0]] ?? "", err: "") }
         if command == "herdr workspace list" {
             let list = workspaces.keys.map { #"{"workspace_id":"\#($0)","label":"Fix it"}"# }.joined(separator: ",")
@@ -136,8 +138,11 @@ final class CloseTests: XCTestCase {
         body.machine = "box"
         let main = Record(id: "t1", kind: .task, body: body)
         vault.write(main)
-        guard case .success(let place) = await Start.worktree("me/fix-it-2", of: "/src/app", on: box) else { return XCTFail() }
-        XCTAssertEqual(box.commands.last, "git -C '/src/app' worktree add -b 'me/fix-it-2' '/home/me/.herdr/worktrees/app/me-fix-it-2'")
+        box.branches = ["main", "me/fix-it"]
+        guard case .success(let place) = await Start.worktree("me/fix-it-2", of: "/src/app", after: "me/fix-it", on: box) else { return XCTFail() }
+        XCTAssertEqual(box.commands.last,
+                       "git -C '/src/app' worktree add -b 'me/fix-it-2' '/home/me/.herdr/worktrees/app/me-fix-it-2' 'me/fix-it'",
+                       "a parallel session carries the Task's work on")
         let session = Start.session(.claude, for: "t1", on: "box", at: place, repo: "/src/app", in: vault)
         XCTAssertEqual(vault.records["t1"], main)
         XCTAssertEqual(session.body.path, "/home/me/.herdr/worktrees/app/me-fix-it-2")
@@ -167,5 +172,11 @@ final class CloseTests: XCTestCase {
         let second = await close.perform(plan, discard: false)
         XCTAssertEqual(first + second, [])
         XCTAssertEqual(removals, ["herdr worktree remove --workspace 'w1'", "git -C '/src/lib' worktree remove '/src/lib-fix'"])
+    }
+
+    func testANewWorktreeOfARepositoryWithoutTheTasksBranchStartsFromItsCheckout() async {
+        box.branches = ["main"]
+        _ = await Start.worktree("me/fix-it-2", of: "/src/lib", after: "me/fix-it", on: box)
+        XCTAssertEqual(box.commands.last, "git -C '/src/lib' worktree add -b 'me/fix-it-2' '/home/me/.herdr/worktrees/lib/me-fix-it-2'")
     }
 }

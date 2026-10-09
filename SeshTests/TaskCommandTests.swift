@@ -177,4 +177,10 @@ final class TaskCommandTests: XCTestCase {
         XCTAssertEqual(TabItem.terminal(inMain.id).worktree(of: task, in: vault), main)
         XCTAssertNil(TabItem.terminal(home.id).worktree(of: task, in: vault))
     }
+
+    func testRecentRepositoriesShowHomeAsATildeAndEachOnce() {
+        let repos = ["/Users/me/src/app", "~/src/app", "/opt/lib", "/Users/me", "/Users/meg/x"]
+        XCTAssertEqual(Start.recent(repos, home: "/Users/me"), ["~/src/app", "/opt/lib", "~", "/Users/meg/x"])
+        XCTAssertEqual(Start.recent(repos, home: nil), repos)
+    }
 }

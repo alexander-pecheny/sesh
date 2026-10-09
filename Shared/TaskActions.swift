@@ -58,12 +58,13 @@ enum TaskActions {
                              in vault: Vault, made: (Record) -> Void) async -> Result<Record, Herdr.Failure> {
         if let problem = await machine.prepare() { return .failure(Herdr.Failure(problem)) }
         var place = Start.Place(), repo = given
-        if let given, given.hasPrefix("~/") { repo = (await machine.run("printf %s \"$HOME\"")).out + given.dropFirst(1) }
+        let home = given == nil ? "" : (await machine.run("printf %s \"$HOME\"")).out
+        if let given, given.hasPrefix("~/") { repo = home + given.dropFirst(1) }
         if let repo {
             let made = if let branch {
-                await Start.worktree(branch, of: repo, on: machine)
+                await Start.worktree(branch, of: repo, after: self.branch(of: vault.records[task.id] ?? task, on: machine), on: machine)
             } else {
-                await worktree(for: task, repo: repo, on: machine, in: vault)
+                await worktree(for: task, repo: repo, home: home, on: machine, in: vault)
             }
             switch made {
             case .failure(let failure): return .failure(failure)
@@ -95,13 +96,13 @@ enum TaskActions {
 
     /// The Task's Worktree of `repo` on `machine`, made on first use with the Task's branch, and
     /// the fresh Workspace's own pane when it was made just now.
-    static func worktree(for task: Record, repo: String, on machine: Machine, in vault: Vault) async -> Result<Start.Place, Herdr.Failure> {
+    static func worktree(for task: Record, repo: String, home: String, on machine: Machine, in vault: Vault) async -> Result<Start.Place, Herdr.Failure> {
         let current = vault.records[task.id] ?? task
         if let path = current.body.path, current.body.repo == repo, current.body.machine == machine.alias {
             return .success(Start.Place(folder: path, branch: current.body.branch))
         }
         let known = vault.children(.session, task: task.id).first {
-            $0.body.repo == repo && $0.body.machine == machine.alias && $0.body.path != nil && $0.body.path != repo
+            $0.body.repo.map { Start.abbreviate($0, home: home) } == Start.abbreviate(repo, home: home) && $0.body.machine == machine.alias && $0.body.path != nil && $0.body.path != repo
                 && ($0.body.branch ?? current.body.branch) == current.body.branch
         }
         if let path = known?.body.path { return .success(Start.Place(folder: path, branch: current.body.branch)) }
@@ -142,16 +143,13 @@ enum TaskActions {
 
     /// The repositories a new session of the Task may want on `machine`, the Task's own last
     /// used first, then the newest used anywhere.
-    static func recentRepos(for task: Record, on machine: String?, library: Library) -> [String] {
+    static func recentRepos(for task: Record, on machine: String?, home: String?, library: Library) -> [String] {
         let sessions = library.vaults.flatMap { $0.all(.session) }.filter { $0.body.machine == machine }
             .sorted { ($0.body.position ?? 0) > ($1.body.position ?? 0) }
         let mine = sessions.filter { $0.body.task == task.id }.compactMap(\.body.repo)
         let tasks = library.vaults.flatMap { $0.all(.task) }.filter { $0.body.machine == machine }
         let own = task.body.machine == machine ? [task.body.repo].compactMap { $0 } : []
-        var seen = Set<String>()
-        return (mine + own + sessions.compactMap(\.body.repo) + tasks.compactMap(\.body.repo))
-            .filter { seen.insert($0).inserted }
-            .prefix(8).map { $0 }
+        return Start.recent(mine + own + sessions.compactMap(\.body.repo) + tasks.compactMap(\.body.repo), home: home)
     }
 
     /// Gives a new Task a branch named by a model from its title, so starting work later asks

@@ -20,13 +20,14 @@ enum Git {
         return ran.ok ? Set(ran.out.split(separator: "\n").map(String.init)) : []
     }
 
-    /// A new linked worktree of `repo` at `path` on a new `branch`, from what `repo` has checked out.
-    static func addWorktree(_ path: String, branch: String, of repo: String, on runner: Runner) async -> Ran {
-        await runner.run("git -C \(quote(repo)) worktree add -b \(quote(branch)) \(quote(path))")
+    /// A new linked worktree of `repo` at `path` on a new `branch`, from `base` or else from what
+    /// `repo` has checked out.
+    static func addWorktree(_ path: String, branch: String, from base: String?, of repo: String, on runner: Runner) async -> Ran {
+        await runner.run("git -C \(quote(repo)) worktree add -b \(quote(branch)) \(quote(path))" + (base.map { " " + quote($0) } ?? ""))
     }
 
     /// Removes the linked worktree at `path` of `repo`, keeping its branch.
     static func removeWorktree(_ path: String, of repo: String, force: Bool, on runner: Runner) async -> Ran {
-        await runner.run("git -C \(quote(repo)) worktree remove \(quote(path))\(force ? " --force" : "")")
+        await runner.run("git -C \(shellPath(repo)) worktree remove \(quote(path))\(force ? " --force" : "")")
     }
 }

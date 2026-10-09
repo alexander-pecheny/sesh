@@ -16,13 +16,16 @@ struct StartSessionSheet: View {
     @State private var config = ""
     @State private var parallel = false
     @State private var newBranch = ""
+    /// What the new Worktree branches from, as the repository's branches say.
+    @State private var base: String?
+    @State private var home: String?
     @FocusState private var focused: Bool
 
     private static let other = "\u{0}other"
     private static let none = "\u{0}none"
 
     private var machines: [Machine] { TaskActions.machines(for: task, in: vault) }
-    private var recents: [String] { TaskActions.recentRepos(for: vault.records[task.id] ?? task, on: alias, library: library) }
+    private var recents: [String] { TaskActions.recentRepos(for: vault.records[task.id] ?? task, on: alias, home: home, library: library) }
     private var path: String { typed.trimmingCharacters(in: .whitespacesAndNewlines) }
     private var repo: String? {
         switch choice {
@@ -91,7 +94,7 @@ struct StartSessionSheet: View {
                     }
                 } footer: {
                     Text(parallel
-                        ? "This session works in a Worktree of its own; the Task's stays as it is."
+                        ? "Branches from \(base ?? "what the repository has checked out"). The Task's Worktree stays as it is."
                         : "A Worktree on \(main) is made in the repository the first time.")
                 }
             }
@@ -100,7 +103,15 @@ struct StartSessionSheet: View {
             alias = machines.first?.alias
             choose()
         }
-        .onChange(of: alias) { choose() }
+        .task(id: alias) {
+            home = nil
+            choose()
+            guard let machine else { return }
+            let found = (await machine.run("printf %s \"$HOME\"")).out
+            guard !Task.isCancelled, !found.isEmpty else { return }
+            home = found
+            choose()
+        }
         .task(id: "\(alias ?? "")|\(repo ?? "")|\(parallel)") { await suggest() }
     }
 
@@ -123,6 +134,7 @@ struct StartSessionSheet: View {
         let taken = await Git.branches(of: repo, on: machine)
         guard !Task.isCancelled else { return }
         newBranch = Start.nextBranch(after: main, taken: taken)
+        base = Start.base(after: main, in: taken)
     }
 
     private func start() {

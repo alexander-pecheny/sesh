@@ -24,11 +24,30 @@ enum Start {
     /// A new Worktree of `repo` on `branch`, for one Agent session working beside the Task's own,
     /// in the folder herdr would give it. git makes it rather than herdr, which would open it as a
     /// Workspace of its own; its pane goes in the Task's Workspace instead.
-    static func worktree(_ branch: String, of repo: String, on runner: Runner) async -> Result<Place, Herdr.Failure> {
+    static func worktree(_ branch: String, of repo: String, after main: String, on runner: Runner) async -> Result<Place, Herdr.Failure> {
         let home = (await runner.run("printf %s \"$HOME\"")).out
         let folder = "\(home)/.herdr/worktrees/\((repo as NSString).lastPathComponent)/\(Names.slug(branch))"
-        let ran = await Git.addWorktree(folder, branch: branch, of: repo, on: runner)
+        let base = base(after: main, in: await Git.branches(of: repo, on: runner))
+        let ran = await Git.addWorktree(folder, branch: branch, from: base, of: repo, on: runner)
         return ran.ok ? .success(Place(folder: folder, branch: branch)) : .failure(Herdr.Failure(ran.problem))
+    }
+
+    /// What a new Worktree branches from: the Task's `main` branch where the repository has it, so
+    /// the session carries the Task's work on; nil for what the repository has checked out.
+    static func base(after main: String, in branches: Set<String>) -> String? {
+        branches.contains(main) ? main : nil
+    }
+
+    /// `path` with the machine's `home` folder written as ~, as the user types it.
+    static func abbreviate(_ path: String, home: String?) -> String {
+        guard let home, !home.isEmpty, path == home || path.hasPrefix(home + "/") else { return path }
+        return "~" + path.dropFirst(home.count)
+    }
+
+    /// The repositories to offer, newest first, each once however it was written down.
+    static func recent(_ repos: [String], home: String?) -> [String] {
+        var seen = Set<String>()
+        return repos.map { abbreviate($0, home: home) }.filter { seen.insert($0).inserted }.prefix(8).map { $0 }
     }
 
     /// The branch a new Worktree beside the Task's is offered: the Task's with the first free
