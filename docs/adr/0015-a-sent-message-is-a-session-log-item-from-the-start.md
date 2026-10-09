@@ -23,7 +23,8 @@ open for it to go. An item's state says where the message stands:
 - sent: given to an idle Agent, and not yet shown on its screen.
 - shown: Claude shows it as read. Codex and pi go from sent straight to final.
 - lost: given to the Agent, which sat idle for ten seconds without showing it or writing it to
-  the Transcript. The device offers to send it again or take it back.
+  the Transcript. The device offers to send it again or take it back. A slash command goes
+  instead, since Claude shows commands such as /clear in a form of its own, or not at all.
 - final: the Transcript holds it, as with every other item.
 
 Once the Agent is neither working nor blocked, the follower hands the queue over as one

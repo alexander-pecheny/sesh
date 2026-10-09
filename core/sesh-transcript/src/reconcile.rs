@@ -385,14 +385,18 @@ impl Reconciler {
     }
 
     /// Tells whether the Agent is idle; a message it was given and has not shown after
-    /// `LOST_AFTER` of that is lost.
+    /// `LOST_AFTER` of that is lost. A slash command then simply goes, since Claude shows
+    /// commands such as /clear in a form of its own, or not at all.
     pub fn idle(&mut self, idle: bool, now: Instant) {
         let Some(since) = idle.then(|| *self.idle.get_or_insert(now)) else {
             self.idle = None;
             return;
         };
+        let late = |message: &Message| now.duration_since(since.max(message.at)) >= LOST_AFTER;
+        let command = |message: &Message| message.text.trim_start().starts_with('/') && matches!(message.state, SENT | HANDED | SHOWN);
+        self.messages.retain(|message| !(command(message) && late(message)));
         for message in self.messages.iter_mut().filter(|message| matches!(message.state, SENT | HANDED)) {
-            if now.duration_since(since.max(message.at)) >= LOST_AFTER {
+            if late(message) {
                 (message.state, message.at) = (LOST, now);
             }
         }

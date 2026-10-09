@@ -12,4 +12,5 @@
 "text: one"
 "user: Say two."
 "text: two"
+"user: /compact"
 "user: Are you there?"

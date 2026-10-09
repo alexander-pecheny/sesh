@@ -96,6 +96,8 @@ fn a_message_sent_to_claude_is_one_item_from_the_moment_it_is_sent() {
     assert_eq!((one.0.as_str(), two.0.as_str()), ("final", "final"));
     assert!(one.1 < two.1);
     assert_eq!(states(&messages["sent.g"]), ["sent", "lost"], "a message Claude never takes is lost");
+    assert_eq!(states(&messages["sent.h"]), ["sent", "final"], "a slash command matches the form the Transcript gives it");
+    assert_eq!(states(&messages["sent.i"]), ["sent", "gone"], "a slash command Claude never writes back goes");
 }
 
 #[test]
