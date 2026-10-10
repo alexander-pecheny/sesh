@@ -73,18 +73,21 @@ struct Close {
             _ = await runner(session.body.machine).follower.stop(session.body.pane ?? "")
         }
         let own = { (worktree: Worktree) in worktree.machine == task.body.machine && worktree.path == task.body.path }
+        // herdr closes a Workspace with its last pane, so stopping the Agents may have closed it.
+        let open = await Herdr.workspaces(on: runner(task.body.machine))
+        let workspace = plan.workspace.flatMap { open[$0] != nil ? $0 : nil }
         var failures: [Failure] = []
         for worktree in plan.removed {
             let runner = runner(worktree.machine)
             guard await Git.linked(worktree.path, on: runner) else { continue }
-            let ran = if own(worktree), let workspace = plan.workspace {
+            let ran = if own(worktree), let workspace {
                 await Herdr.removeWorktree(of: workspace, force: discard, on: runner)
             } else {
                 await Git.removeWorktree(worktree.path, of: worktree.repo, force: discard, on: runner)
             }
             if !ran.ok { failures.append(Failure(worktree: worktree, problem: ran.problem)) }
         }
-        if !plan.removed.contains(where: own), let workspace = plan.workspace {
+        if !plan.removed.contains(where: own), let workspace {
             await Herdr.closeWorkspace(workspace, on: runner(task.body.machine))
         }
         return failures
