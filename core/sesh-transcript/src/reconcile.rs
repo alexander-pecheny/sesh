@@ -5,9 +5,10 @@
 use std::time::{Duration, Instant};
 
 use serde_json::{json, Value};
+use unicode_normalization::UnicodeNormalization;
 
 use crate::screen::{command, list_marker, markdown, Block, Kind, Row, View};
-use crate::Entry;
+use crate::{image_path, Entry};
 
 /// A command shows only once the Transcript has had this long to name it.
 const TOOL_DELAY: Duration = Duration::from_millis(500);
@@ -33,6 +34,8 @@ pub const LOST: &str = "lost";
 /// list markers dropped, so the screen's text and the Transcript's compare.
 fn words(markdown: &str) -> String {
     let mut out = String::new();
+    // A Mac passes a message on decomposed, as any process argument, and Claude composes it.
+    let markdown: String = markdown.nfc().collect();
     for line in markdown.lines() {
         // Claude's screen spells a link `text (url)` where the Transcript has `[text](url)`,
         // so addresses count on neither side.
@@ -53,6 +56,22 @@ fn words(markdown: &str) -> String {
         out.extend(rest.chars().filter(|c| c.is_alphanumeric()).flat_map(char::to_lowercase));
     }
     out
+}
+
+/// A message's words, with an image the same word whether the message names its file, as a
+/// device sends it, or Claude's placeholder stands for it, as the Transcript and screen show it.
+fn said_words(text: &str) -> String {
+    let mut plain = String::new();
+    let mut rest = text;
+    while let Some(start) = rest.find("[Image #") {
+        let Some(end) = rest[start..].find(']') else { break };
+        plain.push_str(&rest[..start]);
+        plain.push_str(" image ");
+        rest = &rest[start + end + 1..];
+    }
+    plain.push_str(rest);
+    let lines = plain.lines().map(|line| line.split_whitespace().map(|word| image_path(word).map_or(word, |_| "image")).collect::<Vec<_>>().join(" "));
+    words(&lines.collect::<Vec<_>>().join("\n"))
 }
 
 fn without_urls(line: &str) -> String {
@@ -103,7 +122,7 @@ impl Corpus {
             "tool" => entry.command.clone().or_else(|| entry.description.clone()).unwrap_or_default(),
             _ => entry.text.clone().unwrap_or_default(),
         };
-        list.push(words(&text));
+        list.push(if entry.kind == "user" { said_words(&text) } else { words(&text) });
         if list.len() > CORPUS {
             list.remove(0);
         }
@@ -121,7 +140,7 @@ impl Corpus {
             },
             Kind::Other => return false,
         };
-        let shown = words(&shown);
+        let shown = if block.kind == Kind::User { said_words(&shown) } else { words(&shown) };
         if block.cut {
             let probe = probe(&shown);
             return !probe.is_empty() && list.iter().any(|held| held.contains(probe));
@@ -191,7 +210,7 @@ impl Reconciler {
         self.corpus.learn(entry);
         if entry.kind == "user" {
             let text = entry.text.as_deref().unwrap_or_default();
-            let said = words(text);
+            let said = said_words(text);
             // A message of only emoji has no words to match by.
             let sent = |message: &Message| covers(&said, &message.words) || message.words.is_empty() && message.text.trim() == text.trim();
             let at = self.messages.iter().position(|message| message.state != QUEUED && sent(message))?;
@@ -348,7 +367,7 @@ impl Reconciler {
 
     /// Takes a message a device sent, or a new state for one held.
     pub fn message(&mut self, id: &str, text: &str, state: &'static str, now: Instant) {
-        let message = Message { id: id.into(), text: text.into(), words: words(text), state, at: now };
+        let message = Message { id: id.into(), text: text.into(), words: said_words(text), state, at: now };
         match self.messages.iter_mut().find(|held| held.id == id) {
             Some(held) => *held = message,
             None => self.messages.push(message),
@@ -451,12 +470,12 @@ fn shows(text: &str, cut: bool, message: &Message) -> bool {
     let mut rest = text;
     while let Some(start) = rest.find("[Pasted text #") {
         let Some(end) = rest[start..].find(']').map(|end| start + end) else { break };
-        parts.push(words(&rest[..start]));
+        parts.push(said_words(&rest[..start]));
         let more = rest[start..end].split(" +").nth(1).and_then(|count| count.trim_end_matches(" lines").parse::<usize>().ok());
         lines = Some(lines.unwrap_or(0) + more.unwrap_or(0));
         rest = &rest[end + 1..];
     }
-    parts.push(words(rest));
+    parts.push(said_words(rest));
     let Some(lines) = lines else {
         let shown = &parts[0];
         return !shown.is_empty() && match cut {

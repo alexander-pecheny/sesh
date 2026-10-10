@@ -51,10 +51,7 @@ final class FollowerLink {
     }
 
     /// A message under the id the device gave it, which the follower's item for it keeps (ADR 0015).
-    /// It goes composed, as Claude writes it to the Transcript, so the follower can match the two.
-    func send(_ text: String, id: String, to session: String) async -> String? {
-        await ask("send", session, [id, text.precomposedStringWithCanonicalMapping])
-    }
+    func send(_ text: String, id: String, to session: String) async -> String? { await ask("send", session, [id, text]) }
     /// Takes back a message the Agent was not given, or did not take.
     func unqueue(_ id: String, in session: String) async -> String? { await ask("unqueue", session, [id]) }
     /// Gives the queued messages to the Agent now.

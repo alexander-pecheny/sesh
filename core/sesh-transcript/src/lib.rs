@@ -566,19 +566,16 @@ fn first_line(text: &str) -> String {
 }
 
 fn image_paths(text: &str) -> Vec<String> {
-    text.split_whitespace()
-        .map(|word| word.trim_matches(|c: char| "'\"`()[]<>,;".contains(c)))
-        .filter(|word| word.starts_with('/') || word.starts_with("~/"))
-        .filter(|word| {
-            word.rsplit_once('.').is_some_and(|(_, ext)| {
-                matches!(
-                    ext.to_ascii_lowercase().as_str(),
-                    "png" | "jpg" | "jpeg" | "gif" | "webp" | "heic" | "heif"
-                )
-            })
-        })
-        .map(str::to_string)
-        .collect()
+    text.split_whitespace().filter_map(image_path).map(str::to_string).collect()
+}
+
+/// The image file a word of a message names, its quotes and brackets dropped.
+fn image_path(word: &str) -> Option<&str> {
+    let word = word.trim_matches(|c: char| "'\"`()[]<>,;".contains(c));
+    let image = word.rsplit_once('.').is_some_and(|(_, ext)| {
+        matches!(ext.to_ascii_lowercase().as_str(), "png" | "jpg" | "jpeg" | "gif" | "webp" | "heic" | "heif")
+    });
+    ((word.starts_with('/') || word.starts_with("~/")) && image).then_some(word)
 }
 
 fn diff_counts(diff: &str) -> (usize, usize) {
