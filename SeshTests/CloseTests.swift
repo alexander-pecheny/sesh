@@ -39,6 +39,7 @@ private final class Box: Runner {
             return ran
         }
         if command.contains(" worktree remove ") { return remove(args[1], force: force) }
+        if command.contains(" stop ") { workspaces[String(args[0].prefix { $0 != ":" })] = nil }
         return Ran(status: 0, out: "", err: "")
     }
 
@@ -172,6 +173,15 @@ final class CloseTests: XCTestCase {
         let second = await close.perform(plan, discard: false)
         XCTAssertEqual(first + second, [])
         XCTAssertEqual(removals, ["herdr worktree remove --workspace 'w1'", "git -C '/src/lib' worktree remove '/src/lib-fix'"])
+    }
+
+    func testTheWorktreeIsRemovedWhenStoppingItsAgentClosedTheWorkspace() async {
+        mac.linked = ["/src/app-fix"]
+        mac.workspaces = ["w1": "/src/app-fix"]
+        let close = close(task(path: "/src/app-fix"), [session("w1", repo: "/src/app", path: "/src/app-fix")])
+        let failures = await close.perform(await close.plan(), discard: false)
+        XCTAssertEqual(failures, [])
+        XCTAssertEqual(removals, ["git -C '/src/app' worktree remove '/src/app-fix'"])
     }
 
     func testANewWorktreeOfARepositoryWithoutTheTasksBranchStartsFromItsCheckout() async {
