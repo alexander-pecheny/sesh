@@ -172,3 +172,13 @@ fn a_restarted_follower_keeps_its_rows_apart_from_the_last_ones() {
     std::fs::remove_dir_all(&dir).unwrap();
     assert_eq!(rows, [("u1".into(), true), ("t1".into(), true), ("u2".into(), true), ("t2".into(), true)]);
 }
+
+#[test]
+fn a_message_matches_its_entry_however_its_letters_or_images_are_spelled() {
+    let now = Instant::now();
+    let mut live = Reconciler::default();
+    live.message("sent.1", "на\u{0438}\u{0306}ти данные", SENT, now);
+    live.message("sent.2", "'/Users/me/.sesh/uploads/pasted-2026-10-10T131849.png' look", SENT, now);
+    assert_eq!(live.deliver(&said("user", "на\u{0439}ти данные"), now), Some("sent.1".into()));
+    assert_eq!(live.deliver(&said("user", "[Image #3] look"), now), Some("sent.2".into()));
+}
