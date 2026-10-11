@@ -213,8 +213,12 @@ impl Reconciler {
             let said = said_words(text);
             // A message of only emoji has no words to match by.
             let sent = |message: &Message| covers(&said, &message.words) || message.words.is_empty() && message.text.trim() == text.trim();
-            let at = self.messages.iter().position(|message| message.state != QUEUED && sent(message))?;
-            return Some(self.messages.remove(at).id);
+            // Claude puts a dropped turn's prompt back in its input box, ahead of the next message.
+            let after = |message: &Message| message.state != QUEUED && !message.words.is_empty() && said.ends_with(&message.words);
+            let at = self.messages.iter().position(|message| message.state != QUEUED && sent(message) || after(message))?;
+            let id = self.messages.remove(at).id;
+            self.messages.retain(|message| !after(message));
+            return Some(id);
         }
         let held = match entry.kind {
             "text" => words(entry.text.as_deref().unwrap_or_default()),
@@ -549,6 +553,8 @@ pub enum Change {
     Show(String, Value),
     /// A provisional row the Transcript never held.
     Drop(String),
+    /// The row holding a Transcript entry the Agent dropped.
+    Forget(String),
     /// A Transcript entry rewriting the provisional row that showed it.
     Rewrite { id: String, entry: String, body: Value },
     /// A message the Agent took, which only now finds its place: after every row but the

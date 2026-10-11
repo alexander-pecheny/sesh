@@ -284,6 +284,9 @@ struct SessionLog {
                 add(entry, now: now)
             }
             rebuild()
+        case "dropped":
+            items = items.filter { $0.value.entry.id != line.id }
+            rebuild()
         case "live":
             status = line.status ?? ""
             items = items.filter { $0.value.final }

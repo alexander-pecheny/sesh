@@ -174,6 +174,37 @@ fn a_restarted_follower_keeps_its_rows_apart_from_the_last_ones() {
 }
 
 #[test]
+fn a_message_sent_after_a_dropped_turn_takes_the_prompt_that_carries_both() {
+    let dir = std::env::temp_dir().join(format!("sesh-dropped-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let log = Log::open(&dir.join("sessions.db")).unwrap();
+    let mut writer = Writer::new("p1", &log).unwrap();
+    let now = Instant::now();
+    let mut live = Reconciler::default();
+    let entry = |id: &str, text: &str| Entry { id: id.into(), ..said("user", text) };
+    let deliver = |live: &mut Reconciler, entry: Entry| Event::Entry { replaces: live.deliver(&entry, now), entry };
+    live.message("sent.1", "lets do it", SENT, now);
+    let first = deliver(&mut live, entry("u1", "lets do it"));
+    live.message("sent.2", "and log everything", SENT, now);
+    let both = deliver(&mut live, entry("u2", "lets do itand log everything"));
+    writer.apply(&log, &[first, Event::Dropped("u1".into()), both, Event::Live(live.shown(now))], None).unwrap();
+    let rows: Vec<(String, String)> = log.last("p1", usize::MAX).unwrap().iter()
+        .map(|row| (row["id"].as_str().unwrap().into(), row["entry"]["text"].as_str().unwrap().into())).collect();
+    std::fs::remove_dir_all(&dir).unwrap();
+    assert_eq!(rows, [("sent.2".to_string(), "lets do itand log everything".to_string())]);
+}
+
+#[test]
+fn both_messages_take_the_prompt_when_claude_put_the_first_back_unread() {
+    let now = Instant::now();
+    let mut live = Reconciler::default();
+    live.message("sent.1", "lets do it", SENT, now);
+    live.message("sent.2", "and log everything", SENT, now);
+    assert_eq!(live.deliver(&said("user", "lets do itand log everything"), now), Some("sent.1".into()));
+    assert!(live.shown(now).items.is_empty());
+}
+
+#[test]
 fn a_message_matches_its_entry_however_its_letters_or_images_are_spelled() {
     let now = Instant::now();
     let mut live = Reconciler::default();

@@ -185,6 +185,11 @@ pub(crate) trait Parse {
         shown.iter().find(|entry| entry.id == id)
     }
 
+    /// The entries the Agent dropped since this was last asked, already gone from `out`.
+    fn dropped(&mut self) -> Vec<String> {
+        Vec::new()
+    }
+
     /// Whether the Agent's last reply ended its turn.
     fn turn_over(&self) -> bool {
         false

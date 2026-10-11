@@ -106,6 +106,8 @@ pub enum Event {
     Entry { entry: Entry, replaces: Option<String> },
     Live(Shown),
     Switch { reason: String, transcript: String },
+    /// A Transcript entry the Agent dropped, as Claude drops a turn interrupted before it replied.
+    Dropped(String),
     State(String),
     Background(Value),
     Cursor(String),
@@ -128,6 +130,7 @@ impl Event {
             }
             Event::Live(shown) => json!({"t": "live", "items": shown.items, "status": shown.status}),
             Event::Switch { reason, transcript } => json!({"t": "switch", "reason": reason, "transcript": transcript}),
+            Event::Dropped(id) => json!({"t": "dropped", "id": id}),
             Event::State(state) => json!({"t": "state", "state": state}),
             Event::Background(tasks) => json!({"t": "background", "tasks": tasks}),
             Event::Cursor(cursor) => json!({"t": "cursor", "cursor": cursor}),
@@ -354,6 +357,7 @@ impl Follower {
             transcript.entries.drain(..drop);
         }
         let mark = transcript.entries.len();
+        let last = transcript.entries.last().map(|entry| entry.id.clone());
         if transcript.read(None).map_err(|err| err.to_string())? {
             let path = transcript.path.to_string_lossy().into_owned();
             self.emit(Event::Switch { reason: "fork".into(), transcript: path })?;
@@ -361,6 +365,12 @@ impl Follower {
             self.transcript = Some(transcript);
             let start = entries.len().saturating_sub(self.last);
             return self.send(&entries[..start], &entries[start..]);
+        }
+        let dropped = transcript.dropped();
+        // Only the last entry can be dropped, so the new ones start one earlier when it was held.
+        let mark = if last.is_some_and(|last| dropped.contains(&last)) { mark - 1 } else { mark };
+        for id in dropped {
+            self.emit(Event::Dropped(id))?;
         }
         slim(&mut transcript.entries[mark..]);
         let entries = transcript.entries[mark..].to_vec();
