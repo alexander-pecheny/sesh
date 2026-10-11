@@ -25,7 +25,7 @@ struct StartSessionSheet: View {
     private static let none = "\u{0}none"
 
     private var machines: [Machine] { TaskActions.machines(for: task, in: vault) }
-    private var recents: [String] { TaskActions.recentRepos(for: vault.records[task.id] ?? task, on: alias, home: home, library: library) }
+    private var recents: [String] { TaskActions.recentRepos(for: vault.records[task.id] ?? task, on: alias, home: home, in: vault, library: library) }
     private var path: String { typed.trimmingCharacters(in: .whitespacesAndNewlines) }
     private var repo: String? {
         switch choice {
@@ -100,7 +100,7 @@ struct StartSessionSheet: View {
             }
         }
         .onAppear {
-            alias = machines.first?.alias
+            alias = TaskActions.lastMachine(for: vault.records[task.id] ?? task, in: vault, library: library)?.alias
             choose()
         }
         .task(id: alias) {

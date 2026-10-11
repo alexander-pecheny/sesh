@@ -195,6 +195,10 @@ impl Log {
         match change {
             Change::Show(id, body) => self.put_item(session, &id, None, false, None, &body),
             Change::Drop(id) => self.drop_item(session, &id),
+            Change::Forget(entry) => match self.item_of(session, &entry)? {
+                Some(id) => self.drop_item(session, &id),
+                None => Ok(()),
+            },
             Change::Rewrite { id, entry, body } => self.put_item(session, &id, None, true, Some(&entry), &body),
             Change::Taken { id, entry, body, waiting } => {
                 let mut later = self.items("WHERE session = ?1 AND gone = 0 AND ord >= ?2 ORDER BY ord DESC", params![session, self.ord_of(session, &id)?])?;
@@ -265,6 +269,18 @@ impl Log {
     /// Every item of `session` written after `seq`, oldest write first, as `item` lines.
     pub fn items_since(&self, session: &str, seq: i64) -> Result<Vec<Value>> {
         self.items("WHERE session = ?1 AND seq > ?2 ORDER BY seq", params![session, seq])
+    }
+
+    /// How many items of `session` were written after `seq`, counting no further than `limit`.
+    pub fn count_since(&self, session: &str, seq: i64, limit: usize) -> Result<usize> {
+        self.db
+            .query_row(
+                "SELECT COUNT(*) FROM (SELECT 1 FROM items WHERE session = ?1 AND seq > ?2 LIMIT ?3)",
+                params![session, seq, limit as i64],
+                |row| row.get::<_, i64>(0),
+            )
+            .map(|count| count as usize)
+            .map_err(sql)
     }
 
     /// Up to `limit` items of `session` before `ord`, in order.
@@ -362,6 +378,7 @@ impl Writer {
                 self.summary["status"] = shown.status.clone().into();
                 return self.rows.show(&shown.items);
             }
+            Event::Dropped(entry) => return vec![Change::Forget(entry.clone())],
             Event::Switch { reason, transcript } => {
                 self.summary["transcript"] = transcript.clone().into();
                 return vec![self.rows.switch(reason, transcript)];

@@ -141,11 +141,18 @@ enum TaskActions {
         }
     }
 
-    /// The repositories a new session of the Task may want on `machine`, the Task's own last
-    /// used first, then the newest used anywhere.
-    static func recentRepos(for task: Record, on machine: String?, home: String?, library: Library) -> [String] {
-        let sessions = library.vaults.flatMap { $0.all(.session) }.filter { $0.body.machine == machine }
-            .sorted { ($0.body.position ?? 0) > ($1.body.position ?? 0) }
+    /// The machine a new session of the Task starts on: the one used last by the Task, then
+    /// by its folder, then anywhere.
+    static func lastMachine(for task: Record, in vault: Vault, library: Library) -> Machine? {
+        let options = machines(for: task, in: vault)
+        let used = Tree.nearest(library.vaults.flatMap { $0.all(.session) }, to: task, in: vault).lazy.map { machine($0.body.machine) }
+        return used.first(where: options.contains) ?? options.first
+    }
+
+    /// The repositories a new session of the Task may want on `machine`: the Task's own last
+    /// used first, then its folder's, then the newest used anywhere.
+    static func recentRepos(for task: Record, on machine: String?, home: String?, in vault: Vault, library: Library) -> [String] {
+        let sessions = Tree.nearest(library.vaults.flatMap { $0.all(.session) }, to: task, in: vault).filter { $0.body.machine == machine }
         let mine = sessions.filter { $0.body.task == task.id }.compactMap(\.body.repo)
         let tasks = library.vaults.flatMap { $0.all(.task) }.filter { $0.body.machine == machine }
         let own = task.body.machine == machine ? [task.body.repo].compactMap { $0 } : []

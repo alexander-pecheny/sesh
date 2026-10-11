@@ -41,6 +41,9 @@ pub(super) struct Parser {
     turn_over: bool,
     /// Claude writes a slash command twice, plain and wrapped, under one prompt.
     prompt: Option<String>,
+    /// The last prompt typed, as the line it follows and its entry, while nothing came after it.
+    typed: Option<(String, String)>,
+    dropped: Vec<String>,
     questions: HashMap<String, String>,
     hidden_results: HashSet<String>,
     tasks: Vec<(String, String)>,
@@ -54,6 +57,10 @@ impl super::Parse for Parser {
 
     fn fresh(&self) -> Box<dyn super::Parse> {
         Box::new(Self::new(self.subagent))
+    }
+
+    fn dropped(&mut self) -> Vec<String> {
+        std::mem::take(&mut self.dropped)
     }
 
     fn turn_over(&self) -> bool {
@@ -146,7 +153,18 @@ impl Parser {
                 if let Some(text) = typed_text(&block_text(content)) {
                     self.turn_over = false;
                     self.prompt = prompt;
-                    out.push(Entry::user(ids.next(), at, text, Vec::new()));
+                    let parent = line["parentUuid"].as_str().map(str::to_string);
+                    // A turn interrupted before its first reply is dropped, its prompt put back
+                    // in the input box, so the next prompt follows the same line in its place.
+                    if let Some((before, id)) = self.typed.take() {
+                        if parent.as_ref() == Some(&before) && out.last().is_some_and(|last| last.id == id) {
+                            out.pop();
+                            self.dropped.push(id);
+                        }
+                    }
+                    let entry = Entry::user(ids.next(), at, text, Vec::new());
+                    self.typed = parent.map(|parent| (parent, entry.id.clone()));
+                    out.push(entry);
                 }
             }
             Some("assistant") => {

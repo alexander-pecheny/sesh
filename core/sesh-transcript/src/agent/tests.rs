@@ -149,3 +149,23 @@ fn permission_lines_name_the_command_or_file() {
         "/home/u/notes.txt"
     );
 }
+
+#[test]
+fn a_prompt_claude_put_back_before_replying_gives_way_to_the_one_that_carries_it() {
+    let scratch = Scratch::new("dropped");
+    let prompt = |uuid: &str, parent: &str, text: &str| {
+        json!({"type": "user", "uuid": uuid, "parentUuid": parent, "promptId": uuid, "timestamp": AT, "origin": {"kind": "human"}, "message": {"role": "user", "content": text}})
+    };
+    let reply = json!({"type": "assistant", "uuid": "r1", "parentUuid": "u1", "timestamp": AT, "message": {"stop_reason": "end_turn", "content": [{"type": "text", "text": "Which one?"}]}});
+    let first = [prompt("u1", "r0", "Pick one"), reply, prompt("u2", "r1", "do it")];
+    let path = scratch.write("dropped.jsonl", &first);
+    let mut transcript = Transcript::new(Agent::Claude, &path);
+    transcript.read(None).unwrap();
+    let held = transcript.entries.last().unwrap().id.clone();
+    scratch.write("dropped.jsonl", &[&first[..], &[prompt("u3", "r1", "do itand log it")]].concat());
+    transcript.read(None).unwrap();
+    let texts: Vec<_> = transcript.entries.iter().map(|entry| entry.text.clone().unwrap_or_default()).collect();
+    assert_eq!(texts, ["Pick one", "Which one?", "do itand log it"]);
+    assert_eq!(transcript.dropped(), [held]);
+    assert!(transcript.dropped().is_empty());
+}

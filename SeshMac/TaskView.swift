@@ -35,6 +35,9 @@ struct TaskView: View {
                     .help("New Tab")
                 }
                 Spacer()
+                if case .session(let session) = current, let record = vault.records[session], record.body.pane != nil, !library.ended(record) {
+                    FaceSwitch(session: session).padding(.horizontal, Metric.gap)
+                }
                 if let task = vault.records[id], let worktree = current.worktree(of: task, in: vault) {
                     Label("\(worktree.branch) on \(TaskActions.machine(worktree.machine).title)", systemImage: "arrow.triangle.branch")
                         .font(.caption).foregroundStyle(.secondary).lineLimit(1)
@@ -193,20 +196,6 @@ private struct SessionTab: View {
 
     private var terminal: Bool { library.terminalFace.contains(id) }
 
-    /// A quiet switch: the chosen face is only a shade lighter, as the Tabs above are.
-    private func face(_ title: String, selected: Bool, choose: @escaping () -> Void) -> some View {
-        Button(action: choose) {
-            Text(title)
-                .font(.ui(Metric.caption))
-                .foregroundStyle(selected ? .primary : .secondary)
-                .padding(.horizontal, Metric.pad)
-                .padding(.vertical, Metric.tiny)
-                .background(selected ? Color.primary.opacity(0.12) : .clear, in: .capsule)
-                .contentShape(.capsule)
-        }
-        .buttonStyle(.plain)
-    }
-
     var body: some View {
         // The Conversation stays laid out under the terminal, so coming back costs no layout.
         ZStack {
@@ -227,25 +216,43 @@ private struct SessionTab: View {
             }
         }
         .frame(minWidth: 420, maxWidth: .infinity, minHeight: 300, maxHeight: .infinity)
-        .overlay(alignment: .topTrailing) {
-            if conversation?.pane != nil { faces }
-        }
         .loadsConversation($conversation, of: id, in: vault, library: library)
     }
+}
 
-    private var faces: some View {
+/// Whether an Agent session's Tab shows its Conversation or its own terminal, quiet as the
+/// Tabs beside it: the chosen face is only a shade lighter.
+private struct FaceSwitch: View {
+    @EnvironmentObject private var library: Library
+    let session: String
+
+    private var terminal: Bool { library.terminalFace.contains(session) }
+
+    var body: some View {
         HStack(spacing: 2) {
-            face("Chat", selected: !terminal) { library.terminalFace.remove(id) }
-            face("Terminal", selected: terminal) { library.terminalFace.insert(id) }
+            face("Chat", selected: !terminal) { library.terminalFace.remove(session) }
+            face("Terminal", selected: terminal) { library.terminalFace.insert(session) }
         }
         .padding(2)
-        .background(.regularMaterial, in: .capsule)
-        .padding(Metric.gap)
+        .background(Color.primary.opacity(0.05), in: .capsule)
         .background {
-            Button("") { if terminal { library.terminalFace.remove(id) } else { library.terminalFace.insert(id) } }
+            Button("") { if terminal { library.terminalFace.remove(session) } else { library.terminalFace.insert(session) } }
                 .keyboardShortcut("t", modifiers: [.command, .shift])
                 .hidden()
         }
         .help("Switch between the chat and the Agent's own terminal (⇧⌘T)")
+    }
+
+    private func face(_ title: String, selected: Bool, choose: @escaping () -> Void) -> some View {
+        Button(action: choose) {
+            Text(title)
+                .font(.ui(Metric.caption))
+                .foregroundStyle(selected ? .primary : .secondary)
+                .padding(.horizontal, Metric.pad)
+                .padding(.vertical, 1)
+                .background(selected ? Color.primary.opacity(0.12) : .clear, in: .capsule)
+                .contentShape(.capsule)
+        }
+        .buttonStyle(.plain)
     }
 }

@@ -132,6 +132,22 @@ final class SessionLogTests: XCTestCase {
         XCTAssertTrue(reopened.earlier)
     }
 
+    /// A resume is caught up when the follower says `synced`, a fresh open as soon as it says `opened`.
+    func testSyncingEndsWhenTheFollowerSaysItIsCaughtUp() {
+        var resumed = SessionLog()
+        resumed.syncing = true
+        [hello, item("new", ord: 3, seq: 12, text: "new")].forEach { resumed.feed($0) }
+        XCTAssertTrue(resumed.syncing)
+        resumed.feed(#"{"t":"synced","session":"w1:p1"}"#)
+        XCTAssertFalse(resumed.syncing)
+
+        var reopened = SessionLog()
+        reopened.syncing = true
+        [hello, #"{"t":"opened","session":"w1:p1","seq":7}"#].forEach { reopened.feed($0) }
+        XCTAssertFalse(reopened.syncing)
+        XCTAssertEqual(reopened.hellos, 1)
+    }
+
     func testAnUnknownProtocolIsAProblem() {
         var log = SessionLog()
         log.feed(hello)
@@ -220,5 +236,7 @@ final class SessionLogTests: XCTestCase {
         log.page(#"{"t":"entry","id":"u0","kind":"user","summary":"before","text":"before"}"# + "\n" + #"{"t":"history","more":false}"#)
         XCTAssertEqual(log.rows.first?.id, "u0")
         XCTAssertFalse(log.earlier)
+        log.feed(#"{"t":"dropped","id":"u1"}"#)
+        XCTAssertEqual(log.rows.map(\.id), ["u0", "live.1", "q1"])
     }
 }

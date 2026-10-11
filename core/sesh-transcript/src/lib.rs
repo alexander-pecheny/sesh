@@ -445,6 +445,11 @@ impl Transcript {
         branched
     }
 
+    /// The entries the Agent dropped since this was last asked, already gone from `entries`.
+    pub fn dropped(&mut self) -> Vec<String> {
+        self.parser.dropped()
+    }
+
     /// Whether the Agent's last reply ended its turn.
     pub fn turn_over(&self) -> bool {
         self.parser.turn_over()

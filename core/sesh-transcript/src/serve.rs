@@ -512,16 +512,26 @@ impl Client {
                     self.send(&summary);
                 }
                 let since = request["since"].as_i64().unwrap_or(0);
-                if since > 0 && (machine.log.base()?..=machine.log.head()?).contains(&since) {
-                    self.watched.insert(session, since);
+                // After a long gap the newest items come first and the device pages back for the rest.
+                let resumes = since > 0
+                    && (machine.log.base()?..=machine.log.head()?).contains(&since)
+                    && machine.log.count_since(&session, since, OPENING + 1)? <= OPENING;
+                if resumes {
+                    let mut seen = since;
+                    for line in machine.log.items_since(&session, since)? {
+                        seen = line["seq"].as_i64().unwrap_or(seen);
+                        self.send(&line);
+                    }
+                    self.watched.insert(session.clone(), seen);
                 } else {
                     let head = machine.log.head()?;
                     for line in machine.log.last(&session, OPENING)? {
                         self.send(&line);
                     }
                     self.send(&json!({"t": "opened", "session": session, "seq": head}));
-                    self.watched.insert(session, head);
+                    self.watched.insert(session.clone(), head);
                 }
+                self.send(&json!({"t": "synced", "session": session}));
             }
             "unwatch" => drop(self.watched.remove(&session)),
             "page" => {
@@ -838,6 +848,34 @@ mod tests {
             self.0.lock().unwrap().push(input.clone());
             Ok(())
         }
+    }
+
+    #[test]
+    fn a_device_back_after_a_long_gap_gets_the_newest_items_afresh() {
+        let dir = std::env::temp_dir().join(format!("sesh-gap-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let mut machine = Machine::new(Log::open(&dir.join("sessions.db")).unwrap(), Shared(Rc::new(RefCell::new(Quiet))));
+        let put = |log: &Log, from: usize, count: usize| {
+            for n in from..from + count {
+                log.put_item("w1:p1", &format!("i{n}"), None, true, None, &json!({"kind": "assistant", "text": n.to_string()})).unwrap();
+            }
+        };
+        put(&machine.log, 0, 1);
+        let held = machine.log.head().unwrap();
+        let watch = |machine: &mut Machine| {
+            let mut client = Client::new(UnixStream::pair().unwrap().0);
+            client.request(machine, &json!({"op": "watch", "session": "w1:p1", "since": held})).unwrap();
+            let lines: Vec<Value> = String::from_utf8(client.write).unwrap().lines().map(|line| serde_json::from_str(line).unwrap()).collect();
+            lines.iter().map(|line| line["t"].as_str().unwrap().to_string()).collect::<Vec<_>>()
+        };
+        put(&machine.log, 1, 2);
+        let short = watch(&mut machine);
+        put(&machine.log, 3, OPENING);
+        let long = watch(&mut machine);
+        std::fs::remove_dir_all(&dir).unwrap();
+        assert_eq!(short, ["item", "item", "synced"]);
+        assert_eq!(long.len(), OPENING + 2);
+        assert_eq!(long[OPENING..], ["opened", "synced"]);
     }
 
     #[test]

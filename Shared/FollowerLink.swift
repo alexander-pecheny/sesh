@@ -26,10 +26,11 @@ final class FollowerLink {
     }
 
     /// One session's Session log, its items from the last number `seq` says is held.
-    func watch(_ session: String, from seq: @escaping () -> Int, line: @escaping (String) -> Void,
-               problem: @escaping (String) -> Void) async {
+    /// `attaching` is told each time, the first included, before the follower is asked again.
+    func watch(_ session: String, from seq: @escaping () -> Int, attaching: @escaping () -> Void = {},
+               line: @escaping (String) -> Void, problem: @escaping (String) -> Void) async {
         await keep({ "\(Helper.path) attach --watch \(quote(seq() > 0 ? "\(session):\(seq())" : session))" },
-                   problem: problem, line: line) { ended in
+                   attaching: attaching, problem: problem, line: line) { ended in
             if ended.status > 0, !ended.problem.isEmpty { problem(ended.problem) }
             return false
         }
@@ -85,9 +86,11 @@ final class FollowerLink {
     /// Runs `command` again after every drop until the calling task is cancelled or `ended`
     /// says the stream is over, waiting longer each time the machine did not answer.
     private func keep(_ command: @escaping () -> String, follower: Bool = true, hello: @escaping () -> Void = {},
-                      problem: @escaping (String) -> Void, line: @escaping (String) -> Void, ended: (Ran) -> Bool) async {
+                      attaching: () -> Void = {}, problem: @escaping (String) -> Void, line: @escaping (String) -> Void,
+                      ended: (Ran) -> Bool) async {
         var wait = pause
         while !Task.isCancelled {
+            attaching()
             _ = await machine.prepare()
             var heard = false, refused = false
             let ran = await machine.stream(command()) { text in

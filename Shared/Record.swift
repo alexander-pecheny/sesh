@@ -33,6 +33,8 @@ struct Record: Codable, Identifiable, Equatable {
         var transcripts: [String]?
         var of: String?
         var kind: String?
+        /// The Tabs a Task's strip shows on every device, in order.
+        var tabs: [TabItem]?
     }
 
     let id: String

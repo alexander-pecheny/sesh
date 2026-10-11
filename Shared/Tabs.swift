@@ -20,6 +20,21 @@ enum TabItem: Hashable, Identifiable, Codable {
         }
     }
 
+    /// Whether every device shows the Tab; a subagent's is opened from its parent on one device.
+    var shared: Bool {
+        if case .subagent = self { false } else { true }
+    }
+
+    /// A Terminal or a file on the Mac, which the phone cannot reach.
+    @MainActor
+    func onMac(in vault: some Records) -> Bool {
+        switch self {
+        case .terminal(let id): vault.records[id].map { $0.body.machine == nil } ?? false
+        case .document(let id): vault.records[id].map { $0.body.machine == nil && $0.body.path != nil } ?? false
+        case .journal, .session, .subagent: false
+        }
+    }
+
     var icon: String {
         switch self {
         case .journal: "book"
@@ -133,5 +148,27 @@ struct NewTabMenu {
                     reopen("Ended Agent sessions", sessions.filter(ended)),
                     reopen("Documents", documents)]
             .filter { !$0.items.isEmpty }
+    }
+}
+
+/// A Task's open Tabs, kept in one record of its Vault so every device shows the same ones.
+@MainActor
+enum Strip {
+    static func id(of task: String) -> String { "strip-" + task }
+
+    static func tabs(of task: String, in vault: some Records) -> [TabItem]? {
+        vault.records[id(of: task)].flatMap { $0.deleted ? nil : $0.body.tabs }
+    }
+
+    /// Records `tabs` for the Task unless the Vault already holds them.
+    static func keep(_ tabs: [TabItem], of task: String, in vault: some Records) {
+        let shared = tabs.filter(\.shared)
+        guard Self.tabs(of: task, in: vault) != shared, vault.records[id(of: task)] != nil || !shared.isEmpty else { return }
+        vault.write(Record(id: id(of: task), kind: .tab, body: .init(task: task, kind: "strip", tabs: shared)))
+    }
+
+    /// The strip after another device changed it: its Tabs, then the ones only this device has.
+    static func merge(_ tabs: [TabItem], into local: [TabItem]) -> [TabItem] {
+        tabs + local.filter { !$0.shared }
     }
 }

@@ -9,7 +9,8 @@ struct TaskScreen: View {
     @State private var sheet: TaskSheet?
 
     private var flavour: Catppuccin.Flavour { colorScheme == .dark ? .mocha : .latte }
-    private var tabs: [TabItem] { [.journal] + (library.tabs[id] ?? []) }
+    /// The Mac's own Terminals and files stay on its strip, out of reach here.
+    private var tabs: [TabItem] { [.journal] + (library.tabs[id] ?? []).filter { !$0.onMac(in: vault) } }
     private var current: TabItem { library.current[id] ?? .journal }
 
     var body: some View {
