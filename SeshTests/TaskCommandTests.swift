@@ -178,6 +178,20 @@ final class TaskCommandTests: XCTestCase {
         XCTAssertNil(TabItem.terminal(home.id).worktree(of: task, in: vault))
     }
 
+    func testANewSessionTakesAfterItsTaskThenItsFolderThenAnywhere() {
+        let work = make(.folder, "Work")
+        let inner = make(.folder, "Inner", parent: work.id)
+        let task = make(.task, "New", parent: work.id)
+        let sibling = make(.task, "Sibling", parent: inner.id)
+        let elsewhere = make(.task, "Elsewhere")
+        let newest = make(.session, "newest", task: elsewhere.id, position: 30)
+        let folder = make(.session, "folder", task: sibling.id, position: 20)
+        let own = make(.session, "own", task: task.id, position: 10)
+        let order = Tree.nearest([newest, folder, own], to: task, in: vault).map(\.id)
+        XCTAssertEqual(order, [own.id, folder.id, newest.id])
+        XCTAssertEqual(Tree.nearest([newest, folder], to: sibling, in: vault).map(\.id), [folder.id, newest.id])
+    }
+
     func testRecentRepositoriesShowHomeAsATildeAndEachOnce() {
         let repos = ["/Users/me/src/app", "~/src/app", "/opt/lib", "/Users/me", "/Users/meg/x"]
         XCTAssertEqual(Start.recent(repos, home: "/Users/me"), ["~/src/app", "/opt/lib", "~", "/Users/meg/x"])
