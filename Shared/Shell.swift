@@ -76,7 +76,10 @@ enum Helper {
         guard let published, let sha = published.sha256[name] else { return nil }
         let url = quote(published.url + "sesh-transcript-\(name).gz")
         let check = "echo '\(sha)  '\(gz) | { sha256sum -c - || shasum -a 256 -c -; } >/dev/null 2>&1"
-        return "mkdir -p ~/.sesh/bin && { curl -fsSL \(url) -o \(gz) || wget -qO \(gz) \(url); } && \(check) && \(unpack)"
+        // A stalled download would hold up every Conversation on the machine, so it gives up
+        // and the device fetches the helper instead.
+        let fetch = "curl -fsSL --connect-timeout 10 --max-time 60 \(url) -o \(gz) || wget -qT 30 -t 1 -O \(gz) \(url)"
+        return "mkdir -p ~/.sesh/bin && { \(fetch); } && \(check) && \(unpack)"
     }
 }
 
