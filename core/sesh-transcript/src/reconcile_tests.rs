@@ -213,3 +213,22 @@ fn a_message_matches_its_entry_however_its_letters_or_images_are_spelled() {
     assert_eq!(live.deliver(&said("user", "на\u{0439}ти данные"), now), Some("sent.1".into()));
     assert_eq!(live.deliver(&said("user", "[Image #3] look"), now), Some("sent.2".into()));
 }
+
+#[test]
+fn an_entry_lands_after_the_final_rows_below_a_message_left_unmatched() {
+    let dir = std::env::temp_dir().join(format!("sesh-straggler-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let log = Log::open(&dir.join("sessions.db")).unwrap();
+    let body = |id: &str| json!({"id": id});
+    for change in [
+        Change::Show("sent.1".into(), body("sent.1")),
+        Change::Show("live.1".into(), body("live.1")),
+        Change::Rewrite { id: "live.1".into(), entry: "t1".into(), body: body("t1") },
+        Change::Land { id: "t2".into(), entry: Some("t2".into()), body: body("t2") },
+    ] {
+        log.change("p1", change).unwrap();
+    }
+    let rows: Vec<(String, i64)> = log.last("p1", usize::MAX).unwrap().iter().map(|row| (row["id"].as_str().unwrap().into(), row["ord"].as_i64().unwrap())).collect();
+    std::fs::remove_dir_all(&dir).unwrap();
+    assert_eq!(rows, [("sent.1".into(), 1), ("live.1".into(), 2), ("t2".into(), 3)]);
+}

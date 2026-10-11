@@ -39,7 +39,7 @@ pub(super) struct Parser {
     /// Whether Claude's last reply ended its turn, so what herdr calls working is only Claude
     /// waiting on its background work.
     turn_over: bool,
-    /// Claude writes a slash command twice, plain and wrapped, under one prompt.
+    /// The last prompt typed, which Claude writes again wrapped when it is a slash command.
     prompt: Option<String>,
     /// The last prompt typed, as the line it follows and its entry, while nothing came after it.
     typed: Option<(String, String)>,
@@ -146,26 +146,25 @@ impl Parser {
                         return;
                     }
                 }
-                let prompt = line["promptId"].as_str().map(str::to_string);
-                if prompt.is_some() && prompt == self.prompt {
+                let typed = block_text(content);
+                let Some(text) = typed_text(&typed) else { return };
+                if typed.contains("<command-name>") && self.prompt.as_ref() == Some(&text) {
                     return;
                 }
-                if let Some(text) = typed_text(&block_text(content)) {
-                    self.turn_over = false;
-                    self.prompt = prompt;
-                    let parent = line["parentUuid"].as_str().map(str::to_string);
-                    // A turn interrupted before its first reply is dropped, its prompt put back
-                    // in the input box, so the next prompt follows the same line in its place.
-                    if let Some((before, id)) = self.typed.take() {
-                        if parent.as_ref() == Some(&before) && out.last().is_some_and(|last| last.id == id) {
-                            out.pop();
-                            self.dropped.push(id);
-                        }
+                self.turn_over = false;
+                self.prompt = Some(text.clone());
+                let parent = line["parentUuid"].as_str().map(str::to_string);
+                // A turn interrupted before its first reply is dropped, its prompt put back
+                // in the input box, so the next prompt follows the same line in its place.
+                if let Some((before, id)) = self.typed.take() {
+                    if parent.as_ref() == Some(&before) && out.last().is_some_and(|last| last.id == id) {
+                        out.pop();
+                        self.dropped.push(id);
                     }
-                    let entry = Entry::user(ids.next(), at, text, Vec::new());
-                    self.typed = parent.map(|parent| (parent, entry.id.clone()));
-                    out.push(entry);
                 }
+                let entry = Entry::user(ids.next(), at, text, Vec::new());
+                self.typed = parent.map(|parent| (parent, entry.id.clone()));
+                out.push(entry);
             }
             Some("assistant") => {
                 match line["message"]["stop_reason"].as_str() {

@@ -560,9 +560,9 @@ pub enum Change {
     /// A message the Agent took, which only now finds its place: after every row but the
     /// messages still `waiting`. Its entry is the Transcript's, when that is how it was taken.
     Taken { id: String, entry: Option<String>, body: Value, waiting: Vec<String> },
-    /// A final row that showed nowhere before: it lands above `above`, the provisional rows,
-    /// or rewrites the row already holding `entry`, as after a restart.
-    Land { id: String, entry: Option<String>, body: Value, above: Vec<String> },
+    /// A final row that showed nowhere before: it lands after the final rows and above the
+    /// provisional ones, or rewrites the row already holding `entry`, as after a restart.
+    Land { id: String, entry: Option<String>, body: Value },
 }
 
 /// One follower's rows in the Session log: the provisional ones shown now, under ids kept
@@ -612,7 +612,7 @@ impl Rows {
     pub fn land(&mut self, entry: &Entry, replaces: Option<&str>) -> Change {
         let body = serde_json::to_value(entry.clipped()).unwrap_or_default();
         let Some(id) = replaces.map(|id| self.own(id)) else {
-            return Change::Land { id: entry.id.clone(), entry: Some(entry.id.clone()), body, above: self.above() };
+            return Change::Land { id: entry.id.clone(), entry: Some(entry.id.clone()), body };
         };
         let waited = self.live.iter().any(|(live, held)| *live == id && waits(held));
         self.live.retain(|(live, _)| *live != id);
@@ -628,11 +628,7 @@ impl Rows {
         self.switches += 1;
         let id = format!("switch.{}.{}", self.epoch, self.switches);
         let body = json!({"id": id, "kind": "switch", "summary": reason, "transcript": transcript});
-        Change::Land { id, entry: None, body, above: self.above() }
-    }
-
-    fn above(&self) -> Vec<String> {
-        self.live.iter().map(|(id, _)| id.clone()).collect()
+        Change::Land { id, entry: None, body }
     }
 
     /// A screen item's id, made this follower's own; a message keeps the id its device gave it.

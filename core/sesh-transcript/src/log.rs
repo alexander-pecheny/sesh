@@ -215,20 +215,21 @@ impl Log {
                 }
                 self.put_item(session, &id, None, entry.is_some(), entry.as_deref(), &body)
             }
-            Change::Land { id, entry, body, above } => {
+            Change::Land { id, entry, body } => {
                 if let Some(held) = entry.as_deref().map(|entry| self.item_of(session, entry)).transpose()?.flatten() {
                     return self.put_item(session, &held, None, true, entry.as_deref(), &body);
                 }
-                // In their order in the log, which a message placed between screen rows keeps.
-                let mut above = above.into_iter().map(|live| Ok((self.ord_of(session, &live)?, live))).collect::<Result<Vec<_>>>()?;
-                above.sort();
-                let first = above.first().and_then(|(ord, _)| *ord);
-                if let Some(first) = first {
-                    for (offset, (_, live)) in above.iter().enumerate().rev() {
-                        self.move_item(session, live, first + 1 + offset as i64)?;
-                    }
+                // After every final row, so a provisional one left behind above them can push
+                // none of them aside.
+                let place: Option<i64> = self
+                    .db
+                    .query_row("SELECT MAX(ord) FROM items WHERE session = ?1 AND final = 1 AND gone = 0", [session], |row| row.get(0))
+                    .map_err(sql)?;
+                let place = place.unwrap_or(0) + 1;
+                for row in self.items("WHERE session = ?1 AND gone = 0 AND ord >= ?2 ORDER BY ord DESC", params![session, place])? {
+                    self.move_item(session, row["id"].as_str().unwrap_or_default(), row["ord"].as_i64().unwrap_or_default() + 1)?;
                 }
-                self.put_item(session, &id, first, true, entry.as_deref(), &body)
+                self.put_item(session, &id, Some(place), true, entry.as_deref(), &body)
             }
         }
     }

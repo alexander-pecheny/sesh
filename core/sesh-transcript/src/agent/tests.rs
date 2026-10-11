@@ -169,3 +169,23 @@ fn a_prompt_claude_put_back_before_replying_gives_way_to_the_one_that_carries_it
     assert_eq!(transcript.dropped(), [held]);
     assert!(transcript.dropped().is_empty());
 }
+
+#[test]
+fn a_message_sent_during_compact_follows_the_command_claude_writes_again_under_its_prompt() {
+    let user = |prompt: &str, content: &str| {
+        json!({"type": "user", "promptId": prompt, "timestamp": AT, "origin": {"kind": "human"}, "message": {"role": "user", "content": content}})
+    };
+    let lines = [
+        user("p1", "/compact"),
+        json!({"type": "user", "promptId": "p2", "isCompactSummary": true, "timestamp": AT, "message": {"role": "user", "content": "This session is being continued"}}),
+        user("p2", "<command-name>/compact</command-name>\n<command-message>compact</command-message>\n<command-args></command-args>"),
+        user("p2", "<local-command-stdout>Compacted</local-command-stdout>"),
+        user("p2", "why does the check fail?"),
+    ];
+    let scratch = Scratch::new("compact");
+    let path = scratch.write("compact.jsonl", &lines);
+    let mut transcript = Transcript::new(Agent::Claude, &path);
+    transcript.read(None).unwrap();
+    let texts: Vec<_> = transcript.entries.iter().map(|entry| entry.text.clone().unwrap_or_default()).collect();
+    assert_eq!(texts, ["/compact", "why does the check fail?"]);
+}
