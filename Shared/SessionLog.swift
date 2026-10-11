@@ -167,6 +167,10 @@ struct SessionLog {
     private(set) var loaded = false
     /// Whether items older than the first one held can still be fetched.
     var earlier = false
+    /// Whether the follower is still sending what changed while this device was away.
+    var syncing = false
+    /// How many times the follower has said hello, once for each attach.
+    private(set) var hellos = 0
     var problem: String?
     private var items: [String: Item] = [:]
     /// The messages this device sent that the follower has not written yet.
@@ -243,6 +247,7 @@ struct SessionLog {
         guard let line = try? decoder.decode(Line.self, from: data) else { return }
         switch line.t {
         case "hello":
+            hellos += 1
             agent = line.agent ?? agent
             transcript = line.transcript.flatMap { $0.isEmpty ? nil : $0 } ?? transcript
             if let number = line.protocol, !Self.protocols.contains(number) { problem = Self.unknown(number) }
@@ -266,8 +271,10 @@ struct SessionLog {
             items = items.filter { fresh.contains($0.key) || local.contains($0.key) }
             seq = line.seq ?? seq
             loaded = true
+            syncing = false
             earlier = !items.isEmpty
             rebuild()
+        case "synced": syncing = false
         case "entry":
             guard let entry = try? decoder.decode(Entry.self, from: data) else { return }
             if let replaced = line.replaces, let live = items[replaced], !live.final {

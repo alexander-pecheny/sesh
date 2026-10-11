@@ -86,6 +86,11 @@ final class Conversation: ObservableObject {
     private(set) var transcript: String?
     /// Whether the helper has sent the first batch of entries.
     @Published private(set) var loaded = false
+    /// Whether the follower is still catching up after an attach, as after a long time away.
+    @Published private(set) var syncing = false
+    private var hellos = 0
+    /// A follower from before `synced` never says it; it would have said it right after its hello.
+    private static let syncedWait = Duration.seconds(3)
     private var opening: [CheckedContinuation<Void, Never>] = []
     private(set) weak var runner: Runner?
     private var loading = false
@@ -125,7 +130,13 @@ final class Conversation: ObservableObject {
         let line: (String) -> Void = { [weak self] in self?.receive($0) }
         let problem: (String) -> Void = { [weak self] in self?.problem = $0 }
         switch source {
-        case .pane(let pane): await follower.watch(pane, from: { [weak self] in self?.log.seq ?? 0 }, line: line, problem: problem)
+        case .pane(let pane):
+            let attaching = { [weak self] in
+                guard let self else { return }
+                log.syncing = true
+                syncing = true
+            }
+            await follower.watch(pane, from: { [weak self] in self?.log.seq ?? 0 }, attaching: attaching, line: line, problem: problem)
         case .file(let path, let agent):
             await follower.follow(file: path, agent: agent, from: { [weak self] in self?.log.cursor }, line: line, problem: problem)
         }
@@ -153,6 +164,17 @@ final class Conversation: ObservableObject {
         if background != log.background { background = log.background }
         if status != log.status { status = log.status }
         if earlier != log.earlier { earlier = log.earlier }
+        if syncing != log.syncing { syncing = log.syncing }
+        if hellos != log.hellos {
+            hellos = log.hellos
+            let hello = hellos
+            Task { [weak self] in
+                try? await Task.sleep(for: Self.syncedWait)
+                guard let self, log.hellos == hello, log.syncing else { return }
+                log.syncing = false
+                publish()
+            }
+        }
         if loaded != log.loaded {
             loaded = log.loaded
             opening.forEach { $0.resume() }

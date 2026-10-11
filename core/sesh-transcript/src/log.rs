@@ -267,6 +267,18 @@ impl Log {
         self.items("WHERE session = ?1 AND seq > ?2 ORDER BY seq", params![session, seq])
     }
 
+    /// How many items of `session` were written after `seq`, counting no further than `limit`.
+    pub fn count_since(&self, session: &str, seq: i64, limit: usize) -> Result<usize> {
+        self.db
+            .query_row(
+                "SELECT COUNT(*) FROM (SELECT 1 FROM items WHERE session = ?1 AND seq > ?2 LIMIT ?3)",
+                params![session, seq, limit as i64],
+                |row| row.get::<_, i64>(0),
+            )
+            .map(|count| count as usize)
+            .map_err(sql)
+    }
+
     /// Up to `limit` items of `session` before `ord`, in order.
     pub fn page(&self, session: &str, ord: i64, limit: usize) -> Result<Vec<Value>> {
         let mut page = self.items(
