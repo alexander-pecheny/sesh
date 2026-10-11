@@ -44,7 +44,8 @@ Terminal or an Agent session, and every Tab but the Journal can move to another 
 Terminal is a shell in a herdr pane of the Task's Workspace: it outlives the app, and
 closing its Tab ends it. An Agent session Tab shows the Conversation or the Agent's own
 terminal. The phone has the same Tabs; its Terminal is an ordinary Session whose remote
-command attaches the herdr pane.
+command attaches the herdr pane. A Task's open Tabs are kept in its Vault, so every device
+shows the same ones, though each shows its own in front and a subagent's stays where it opened.
 _Avoid_: pane, page
 
 **UI mode**, **Projects**:
@@ -141,7 +142,7 @@ that opens it. The user keeps separate Vaults for separate lives, such as work a
 A Vault lists the Hosts its Agent sessions run on, starting with its own; a Host is in at
 most one Vault. The Mac is in none, and serves every Vault. The phone opens a Vault by its
 name and the Host from its own list that answers to the Mac's ssh alias for it; the phone
-cannot reach the Mac, so Tabs on the Mac stay closed there.
+cannot reach the Mac, so the Mac's own Terminals and files stay off its strip.
 _Avoid_: workspace, library, database
 
 **Unfiled**:

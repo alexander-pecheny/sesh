@@ -192,6 +192,27 @@ final class TaskCommandTests: XCTestCase {
         XCTAssertEqual(Tree.nearest([newest, folder], to: sibling, in: vault).map(\.id), [folder.id, newest.id])
     }
 
+    func testTheStripKeepsTheTabsEveryDeviceShowsAndOnlyChanges() {
+        let task = make(.task, "Fix it")
+        let subagent = TabItem.subagent(session: "s", path: "/t.jsonl", title: "Explore")
+        Strip.keep([], of: task.id, in: vault)
+        XCTAssertNil(vault.records[Strip.id(of: task.id)])
+        Strip.keep([.session("s"), subagent, .terminal("t")], of: task.id, in: vault)
+        XCTAssertEqual(Strip.tabs(of: task.id, in: vault), [.session("s"), .terminal("t")])
+        XCTAssertEqual(Strip.merge([.terminal("t")], into: [.session("s"), subagent]), [.terminal("t"), subagent])
+        Strip.keep([], of: task.id, in: vault)
+        XCTAssertEqual(Strip.tabs(of: task.id, in: vault), [])
+    }
+
+    func testThePhoneLeavesTheMacsTerminalsAndFilesOnItsStrip() {
+        let mac = vault.create(.tab, .init(path: "/Users/me", kind: "terminal"))
+        let vps = vault.create(.tab, .init(machine: "vps", path: "/home/me", kind: "terminal"))
+        let file = make(.document, "Notes", path: "/Users/me/notes.md")
+        let note = make(.document, "Plan")
+        XCTAssertEqual([TabItem.terminal(mac.id), .terminal(vps.id), .document(file.id), .document(note.id), .session("s")]
+            .map { $0.onMac(in: vault) }, [true, false, true, false, false])
+    }
+
     func testRecentRepositoriesShowHomeAsATildeAndEachOnce() {
         let repos = ["/Users/me/src/app", "~/src/app", "/opt/lib", "/Users/me", "/Users/meg/x"]
         XCTAssertEqual(Start.recent(repos, home: "/Users/me"), ["~/src/app", "/opt/lib", "~", "/Users/meg/x"])

@@ -1,3 +1,4 @@
+import Combine
 import Foundation
 #if os(macOS)
 import AppKit
@@ -11,7 +12,7 @@ final class Library: ObservableObject {
     @Published private(set) var vaults: [Vault] = []
     @Published var selection: String? { didSet { keep(); markSeen() } }
     /// The open Tabs of each Task by its id; the Journal is never in here, as it never closes.
-    @Published var tabs: [String: [TabItem]] = [:] { didSet { keep() } }
+    @Published var tabs: [String: [TabItem]] = [:] { didSet { keep(); share(since: oldValue) } }
     @Published var current: [String: TabItem] = [:] { didSet { keep(); markSeen() } }
     /// Agent sessions being started, by Task, shown as Tabs until their Agent is ready.
     @Published var starting: [String: [Starting]] = [:]
@@ -75,6 +76,33 @@ final class Library: ObservableObject {
     /// What was open survives a restart, Terminals included: their shells run in herdr.
     private func keep() {
         UserDefaults.standard.set(try? JSONEncoder().encode(Kept(selection: selection, tabs: tabs, current: current)), forKey: "tabs")
+    }
+
+    /// Puts each Task whose Tabs changed here on every device's strip.
+    private func share(since old: [String: [TabItem]]) {
+        for task in Set(old.keys).union(tabs.keys) where old[task] != tabs[task] {
+            if let vault = vault(of: task) { Strip.keep(tabs[task] ?? [], of: task, in: vault) }
+        }
+    }
+
+    private var following: [AnyCancellable] = []
+
+    /// Shows the Tabs another device opened or closed; the one shown here stays unless it closed.
+    private func follow(_ vault: Vault) {
+        following.append(vault.$records.receive(on: DispatchQueue.main).sink { [weak self, weak vault] _ in
+            guard let self, let vault else { return }
+            for task in vault.all(.task).map(\.id) {
+                let local = tabs[task] ?? []
+                guard let shared = Strip.tabs(of: task, in: vault) else {
+                    Strip.keep(local, of: task, in: vault)
+                    continue
+                }
+                guard shared != local.filter(\.shared) else { continue }
+                let merged = Strip.merge(shared, into: local)
+                tabs[task] = merged
+                if let shown = current[task], shown != .journal, !merged.contains(shown) { current[task] = merged.last ?? .journal }
+            }
+        })
     }
 
     private static let key = "vaults"
@@ -158,7 +186,7 @@ final class Library: ObservableObject {
         let places = UserDefaults.standard.data(forKey: Self.key)
             .flatMap { try? JSONDecoder().decode([Vault.Place].self, from: $0) } ?? []
         vaults = places.map(Vault.init)
-        vaults.forEach { $0.start() }
+        vaults.forEach { $0.start(); follow($0) }
         watchUnfiled()
         if let kept = UserDefaults.standard.data(forKey: "tabs").flatMap({ try? JSONDecoder().decode(Kept.self, from: $0) }) {
             (selection, tabs, current) = (kept.selection, kept.tabs, kept.current)
@@ -170,6 +198,7 @@ final class Library: ObservableObject {
         let vault = Vault(place)
         vaults.append(vault)
         vault.start()
+        follow(vault)
         UserDefaults.standard.set(try? JSONEncoder().encode(vaults.map(\.place)), forKey: Self.key)
     }
 
