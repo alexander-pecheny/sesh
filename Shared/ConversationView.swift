@@ -840,17 +840,23 @@ private struct RemoteImage: View {
     let conversation: Conversation
     @State private var image: PlatformImage?
 
+    private static let widest: CGFloat = 320
+    private static let tallest: CGFloat = 200
+    private static let loading: CGFloat = 120
+
     private var flavour: Catppuccin.Flavour { colorScheme == .dark ? .mocha : .latte }
 
     var body: some View {
         Group {
             if let image {
-                Image(platform: image).resizable().scaledToFill()
+                let scale = min(Self.widest / image.size.width, Self.tallest / image.size.height)
+                Image(platform: image).resizable()
+                    .frame(width: image.size.width * scale, height: image.size.height * scale)
             } else {
                 Image.lucide("image", size: 20).foregroundStyle(flavour(.overlay1))
+                    .frame(width: Self.loading, height: Self.loading)
             }
         }
-        .frame(width: 120, height: 120)
         .background(flavour(.surface0))
         .clipShape(.rect(cornerRadius: 14))
         .task { image = await conversation.image(path) }
