@@ -76,6 +76,7 @@ targets:
     postBuildScripts:
       - name: Bundle mosh
         basedOnDependencyAnalysis: false
+        showEnvVars: false
         script: |
           "$SRCROOT/scripts/build-mosh.sh" client
           for bin in mosh mosh-client; do
@@ -87,6 +88,7 @@ targets:
       - path: Shared
       - path: Resources/Icons.xcassets
       - path: Resources/helpers.json
+      - path: Resources/mosh-server.json
       - path: Resources/Fonts
         type: folder
         buildPhase: resources
