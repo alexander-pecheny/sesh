@@ -28,6 +28,8 @@ struct JournalView: View {
         }
         .background(flavour(.base), ignoresSafeAreaEdges: .vertical)
         .environment(\.openURL, OpenURLAction { url in library.follow(url) ? .handled : .systemAction })
+        .onAppear { draft = library.draft(for: "journal.\(task)") }
+        .onChange(of: draft) { library.saveDraft(draft, for: "journal.\(task)") }
     }
 
     private var conflicts: [Record] { vault.children(.conflict, task: task).filter { $0.body.kind == "entry" } }
@@ -57,25 +59,35 @@ struct JournalView: View {
 
 private struct EntryRow: View {
     @Environment(\.colorScheme) private var colorScheme
+    @EnvironmentObject private var library: Library
     @ObservedObject var vault: Vault
     let entry: Record
     @State private var editing = false
     @State private var text = ""
     @State private var deleting = false
+    /// The Entry's seq when editing began, which a save builds on.
+    @State private var base: Int?
     @StateObject private var field = PlainField()
 
     private var flavour: Catppuccin.Flavour { colorScheme == .dark ? .mocha : .latte }
 
     var body: some View {
         VStack(alignment: .leading, spacing: Metric.tiny) {
-            Text(Self.stamp(entry.body.at))
-                .font(.ui(Metric.small).monospacedDigit())
-                .foregroundStyle(flavour(.subtext0))
+            HStack {
+                Text(Self.stamp(entry.body.at))
+                    .font(.ui(Metric.small).monospacedDigit())
+                    .foregroundStyle(flavour(.subtext0))
+                Spacer()
+                Menu { actions } label: { Image(systemName: "ellipsis").foregroundStyle(flavour(.subtext0)) }
+                    .menuIndicator(.hidden)
+                    .fixedSize()
+                    .accessibilityLabel("Entry actions")
+            }
             if editing {
                 PlainText(field: field, text: $text, font: .systemFont(ofSize: Metric.body), lines: 20) { save() }
                     .padding(Metric.gap)
                     .background(flavour(.mantle), in: .rect(cornerRadius: Metric.corner))
-                    .onExitCommand { editing = false }
+                    .onExitCommand { stop() }
                     .onAppear { DispatchQueue.main.async { field.focus() } }
             } else {
                 Markdown(text: entry.body.text ?? "")
@@ -84,20 +96,38 @@ private struct EntryRow: View {
             }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
-        .contextMenu {
-            Button("Edit") { edit() }
-            Button("Copy") { Pasteboard.copy(entry.body.text ?? "") }
-            Button("Delete…", role: .destructive) { deleting = true }
+        .contextMenu { actions }
+        .onAppear {
+            let saved = library.draft(for: key)
+            if !saved.isEmpty { (text, editing) = (saved, true) }
         }
+        .onChange(of: text) { if editing { library.saveDraft(text, for: key) } }
         .confirmationDialog("Delete this Entry?", isPresented: $deleting) {
-            Button("Delete", role: .destructive) { vault.delete(entry) }
+            Button("Delete", role: .destructive) {
+                library.saveDraft("", for: key)
+                vault.delete(entry)
+            }
         } message: {
             Text((entry.body.text ?? "").prefix(120))
         }
     }
 
+    private var key: String { "entry.\(entry.id)" }
+
+    @ViewBuilder private var actions: some View {
+        Button("Edit") { edit() }
+        Button("Copy") { Pasteboard.copy(entry.body.text ?? "") }
+        Button("Delete…", role: .destructive) { deleting = true }
+    }
+
+    private func stop() {
+        library.saveDraft("", for: key)
+        editing = false
+    }
+
     private func edit() {
         text = entry.body.text ?? ""
+        base = entry.seq
         editing = true
     }
 
@@ -108,8 +138,8 @@ private struct EntryRow: View {
         var record = entry
         record.body.text = words
         record.body.edited = Int64(Date().timeIntervalSince1970 * 1000)
-        vault.write(record)
-        editing = false
+        vault.write(record, base: base)
+        stop()
     }
 
     static func stamp(_ at: Int64?) -> String {

@@ -46,7 +46,8 @@ struct DocumentTab: View {
         .environment(\.openURL, OpenURLAction { url in library.follow(url) ? .handled : .systemAction })
         .task {
             // Coming back to unsaved edits keeps them, in the editor; otherwise the text is read afresh.
-            if document.dirty { editing = true } else { await document.load() }
+            if !document.dirty { await document.load() }
+            editing = editing || document.dirty
             if document.text.isEmpty, document.editable { editing = true }
         }
         .alert("The file changed since Sesh read it", isPresented: Binding(get: { document.clash != nil }, set: { if !$0 { document.clash = nil } })) {

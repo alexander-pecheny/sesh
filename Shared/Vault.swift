@@ -83,10 +83,13 @@ final class Vault: ObservableObject, Identifiable, Records {
 
     // MARK: Writing
 
-    /// Changes a record here at once and queues it for the Host.
-    func write(_ record: Record) {
+    /// Changes a record here at once and queues it for the Host. An editor passes the seq it
+    /// started from as `base`, so the Host keeps a conflict copy if another device wrote since.
+    func write(_ record: Record) { write(record, base: nil) }
+
+    func write(_ record: Record, base: Int?) {
         var record = record
-        let base = records[record.id]?.seq ?? 0
+        let base = base ?? records[record.id]?.seq ?? 0
         record.seq = base
         records[record.id] = record
         queue.removeAll { $0.id == record.id }

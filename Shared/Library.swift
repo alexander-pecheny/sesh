@@ -147,11 +147,7 @@ final class Library: ObservableObject {
         conversation.bookmark = { [weak self] entry in self?.bookmark(entry, in: session.id) }
         conversation.copyLink = { [weak self] entry in self?.copyLink(entry, in: session.id) }
         conversation.draft = drafts[session.id] ?? ""
-        conversation.saveDraft = { [weak self] text in
-            guard let self else { return }
-            drafts[session.id] = text.isEmpty ? nil : text
-            UserDefaults.standard.set(drafts, forKey: "drafts")
-        }
+        conversation.saveDraft = { [weak self] text in self?.saveDraft(text, for: session.id) }
         if let folder = session.body.path {
             Task { [weak conversation] in
                 let remote = await machine.run("git -C \(quote(folder)) remote get-url origin")
@@ -555,6 +551,15 @@ final class Library: ObservableObject {
 
     private var drafts = UserDefaults.standard.dictionary(forKey: "drafts") as? [String: String] ?? [:]
 
+    /// Unsent text by what it is for, kept across Tab switches and restarts.
+    func draft(for key: String) -> String { drafts[key] ?? "" }
+
+    func saveDraft(_ text: String, for key: String) {
+        guard drafts[key] != (text.isEmpty ? nil : text) else { return }
+        drafts[key] = text.isEmpty ? nil : text
+        UserDefaults.standard.set(drafts, forKey: "drafts")
+    }
+
     /// Items a link asked for in Conversations not open yet.
     private var pendingFocus: [String: String] = [:]
 
@@ -660,6 +665,8 @@ final class Library: ObservableObject {
     func document(_ id: String, in vault: Vault) -> DocumentText {
         if let known = documents[id] { return known }
         let document = DocumentText(vault: vault, id: id)
+        document.kept = draft(for: "document.\(id)")
+        document.keep = { [weak self] text in self?.saveDraft(text, for: "document.\(id)") }
         documents[id] = document
         return document
     }

@@ -45,7 +45,8 @@ struct DocumentScreen: View {
         .background(flavour(.base))
         .environment(\.openURL, OpenURLAction { url in library.follow(url) ? .handled : .systemAction })
         .task {
-            if document.dirty { editing = true } else { await document.load() }
+            if !document.dirty { await document.load() }
+            editing = editing || document.dirty
             if document.text.isEmpty, document.editable { editing = true }
         }
         .alert("The file changed since Sesh read it", isPresented: Binding(get: { document.clash != nil }, set: { if !$0 { document.clash = nil } })) {

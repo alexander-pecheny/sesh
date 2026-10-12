@@ -298,8 +298,10 @@ struct ConversationView: View {
     }
 
     /// A queued message goes back into the box, ahead of anything typed since.
+    /// It goes to the Conversation first, since this view may be gone by the time a send fails.
     private func takeBack(_ text: String) {
-        draft = draft.isEmpty ? text : text + "\n\n" + draft
+        conversation.draft = conversation.draft.isEmpty ? text : text + "\n\n" + conversation.draft
+        draft = conversation.draft
     }
 
     private var canSend: Bool { !empty }

@@ -5,7 +5,7 @@ import Foundation
 /// (ADR 0008).
 @MainActor
 final class DocumentText: ObservableObject {
-    @Published var text = ""
+    @Published var text = "" { didSet { if loaded { keep(dirty ? text : "") } } }
     /// The file's text when last read or written; what a save expects to find there.
     @Published private(set) var base: String?
     @Published private(set) var loaded = false
@@ -15,6 +15,11 @@ final class DocumentText: ObservableObject {
 
     let vault: Vault
     let id: String
+    /// Unsaved edits, kept across restarts: what `keep` saved before, and how to save them.
+    var kept = ""
+    /// The Vault Document's seq when its text was read, which a save builds on.
+    private var started: Int?
+    var keep: (String) -> Void = { _ in }
 
     init(vault: Vault, id: String) {
         self.vault = vault
@@ -32,10 +37,17 @@ final class DocumentText: ObservableObject {
     private static let binary: Int32 = 3
 
     func load() async {
+        await read()
+        loaded = true
+        if !kept.isEmpty, editable { text = kept }
+        kept = ""
+    }
+
+    private func read() async {
         guard let record else { return }
         guard let path else {
-            text = record.body.text ?? ""
-            return loaded = true
+            started = record.seq
+            return text = record.body.text ?? ""
         }
         // An image or other binary, laid out as text, would hang the app on every launch.
         let file = shellPath(path)
@@ -51,15 +63,17 @@ final class DocumentText: ObservableObject {
             text = record.body.text ?? ""
             unreachable = "Showing the last copy Sesh saw: \(machine.title) could not be read (\(ran.problem))."
         }
-        loaded = true
     }
 
     func write(force: Bool) async {
+        defer { keep(dirty ? text : "") }
         guard var record else { return }
         guard let path else {
             record.body.text = text
             record.body.edited = Int64(Date().timeIntervalSince1970 * 1000)
-            return vault.write(record)
+            vault.write(record, base: started)
+            started = vault.records[id]?.seq
+            return
         }
         saving = true
         defer { saving = false }
