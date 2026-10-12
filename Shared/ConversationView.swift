@@ -840,17 +840,23 @@ private struct RemoteImage: View {
     let conversation: Conversation
     @State private var image: PlatformImage?
 
+    private static let widest: CGFloat = 320
+    private static let tallest: CGFloat = 200
+    private static let loading: CGFloat = 120
+
     private var flavour: Catppuccin.Flavour { colorScheme == .dark ? .mocha : .latte }
 
     var body: some View {
         Group {
             if let image {
-                Image(platform: image).resizable().scaledToFill()
+                let scale = min(Self.widest / image.size.width, Self.tallest / image.size.height)
+                Image(platform: image).resizable()
+                    .frame(width: image.size.width * scale, height: image.size.height * scale)
             } else {
                 Image.lucide("image", size: 20).foregroundStyle(flavour(.overlay1))
+                    .frame(width: Self.loading, height: Self.loading)
             }
         }
-        .frame(width: 120, height: 120)
         .background(flavour(.surface0))
         .clipShape(.rect(cornerRadius: 14))
         .task { image = await conversation.image(path) }
@@ -1399,7 +1405,7 @@ private struct QuestionCard: View {
                         ForEach(question.options, id: \.label) { option in
                             choice(option, multi: question.multi == true, in: index)
                         }
-                        TextField("Something else", text: Binding(get: { typed[index, default: ""] }, set: { typed[index] = $0 }))
+                        TextField("Something else", text: Binding(get: { typed[index, default: ""] }, set: { type($0, multi: question.multi == true, in: index) }))
                             .font(.ui(Metric.label))
                             .padding(Metric.pad)
                             .background(flavour(.base), in: .rect(cornerRadius: Metric.corner))
@@ -1436,12 +1442,19 @@ private struct QuestionCard: View {
         questions.indices.allSatisfy { !picked[$0, default: []].isEmpty || !typed[$0, default: ""].isEmpty }
     }
 
+    /// A single-choice question takes an option or text, so typing clears the option.
+    private func type(_ text: String, multi: Bool, in index: Int) {
+        typed[index] = text
+        if !multi && !text.isEmpty { picked[index] = nil }
+    }
+
     private func choice(_ option: SessionLog.Question.Option, multi: Bool, in index: Int) -> some View {
         let on = picked[index, default: []].contains(option.label)
         return Button {
             var set = multi ? picked[index, default: []] : []
             if on { set.remove(option.label) } else { set.insert(option.label) }
             picked[index] = set
+            if !multi && !on { typed[index] = nil }
         } label: {
             HStack(alignment: .top, spacing: Metric.pad) {
                 Image.lucide(on ? (multi ? "circle-check" : "circle-dot") : "circle", size: 16)

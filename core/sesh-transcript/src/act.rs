@@ -123,9 +123,9 @@ fn question_inputs(questions: &Value, answers: &[Answer]) -> Result<Vec<Input>> 
             inputs.extend(text.map(Input::Text));
             inputs.extend([key("down"), key("enter")]);
         } else {
-            match (digits.first(), text) {
-                (Some(digit), _) => inputs.push(key(digit)),
-                (None, Some(text)) => inputs.extend([key(&free_row), Input::Text(text), key("enter")]),
+            match (text, digits.first()) {
+                (Some(text), _) => inputs.extend([key(&free_row), Input::Text(text), key("enter")]),
+                (None, Some(digit)) => inputs.push(key(digit)),
                 (None, None) => return Err("each answer needs an option or text".into()),
             }
         }
@@ -266,7 +266,7 @@ mod tests {
         ]);
         let inputs = question_inputs(
             &questions,
-            &answers(r#"[{"options":["Blue"]},{"options":["Cat","Fish"],"text":"hamster"},{"options":[],"text":"water"}]"#),
+            &answers(r#"[{"options":["Blue"]},{"options":["Cat","Fish"],"text":"hamster"},{"options":["Tea"],"text":"water"}]"#),
         )
         .unwrap();
         assert_eq!(
