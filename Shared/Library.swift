@@ -91,6 +91,10 @@ final class Library: ObservableObject {
     private func follow(_ vault: Vault) {
         following.append(vault.$records.receive(on: DispatchQueue.main).sink { [weak self, weak vault] _ in
             guard let self, let vault else { return }
+            let links = vault.settings.body.links ?? []
+            for (id, conversation) in conversations where conversation.links != links && vault.records[id] != nil {
+                conversation.links = links
+            }
             for task in vault.all(.task).map(\.id) {
                 let local = tabs[task] ?? []
                 guard let shared = Strip.tabs(of: task, in: vault) else {
@@ -147,6 +151,7 @@ final class Library: ObservableObject {
         conversation.bookmark = { [weak self] entry in self?.bookmark(entry, in: session.id) }
         conversation.copyLink = { [weak self] entry in self?.copyLink(entry, in: session.id) }
         conversation.draft = drafts[session.id] ?? ""
+        conversation.links = vault(of: session.id)?.settings.body.links ?? []
         conversation.saveDraft = { [weak self] text in self?.saveDraft(text, for: session.id) }
         if let folder = session.body.path {
             Task { [weak conversation] in
@@ -449,6 +454,7 @@ final class Library: ObservableObject {
             guard let self, let transcript = conversation?.transcript else { return }
             Task { await self.openSubagent(call, title: title, of: session, transcript: transcript) }
         }
+        conversation.links = vault(of: session.id)?.settings.body.links ?? []
         subagents[path] = conversation
         return conversation
     }

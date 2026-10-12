@@ -7,6 +7,7 @@ struct Sidebar: View {
     @State private var adding = false
     @State private var naming: Naming?
     @State private var closing: Closing?
+    @State private var configuring: Vault?
     /// The order of the Tasks, kept while the pointer is over them.
     @State private var order: [String: Int] = [:]
     @State private var leaving: Task<Void, Never>?
@@ -37,7 +38,7 @@ struct Sidebar: View {
     var body: some View {
         List(selection: $library.selection) {
             ForEach(library.vaults) { vault in
-                VaultSection(vault: vault, naming: $naming)
+                VaultSection(vault: vault, naming: $naming, configuring: $configuring)
             }
             UnfiledSection(title: "On this Mac", items: library.unfiled[""] ?? [])
         }
@@ -72,6 +73,7 @@ struct Sidebar: View {
             NameSheet(naming: naming)
         }
         .sheet(item: $closing) { CloseTaskSheet(vault: $0.vault, task: $0.task) }
+        .sheet(item: $configuring) { VaultSettingsSheet(vault: $0) }
         .environment(\.closeTask) { closing = Closing(vault: $0, task: $1) }
         .onDeleteCommand {
             guard let id = library.selection, let vault = library.vault(of: id), let task = vault.records[id],
@@ -92,11 +94,13 @@ private struct VaultSection: View {
     @EnvironmentObject private var library: Library
     @ObservedObject var vault: Vault
     @Binding var naming: Sidebar.Naming?
+    @Binding var configuring: Vault?
     @AppStorage private var open: Bool
 
-    init(vault: Vault, naming: Binding<Sidebar.Naming?>) {
+    init(vault: Vault, naming: Binding<Sidebar.Naming?>, configuring: Binding<Vault?>) {
         self.vault = vault
         _naming = naming
+        _configuring = configuring
         _open = AppStorage(wrappedValue: true, "open." + vault.name)
     }
 
@@ -131,6 +135,8 @@ private struct VaultSection: View {
                 Menu {
                     Button("New Task") { naming = .init(goal: .task, vault: vault, parent: nil) }
                     Button("New Folder") { naming = .init(goal: .folder, vault: vault, parent: nil) }
+                    Divider()
+                    Button("Vault Settings…") { configuring = vault }
                 } label: { Image(systemName: "plus") }
                     .menuStyle(.borderlessButton)
                     .menuIndicator(.hidden)

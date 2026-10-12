@@ -60,6 +60,8 @@ final class Conversation: ObservableObject {
     var openPath: ((String) -> Void)?
     /// The repository the Agent works in, for linking `#213` to its pull request.
     @Published var repo: Repo?
+    /// The Vault's rules for linking text such as `SRCH-9049`.
+    @Published var links: [LinkRule] = []
     /// Keeps one entry as a Bookmark; nil where there is no Journal to keep it in.
     var bookmark: ((SessionLog.Entry) -> Void)?
     var copyLink: ((SessionLog.Entry) -> Void)?
