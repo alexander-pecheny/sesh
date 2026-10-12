@@ -1405,7 +1405,7 @@ private struct QuestionCard: View {
                         ForEach(question.options, id: \.label) { option in
                             choice(option, multi: question.multi == true, in: index)
                         }
-                        TextField("Something else", text: Binding(get: { typed[index, default: ""] }, set: { typed[index] = $0 }))
+                        TextField("Something else", text: Binding(get: { typed[index, default: ""] }, set: { type($0, multi: question.multi == true, in: index) }))
                             .font(.ui(Metric.label))
                             .padding(Metric.pad)
                             .background(flavour(.base), in: .rect(cornerRadius: Metric.corner))
@@ -1442,12 +1442,19 @@ private struct QuestionCard: View {
         questions.indices.allSatisfy { !picked[$0, default: []].isEmpty || !typed[$0, default: ""].isEmpty }
     }
 
+    /// A single-choice question takes an option or text, so typing clears the option.
+    private func type(_ text: String, multi: Bool, in index: Int) {
+        typed[index] = text
+        if !multi && !text.isEmpty { picked[index] = nil }
+    }
+
     private func choice(_ option: SessionLog.Question.Option, multi: Bool, in index: Int) -> some View {
         let on = picked[index, default: []].contains(option.label)
         return Button {
             var set = multi ? picked[index, default: []] : []
             if on { set.remove(option.label) } else { set.insert(option.label) }
             picked[index] = set
+            if !multi && !on { typed[index] = nil }
         } label: {
             HStack(alignment: .top, spacing: Metric.pad) {
                 Image.lucide(on ? (multi ? "circle-check" : "circle-dot") : "circle", size: 16)
