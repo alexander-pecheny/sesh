@@ -199,7 +199,13 @@ impl Log {
                 Some(id) => self.drop_item(session, &id),
                 None => Ok(()),
             },
-            Change::Rewrite { id, entry, body } => self.put_item(session, &id, None, true, Some(&entry), &body),
+            Change::Rewrite { id, entry, body } => {
+                if self.item_of(session, &entry)?.is_some_and(|held| held != id) {
+                    return self.drop_item(session, &id);
+                }
+                self.put_item(session, &id, None, true, Some(&entry), &body)?;
+                self.settle(session, &id, body["at"].as_str().unwrap_or_default())
+            }
             Change::Taken { id, entry, body, waiting } => {
                 let mut later = self.items("WHERE session = ?1 AND gone = 0 AND ord >= ?2 ORDER BY ord DESC", params![session, self.ord_of(session, &id)?])?;
                 later.retain(|row| row["id"] != id.as_str());
@@ -232,6 +238,20 @@ impl Log {
                 self.put_item(session, &id, Some(place), true, entry.as_deref(), &body)
             }
         }
+    }
+
+    /// Moves a final row written `at` back above the final rows written after it, as a
+    /// message that waited long for its entry was left below them.
+    fn settle(&self, session: &str, id: &str, at: &str) -> Result<()> {
+        let Some(ord) = self.ord_of(session, id)? else { return Ok(()) };
+        let before = self.items("WHERE session = ?1 AND gone = 0 AND final = 1 AND ord < ?2 ORDER BY ord", params![session, ord])?;
+        let written = |row: &Value| row["entry"]["at"].as_str().unwrap_or_default().to_string();
+        let Some(later) = before.iter().position(|row| !at.is_empty() && written(row).as_str() > at) else { return Ok(()) };
+        let place = before[later]["ord"].as_i64().unwrap_or_default();
+        for row in self.items("WHERE session = ?1 AND gone = 0 AND ord >= ?2 AND ord < ?3 ORDER BY ord DESC", params![session, place, ord])? {
+            self.move_item(session, row["id"].as_str().unwrap_or_default(), row["ord"].as_i64().unwrap_or_default() + 1)?;
+        }
+        self.move_item(session, id, place)
     }
 
     /// The provisional rows of `session`, as ids and bodies, in order.

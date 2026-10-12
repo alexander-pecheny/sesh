@@ -400,6 +400,14 @@ impl Follower {
         let busy = matches!(self.reported.as_deref(), Some("working" | "blocked"));
         self.live.working(screen && busy, now);
         self.live.idle(self.reported.is_some() && !busy, now);
+        if let (true, Some(path)) = (self.live.unsettled(now), self.transcript.as_ref().map(|transcript| transcript.path.clone())) {
+            // Rare, so the whole Transcript is read: the entry may be far behind what is kept.
+            let mut whole = Transcript::new(self.agent, &path);
+            whole.read_tail(None, |_| false).map_err(|err| err.to_string())?;
+            for (id, entry) in self.live.settle(&whole.entries, now) {
+                self.emit(Event::Entry { entry, replaces: Some(id) })?;
+            }
+        }
         if let (true, true, Some(pane_id)) = (screen, self.live.watching(now), pane["pane_id"].as_str()) {
             if let Some(view) = settled(self.source.as_mut(), pane_id, &self.live) {
                 self.live.see(view, now);
