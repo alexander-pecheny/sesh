@@ -18,12 +18,12 @@ if ! gh release view "$tag" -R "$repo" >/dev/null 2>&1; then
         https://code.pecheny.me/api/v1/repos/pecheny/sesh/push_mirrors-sync || true
     until gh api "repos/$repo/git/ref/tags/$tag" >/dev/null 2>&1; do sleep 5; done
     gh release create "$tag" -R "$repo" --verify-tag --title "$tag" \
-        --notes "sesh-transcript, the helper Sesh installs on each Host (docs/adr/0006)." "$out"/*.gz
+        --notes "sesh-transcript, the helper Sesh installs on each Host (docs/adr/0006)." "$out"/sesh-transcript-*.gz
 fi
 
 published="$out/published"
 mkdir -p "$published"
-gh release download "$tag" -R "$repo" -D "$published" --clobber -p '*.gz'
+gh release download "$tag" -R "$repo" -D "$published" --clobber -p 'sesh-transcript-*.gz'
 uv run python - "$published" "$version" "https://github.com/$repo/releases/download/$tag/" \
     > "$root/Resources/helpers.json" <<'EOF'
 import hashlib, json, pathlib, sys

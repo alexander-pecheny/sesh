@@ -36,6 +36,10 @@ helpers:
 helpers-release:
     ./scripts/release-helpers.sh
 
+# Publish rmosh's mosh-server the same way, pinned in Resources/mosh-server.json.
+mosh-release:
+    ./scripts/release-mosh-server.sh
+
 # Render every app-icon variant to build/icons; `just icon NAME` installs one.
 icons:
     uv run scripts/appicon.py --sheet

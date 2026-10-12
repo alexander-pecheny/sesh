@@ -72,6 +72,16 @@ targets:
   SeshMac:
     type: application
     platform: macOS
+    # rmosh's mosh and mosh-client, which the Mac's Terminals run, so no mosh need be installed.
+    postBuildScripts:
+      - name: Bundle mosh
+        basedOnDependencyAnalysis: false
+        script: |
+          "$SRCROOT/scripts/build-mosh.sh" client
+          for bin in mosh mosh-client; do
+            cp -f "$SRCROOT/build/mosh/$bin" "$TARGET_BUILD_DIR/$EXECUTABLE_FOLDER_PATH/$bin"
+            codesign --force --sign - --options runtime "$TARGET_BUILD_DIR/$EXECUTABLE_FOLDER_PATH/$bin"
+          done
     sources:
       - path: SeshMac
       - path: Shared
