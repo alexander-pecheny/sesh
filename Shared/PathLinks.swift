@@ -55,45 +55,16 @@ enum PathLinks {
 
     /// Splits text nodes around `#123` and puts each number in a link of its own.
     private static func linkNumbers(_ root: UnsafeMutablePointer<cmark_node>, repo: Repo) -> Bool {
-        var texts: [UnsafeMutablePointer<cmark_node>] = []
-        let walk = cmark_iter_new(root)
-        while cmark_iter_next(walk) != CMARK_EVENT_DONE {
-            guard let node = cmark_iter_get_node(walk), cmark_node_get_type(node) == CMARK_NODE_TEXT,
-                  cmark_node_get_type(cmark_node_parent(node)) != CMARK_NODE_LINK else { continue }
-            texts.append(node)
-        }
-        cmark_iter_free(walk)
-        var changed = false
-        for node in texts {
-            let text = String(cString: cmark_node_get_literal(node))
+        Cmark.link(root) { text in
             // `#213` alone, not `a#213`, `&#213;` or a URL's fragment.
-            let matches = text.matches(of: /#(\d{1,7})\b/).filter { match in
-                guard match.range.lowerBound > text.startIndex else { return true }
-                let before = text[text.index(before: match.range.lowerBound)]
-                return !(before.isLetter || before.isNumber || before == "&" || before == "/" || before == "_")
-            }
-            guard !matches.isEmpty else { continue }
-            var rest = text[...]
-            for match in matches {
-                insertText(String(rest[rest.startIndex..<match.range.lowerBound]), before: node)
-                if let link = cmark_node_new(CMARK_NODE_LINK), let label = cmark_node_new(CMARK_NODE_TEXT) {
-                    cmark_node_set_url(link, repo.pull(String(match.output.1)).absoluteString)
-                    cmark_node_set_literal(label, String(text[match.range]))
-                    cmark_node_append_child(link, label)
-                    cmark_node_insert_before(node, link)
+            text.matches(of: /#(\d{1,7})\b/).compactMap { match in
+                if match.range.lowerBound > text.startIndex {
+                    let before = text[text.index(before: match.range.lowerBound)]
+                    if before.isLetter || before.isNumber || before == "&" || before == "/" || before == "_" { return nil }
                 }
-                rest = text[match.range.upperBound...]
+                return (match.range, repo.pull(String(match.output.1)))
             }
-            cmark_node_set_literal(node, String(rest))
-            changed = true
         }
-        return changed
-    }
-
-    private static func insertText(_ text: String, before node: UnsafeMutablePointer<cmark_node>) {
-        guard !text.isEmpty, let piece = cmark_node_new(CMARK_NODE_TEXT) else { return }
-        cmark_node_set_literal(piece, text)
-        cmark_node_insert_before(node, piece)
     }
 
     /// A file name with an extension, alone or behind folders, and no spaces.
@@ -172,6 +143,15 @@ enum Cmark {
         return blocks
     }
 
+    /// The Markdown with its bare `sesh://` links made links, for a renderer that is not this one.
+    static func linked(_ markdown: String) -> String {
+        guard markdown.contains("sesh://"), let root = parse(markdown) else { return markdown }
+        defer { cmark_node_free(root) }
+        guard let rendered = cmark_render_commonmark(root, CMARK_OPT_DEFAULT, 0) else { return markdown }
+        defer { free(rendered) }
+        return String(cString: rendered)
+    }
+
     static func parse(_ markdown: String) -> UnsafeMutablePointer<cmark_node>? {
         cmark_gfm_core_extensions_ensure_registered()
         guard let parser = cmark_parser_new(CMARK_OPT_DEFAULT) else { return nil }
@@ -180,7 +160,50 @@ enum Cmark {
             if let syntax = cmark_find_syntax_extension(name) { cmark_parser_attach_syntax_extension(parser, syntax) }
         }
         cmark_parser_feed(parser, markdown, markdown.utf8.count)
-        return cmark_parser_finish(parser)
+        guard let root = cmark_parser_finish(parser) else { return nil }
+        // The autolink extension knows only web addresses, so a pasted `sesh://` link is linked here.
+        if markdown.contains("sesh://") {
+            _ = link(root) { text in text.matches(of: /sesh:\/\/[^\s<>]*[^\s<>.,;:!?)\]]/).compactMap { match in URL(string: String(match.output)).map { (match.range, $0) } } }
+        }
+        return root
+    }
+
+    /// Splits text nodes outside links around the ranges `find` returns, each a link to its URL.
+    static func link(_ root: UnsafeMutablePointer<cmark_node>, find: (String) -> [(Range<String.Index>, URL)]) -> Bool {
+        var texts: [UnsafeMutablePointer<cmark_node>] = []
+        let walk = cmark_iter_new(root)
+        while cmark_iter_next(walk) != CMARK_EVENT_DONE {
+            guard let node = cmark_iter_get_node(walk), cmark_node_get_type(node) == CMARK_NODE_TEXT,
+                  cmark_node_get_type(cmark_node_parent(node)) != CMARK_NODE_LINK else { continue }
+            texts.append(node)
+        }
+        cmark_iter_free(walk)
+        var changed = false
+        for node in texts {
+            let text = String(cString: cmark_node_get_literal(node))
+            let found = find(text)
+            guard !found.isEmpty else { continue }
+            var rest = text[...]
+            for (range, url) in found {
+                insertText(String(rest[rest.startIndex..<range.lowerBound]), before: node)
+                if let link = cmark_node_new(CMARK_NODE_LINK), let label = cmark_node_new(CMARK_NODE_TEXT) {
+                    cmark_node_set_url(link, url.absoluteString)
+                    cmark_node_set_literal(label, String(text[range]))
+                    cmark_node_append_child(link, label)
+                    cmark_node_insert_before(node, link)
+                }
+                rest = text[range.upperBound...]
+            }
+            cmark_node_set_literal(node, String(rest))
+            changed = true
+        }
+        return changed
+    }
+
+    private static func insertText(_ text: String, before node: UnsafeMutablePointer<cmark_node>) {
+        guard !text.isEmpty, let piece = cmark_node_new(CMARK_NODE_TEXT) else { return }
+        cmark_node_set_literal(piece, text)
+        cmark_node_insert_before(node, piece)
     }
 }
 

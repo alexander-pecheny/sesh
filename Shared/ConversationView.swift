@@ -866,7 +866,7 @@ struct Markdown: View {
     private var flavour: Catppuccin.Flavour { colorScheme == .dark ? .mocha : .latte }
 
     var body: some View {
-        MarkdownUI.Markdown(text)
+        MarkdownUI.Markdown(Cmark.linked(text))
             .markdownTheme(theme)
             .textSelection(.enabled)
             .frame(maxWidth: .infinity, alignment: .leading)
