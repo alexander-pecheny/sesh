@@ -428,6 +428,31 @@ impl Reconciler {
         }
     }
 
+    /// Settles each message the Agent showed as read but the Transcript never delivered, once
+    /// it has sat idle `LOST_AFTER` since: by the latest entry in `held` that says it, or as
+    /// lost when none does.
+    pub fn settle(&mut self, held: &[Entry], now: Instant) -> Vec<(String, Entry)> {
+        let mut settled = Vec::new();
+        for message in self.messages.iter_mut().filter(|message| message.state == SHOWN) {
+            if !self.idle.is_some_and(|since| now.duration_since(since.max(message.at)) >= LOST_AFTER) {
+                continue;
+            }
+            let said = |entry: &&Entry| entry.kind == "user" && covers(&said_words(entry.text.as_deref().unwrap_or_default()), &message.words);
+            match held.iter().rev().find(said) {
+                Some(entry) => settled.push((message.id.clone(), entry.clone())),
+                None => (message.state, message.at) = (LOST, now),
+            }
+        }
+        self.messages.retain(|message| !settled.iter().any(|(id, _)| *id == message.id));
+        settled
+    }
+
+    /// Whether a message waits for `settle`.
+    pub fn unsettled(&self, now: Instant) -> bool {
+        let late = |message: &Message| self.idle.is_some_and(|since| now.duration_since(since.max(message.at)) >= LOST_AFTER);
+        self.messages.iter().any(|message| message.state == SHOWN && late(message))
+    }
+
     /// Whether the screen is still worth reading.
     pub fn watching(&self, now: Instant) -> bool {
         self.stopped.is_none_or(|stopped| now.duration_since(stopped) < GRACE)

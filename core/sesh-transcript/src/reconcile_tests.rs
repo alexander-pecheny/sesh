@@ -232,3 +232,41 @@ fn an_entry_lands_after_the_final_rows_below_a_message_left_unmatched() {
     std::fs::remove_dir_all(&dir).unwrap();
     assert_eq!(rows, [("sent.1".into(), 1), ("live.1".into(), 2), ("t2".into(), 3)]);
 }
+
+#[test]
+fn a_message_claude_read_but_the_transcript_never_gave_settles_once_idle() {
+    let now = Instant::now();
+    let mut live = Reconciler::default();
+    live.message("sent.1", "why does the check fail?", SHOWN, now);
+    live.message("sent.2", "and this one?", SHOWN, now);
+    live.idle(true, now);
+    let held = [Entry { id: "u1".into(), ..said("user", "why does the check fail?") }];
+    assert!(live.settle(&held, now).is_empty());
+    let later = now + LOST_AFTER;
+    assert!(live.unsettled(later));
+    let settled: Vec<_> = live.settle(&held, later).into_iter().map(|(id, entry)| (id, entry.id)).collect();
+    assert_eq!(settled, [("sent.1".to_string(), "u1".to_string())]);
+    assert_eq!(live.shown(later).items.iter().map(|item| item.state).collect::<Vec<_>>(), [Some(LOST)]);
+}
+
+#[test]
+fn a_rewritten_message_goes_back_above_the_rows_written_after_it() {
+    let dir = std::env::temp_dir().join(format!("sesh-settle-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let log = Log::open(&dir.join("sessions.db")).unwrap();
+    let at = |id: &str, at: &str| json!({"id": id, "at": at});
+    for change in [
+        Change::Land { id: "t1".into(), entry: Some("t1".into()), body: at("t1", "2026-10-11T23:40:00.000Z") },
+        Change::Show("sent.1".into(), json!({"id": "sent.1"})),
+        Change::Land { id: "t2".into(), entry: Some("t2".into()), body: at("t2", "2026-10-11T23:41:00.000Z") },
+        Change::Land { id: "t3".into(), entry: Some("t3".into()), body: at("t3", "2026-10-11T23:42:00.000Z") },
+        Change::Rewrite { id: "sent.1".into(), entry: "u1".into(), body: at("u1", "2026-10-11T23:40:30.000Z") },
+        Change::Show("sent.2".into(), json!({"id": "sent.2"})),
+        Change::Rewrite { id: "sent.2".into(), entry: "t3".into(), body: at("t3", "2026-10-11T23:42:00.000Z") },
+    ] {
+        log.change("p1", change).unwrap();
+    }
+    let rows: Vec<String> = log.last("p1", usize::MAX).unwrap().iter().map(|row| row["id"].as_str().unwrap().into()).collect();
+    std::fs::remove_dir_all(&dir).unwrap();
+    assert_eq!(rows, ["t1", "sent.1", "t2", "t3"]);
+}
