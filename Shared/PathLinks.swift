@@ -7,14 +7,16 @@ import cmark_gfm_extensions
 enum PathLinks {
     static let scheme = "sesh-path"
 
-    /// Paths in code spans become file links, unless there is nowhere to open them, and `#213`
-    /// a link to that pull request when the session's repository is known.
-    static func link(_ markdown: String, repo: Repo? = nil, paths: Bool = true) -> String {
+    /// Paths in code spans become file links, unless there is nowhere to open them, `#213`
+    /// a link to that pull request when the session's repository is known, and text matching
+    /// one of the Vault's rules a link of its own.
+    static func link(_ markdown: String, repo: Repo? = nil, paths: Bool = true, rules: [LinkRule] = []) -> String {
         let numbers = repo != nil && markdown.contains("#")
-        guard paths && markdown.contains("`") || numbers, let root = Cmark.parse(markdown) else { return markdown }
+        guard paths && markdown.contains("`") || numbers || !rules.isEmpty, let root = Cmark.parse(markdown) else { return markdown }
         defer { cmark_node_free(root) }
         var changed = false
         if let repo, numbers { changed = linkNumbers(root, repo: repo) }
+        if !rules.isEmpty { changed = linkRules(root, rules) || changed }
 
         // A bare name listed under a folder the message named, as in "Files are in `/a/b/`:",
         // lives in that folder: within that block and the one after it, such as its list.
@@ -64,6 +66,17 @@ enum PathLinks {
                 }
                 return (match.range, repo.pull(String(match.output.1)))
             }
+        }
+    }
+
+    /// The first rule to claim a stretch of text links it; later rules take what is left.
+    private static func linkRules(_ root: UnsafeMutablePointer<cmark_node>, _ rules: [LinkRule]) -> Bool {
+        Cmark.link(root) { text in
+            var found: [(Range<String.Index>, URL)] = []
+            for rule in rules {
+                for link in rule.links(in: text) where !found.contains(where: { $0.0.overlaps(link.0) }) { found.append(link) }
+            }
+            return found.sorted { $0.0.lowerBound < $1.0.lowerBound }
         }
     }
 

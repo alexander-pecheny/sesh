@@ -117,6 +117,8 @@ private struct VaultSection: View {
                 Menu {
                     Button("New Task") { sheet = .task(vault, parent: nil) }
                     Button("New Folder") { sheet = .folder(vault, parent: nil) }
+                    Divider()
+                    Button("Vault Settings") { sheet = .settings(vault) }
                 } label: { Image.lucide("plus", size: Metric.title) }
                     .accessibilityLabel("Add to \(vault.name)")
             }

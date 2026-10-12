@@ -571,9 +571,8 @@ private struct RowView: View {
             switch entry.kind {
             case "user": UserBubble(entry: entry, conversation: conversation)
             case "text":
-                let text = conversation.openPath == nil && conversation.repo == nil
-                    ? entry.text ?? entry.summary
-                    : PathLinks.link(entry.text ?? entry.summary, repo: conversation.repo, paths: conversation.openPath != nil)
+                let text = PathLinks.link(entry.text ?? entry.summary, repo: conversation.repo,
+                                          paths: conversation.openPath != nil, rules: conversation.links)
                 let pieces = Cmark.pieces(text)
                 VStack(alignment: .leading, spacing: Metric.tiny) {
                     ForEach(pieces.indices, id: \.self) { index in

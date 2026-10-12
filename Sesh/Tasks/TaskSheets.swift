@@ -7,6 +7,7 @@ enum TaskSheet: Identifiable {
     case folder(Vault, parent: String?)
     case rename(Vault, Record)
     case close(Vault, Record)
+    case settings(Vault)
 
     var id: String {
         switch self {
@@ -15,6 +16,7 @@ enum TaskSheet: Identifiable {
         case .folder(let vault, let parent): "folder:\(vault.id):\(parent ?? "")"
         case .rename(_, let record): "rename:\(record.id)"
         case .close(_, let record): "close:\(record.id)"
+        case .settings(let vault): "settings:\(vault.id)"
         }
     }
 
@@ -25,6 +27,7 @@ enum TaskSheet: Identifiable {
         case .folder(let vault, let parent): NameSheet(vault: vault, record: nil, parent: parent)
         case .rename(let vault, let record): NameSheet(vault: vault, record: record, parent: nil)
         case .close(let vault, let task): CloseTaskSheet(vault: vault, task: task)
+        case .settings(let vault): VaultSettingsSheet(vault: vault)
         }
     }
 }

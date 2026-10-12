@@ -3,7 +3,7 @@ import Foundation
 /// One row of a Vault, as the helper stores it (docs/PLAN.md, Vault protocol).
 struct Record: Codable, Identifiable, Equatable {
     enum Kind: String, Codable {
-        case folder, task, entry, document, session, tab, conflict
+        case folder, task, entry, document, session, tab, conflict, settings
     }
 
     /// Every field any kind uses; each kind fills its own.
@@ -35,6 +35,8 @@ struct Record: Codable, Identifiable, Equatable {
         var kind: String?
         /// The Tabs a Task's strip shows on every device, in order.
         var tabs: [TabItem]?
+        /// A Vault's settings: what in an Agent's messages links where.
+        var links: [LinkRule]?
     }
 
     let id: String
@@ -42,6 +44,29 @@ struct Record: Codable, Identifiable, Equatable {
     var body: Body
     var seq: Int = 0
     var deleted = false
+}
+
+/// Text matching `pattern` in an Agent's message links to `url`, where `$0` is the match
+/// and `$1` its first group.
+struct LinkRule: Codable, Equatable, Identifiable {
+    var id = UUID()
+    var pattern = ""
+    var url = ""
+
+    private enum CodingKeys: String, CodingKey { case pattern, url }
+
+    func links(in text: String) -> [(Range<String.Index>, URL)] {
+        guard let regex = try? Regex(pattern) else { return [] }
+        return text.matches(of: regex).compactMap { match in
+            guard !match.range.isEmpty else { return nil }
+            var target = url
+            for index in stride(from: match.count - 1, through: 0, by: -1) {
+                let part = match[index].substring.map(String.init) ?? ""
+                target = target.replacingOccurrences(of: "$\(index)", with: part.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed) ?? part)
+            }
+            return URL(string: target).map { (match.range, $0) }
+        }
+    }
 }
 
 /// The records of one Vault, read and written; the Vault keeps them in step with its Host.
@@ -64,6 +89,11 @@ extension Records {
         let record = Record(id: UUID().uuidString.lowercased(), kind: kind, body: body)
         write(record)
         return record
+    }
+
+    /// The Vault's one settings record, empty until someone saves it.
+    var settings: Record {
+        records["settings"].flatMap { $0.deleted ? nil : $0 } ?? Record(id: "settings", kind: .settings, body: .init())
     }
 
     func delete(_ record: Record) {
