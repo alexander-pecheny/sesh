@@ -44,6 +44,7 @@ pub(super) struct Parser {
     /// The last prompt typed, as the line it follows and its entry, while nothing came after it.
     typed: Option<(String, String)>,
     dropped: Vec<String>,
+    amended: Vec<String>,
     questions: HashMap<String, String>,
     hidden_results: HashSet<String>,
     tasks: Vec<(String, String)>,
@@ -61,6 +62,10 @@ impl super::Parse for Parser {
 
     fn dropped(&mut self) -> Vec<String> {
         std::mem::take(&mut self.dropped)
+    }
+
+    fn amended(&mut self) -> Vec<String> {
+        std::mem::take(&mut self.amended)
     }
 
     fn turn_over(&self) -> bool {
@@ -103,6 +108,9 @@ impl Parser {
     }
 
     fn read(&mut self, line: &Value, ids: &mut Ids, out: &mut Vec<Entry>) {
+        if line["isMeta"] == true && line["type"] == "user" {
+            return self.image_source(&block_text(&line["message"]["content"]), out);
+        }
         if (line["isSidechain"] == true && !self.subagent)
             || line["isMeta"] == true
             || line["isCompactSummary"] == true
@@ -241,6 +249,19 @@ impl Parser {
     }
 
     /// A `<task-notification>` names the call it reports on; any end status ends it.
+    /// Claude replaces an image path the user typed with `[Image #1]`, and names the file
+    /// only on a meta line after the message.
+    fn image_source(&mut self, text: &str, out: &mut [Entry]) {
+        let paths: Vec<&str> = text.lines().filter_map(|line| line.strip_prefix("[Image: source: ")?.strip_suffix(']')).collect();
+        let Some(entry) = out.iter_mut().rev().find(|entry| entry.kind == "user") else { return };
+        let Some(images) = entry.images.as_mut() else { return };
+        let fresh: Vec<String> = paths.into_iter().filter(|path| !images.iter().any(|known| known == path)).map(str::to_string).collect();
+        if !fresh.is_empty() {
+            images.extend(fresh);
+            self.amended.push(entry.id.clone());
+        }
+    }
+
     fn finished(&mut self, text: &str) {
         let tag = |name: &str| {
             let start = text.find(&format!("<{name}>"))? + name.len() + 2;

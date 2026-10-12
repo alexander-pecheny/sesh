@@ -50,6 +50,8 @@ struct SeshMacApp: App {
         #if DEBUG
         if let file = UserDefaults.standard.string(forKey: "markdown") {
             MarkdownWindow(file: file)
+        } else if let file = UserDefaults.standard.string(forKey: "document") {
+            DocumentWindow(file: file).environmentObject(library)
         } else {
             RootView().environmentObject(library)
         }
@@ -88,6 +90,25 @@ private struct MarkdownWindow: View {
                 conversation.receive(String(decoding: data, as: UTF8.self))
                 conversation.receive(#"{"t": "cursor", "cursor": "0"}"#)
             }
+    }
+}
+
+/// `-document FILE` opens a file on the Mac in a Document Tab, in a Vault kept apart and never
+/// sent anywhere, so a Document's drawing can be checked with `-snapshot`.
+private struct DocumentWindow: View {
+    @StateObject private var document: DocumentText
+
+    init(file: String) {
+        _document = StateObject(wrappedValue: {
+            let vault = Vault(.init(name: "document-check", alias: nil))
+            let record = vault.records.values.first { $0.body.path == file }
+                ?? vault.create(.document, .init(title: (file as NSString).lastPathComponent, path: file))
+            return DocumentText(vault: vault, id: record.id)
+        }())
+    }
+
+    var body: some View {
+        DocumentTab(document: document).frame(width: 900, height: 700)
     }
 }
 

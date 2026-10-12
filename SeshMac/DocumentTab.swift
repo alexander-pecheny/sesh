@@ -1,4 +1,5 @@
 import SwiftUI
+import WebKit
 
 /// A Document of the Task: Markdown kept in the Vault, or a file on a machine that the Vault
 /// remembers the last text of. Edits to a file go to the file itself (ADR 0008).
@@ -27,7 +28,14 @@ struct DocumentTab: View {
                     .padding(Metric.pad)
                     .onAppear { DispatchQueue.main.async { field.focus() } }
             } else {
-                if !document.markdown {
+                if let image = document.image {
+                    Image(platform: image).resizable().scaledToFit()
+                        .frame(maxWidth: image.size.width, maxHeight: image.size.height)
+                        .padding(Metric.wide)
+                        .frame(maxWidth: .infinity, maxHeight: .infinity)
+                } else if document.html {
+                    HTMLView(html: document.text)
+                } else if !document.markdown {
                     CodeView(text: document.text, language: path.map { ($0 as NSString).pathExtension })
                 } else {
                 ScrollView {
@@ -125,5 +133,25 @@ private struct CodeView: NSViewRepresentable {
     /// What the view shows, so it is coloured once rather than on every update.
     final class Coordinator {
         var shown = ""
+    }
+}
+
+/// An HTML file as a browser lays it out. Its relative links and assets stay on the machine,
+/// so only what the file holds itself shows.
+private struct HTMLView: NSViewRepresentable {
+    let html: String
+
+    func makeNSView(context: Context) -> WKWebView { WKWebView() }
+
+    func updateNSView(_ view: WKWebView, context: Context) {
+        guard context.coordinator.shown != html else { return }
+        context.coordinator.shown = html
+        view.loadHTMLString(html, baseURL: nil)
+    }
+
+    func makeCoordinator() -> Coordinator { Coordinator() }
+
+    final class Coordinator {
+        var shown: String?
     }
 }

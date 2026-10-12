@@ -736,7 +736,7 @@ impl Recorder {
 fn parsed(line: &str) -> bool {
     let Ok(value) = serde_json::from_str::<Value>(line) else { return false };
     if value["isMeta"] == true {
-        return false;
+        return crate::block_text(&value["message"]["content"]).starts_with("[Image: source: ");
     }
     match value["type"].as_str() {
         Some("user" | "assistant" | "queue-operation") => true,
