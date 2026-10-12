@@ -110,32 +110,37 @@ final class Machine: Runner, Identifiable, Hashable {
         if let feed { process.standardInput = feed }
         let lines = Greeted(line)
         let collected = Collector()
-        out.fileHandleForReading.readabilityHandler = { handle in
-            let chunk = handle.availableData
-            guard !chunk.isEmpty else { return }
-            // The main queue, unlike a Task, keeps the chunks in order.
+        // Output is read only by its handlers, to its end, and taken once the process has also
+        // exited: a second reader at exit raced them and could put a chunk out of order.
+        let finished = DispatchGroup()
+        func drain(_ pipe: Pipe, into add: @escaping (Data) -> Void) {
+            finished.enter()
+            pipe.fileHandleForReading.readabilityHandler = { handle in
+                let chunk = handle.availableData
+                guard chunk.isEmpty else { return add(chunk) }
+                handle.readabilityHandler = nil
+                finished.leave()
+            }
+        }
+        // The main queue, unlike a Task, keeps the chunks in order.
+        drain(out) { chunk in
             if line == nil { collected.out.append(chunk) } else { DispatchQueue.main.async { MainActor.assumeIsolated { lines.feed(chunk) } } }
         }
-        err.fileHandleForReading.readabilityHandler = { handle in collected.err.append(handle.availableData) }
+        drain(err) { collected.err.append($0) }
+        finished.enter()
         return await withTaskCancellationHandler {
             await withCheckedContinuation { (done: CheckedContinuation<Ran, Never>) in
-                process.terminationHandler = { process in
-                    out.fileHandleForReading.readabilityHandler = nil
-                    err.fileHandleForReading.readabilityHandler = nil
-                    let rest = out.fileHandleForReading.readDataToEndOfFile()
-                    let errRest = err.fileHandleForReading.readDataToEndOfFile()
-                    DispatchQueue.main.async { MainActor.assumeIsolated {
-                        self.running.remove(process)
-                        try? self.tethers.removeValue(forKey: ObjectIdentifier(process))?.fileHandleForWriting.close()
-                        if line == nil { collected.out.append(rest) } else { lines.feed(rest); lines.flush() }
-                        collected.err.append(errRest)
-                        let out = String(decoding: collected.out.data, as: UTF8.self)
-                        done.resume(returning: Ran(
-                            status: process.terminationStatus,
-                            out: out.range(of: Self.mark + "\n").map { String(out[$0.upperBound...]) } ?? out,
-                            err: String(decoding: collected.err.data, as: UTF8.self)))
-                    } }
-                }
+                process.terminationHandler = { _ in finished.leave() }
+                finished.notify(queue: .main) { MainActor.assumeIsolated {
+                    self.running.remove(process)
+                    try? self.tethers.removeValue(forKey: ObjectIdentifier(process))?.fileHandleForWriting.close()
+                    lines.flush()
+                    let out = String(decoding: collected.out.data, as: UTF8.self)
+                    done.resume(returning: Ran(
+                        status: process.terminationStatus,
+                        out: out.range(of: Self.mark + "\n").map { String(out[$0.upperBound...]) } ?? out,
+                        err: String(decoding: collected.err.data, as: UTF8.self)))
+                } }
                 do {
                     try process.run()
                     running.insert(process)

@@ -95,6 +95,8 @@ in `Resources/LICENSE-lucide.txt`. The app-icon cloud photographs in
 Sesh's own source is MIT, in `LICENSE`. A built app is GPL-3.0-or-later, in `COPYING`,
 because `sesh-core` links mosh through rmosh and the binary is then a derivative of it.
 Anyone handed that binary is owed its corresponding source and the licence text.
+The Mac app carries rmosh's `mosh` and `mosh-client` as programs of their own, and each Host
+gets rmosh's `mosh-server` beside the helper; all three are GPL-3.0-or-later too.
 
 Mosh's copyright holders waived the clash between the GPL and Apple's terms in
 `COPYING.iOS`, so the App Store is open to a build that meets the GPL in every other

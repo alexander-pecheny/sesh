@@ -32,8 +32,13 @@ extension Library {
             // mosh carries one screen per session, so each Terminal has its own; it starts its
             // server through the Host's one shared ssh connection, so no new one opens.
             let ssh = "ssh -o ControlMaster=auto -o ControlPath=\(Machine.controlPath) -o ControlPersist=600"
+            // The app's own mosh, and the mosh-server the helper installer put on the Host.
+            _ = await machine.prepare()
+            let bin = Bundle.main.bundleURL.appending(path: "Contents/MacOS")
+            let server = Helper.moshServer.map { " --server=\($0)" } ?? ""
             // mosh-client looks the terminal type up locally, and knows no xterm-ghostty.
-            command = "TERM=xterm-256color mosh --experimental-remote-ip=remote --ssh=\(quote(ssh)) \(alias) -- sh -c \(remote)"
+            command = "TERM=xterm-256color \(quote(bin.appending(path: "mosh").path)) --client=\(quote(bin.appending(path: "mosh-client").path))"
+                + "\(server) --experimental-remote-ip=remote --ssh=\(quote(ssh)) \(alias) -- sh -c \(remote)"
         } else {
             command = attach
         }

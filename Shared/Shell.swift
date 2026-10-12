@@ -63,23 +63,42 @@ enum Helper {
     /// replacing each other's.
     static let file = "sesh-transcript-" + (version?.split(separator: "+").last.map(String.init) ?? "unpinned")
     static let path = "~/.sesh/bin/\(file)"
-    static let gz = "$HOME/.sesh/bin/\(file).gz"
-    /// Unpacked beside its place and moved in whole, so a command racing it never runs half a file.
-    static let unpack = "gunzip -c \(gz) > $HOME/.sesh/bin/\(file).part && chmod 755 $HOME/.sesh/bin/\(file).part"
-        + " && mv -f $HOME/.sesh/bin/\(file).part $HOME/.sesh/bin/\(file) && rm -f \(gz)"
+    static let unpack = unpack(file)
+
+    /// rmosh's mosh-server, which the Mac's Terminals start on the Host. It is GPL, so it ships
+    /// beside the helper rather than inside it, pinned by the rmosh commit it was built from.
+    static let mosh = Bundle.main.url(forResource: "mosh-server", withExtension: "json")
+        .flatMap { try? Data(contentsOf: $0) }
+        .flatMap { try? JSONDecoder().decode(Published.self, from: $0) }
+    static let moshFile = (local.flatMap {
+        (try? String(contentsOf: $0.appending(path: "mosh-version"), encoding: .utf8))?.trimmingCharacters(in: .whitespacesAndNewlines)
+    } ?? mosh?.version).map { "mosh-server-\($0)" }
+    static let moshServer = moshFile.map { "~/.sesh/bin/\($0)" }
 
     /// The build's name for what `uname -sm` printed, as in `linux-x86_64`.
     static func name(_ platform: String) -> String { platform.lowercased().replacingOccurrences(of: " ", with: "-") }
 
+    /// Unpacked beside its place and moved in whole, so a command racing it never runs half a file.
+    static func unpack(_ file: String) -> String {
+        let bin = "$HOME/.sesh/bin"
+        return "gunzip -c \(bin)/\(file).gz > \(bin)/\(file).part && chmod 755 \(bin)/\(file).part"
+            + " && mv -f \(bin)/\(file).part \(bin)/\(file) && rm -f \(bin)/\(file).gz"
+    }
+
     /// Fetches the pinned build onto the machine and installs it only if its hash matches.
     static func download(_ name: String) -> String? {
-        guard let published, let sha = published.sha256[name] else { return nil }
-        let url = quote(published.url + "sesh-transcript-\(name).gz")
+        published.flatMap { download("sesh-transcript", as: file, from: $0, for: name) }
+    }
+
+    static func download(_ program: String, as file: String, from published: Published, for name: String) -> String? {
+        guard let sha = published.sha256[name] else { return nil }
+        let gz = "$HOME/.sesh/bin/\(file).gz"
+        let url = quote(published.url + "\(program)-\(name).gz")
         let check = "echo '\(sha)  '\(gz) | { sha256sum -c - || shasum -a 256 -c -; } >/dev/null 2>&1"
         // A stalled download would hold up every Conversation on the machine, so it gives up
         // and the device fetches the helper instead.
         let fetch = "curl -fsSL --connect-timeout 10 --max-time 60 \(url) -o \(gz) || wget -qT 30 -t 1 -O \(gz) \(url)"
-        return "mkdir -p ~/.sesh/bin && { \(fetch); } && \(check) && \(unpack)"
+        return "mkdir -p ~/.sesh/bin && { \(fetch); } && \(check) && \(unpack(file))"
     }
 }
 
