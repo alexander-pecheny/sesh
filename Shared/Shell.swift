@@ -134,7 +134,7 @@ extension Runner {
     func claudeLink(for pane: String) async -> URL? { nil }
 
     func read(_ path: String) async -> Data? {
-        Data(base64Encoded: await run("base64 < \(quote(path)) | tr -d '\\n'").out)
+        Data(base64Encoded: await run("base64 < \(shellPath(path)) | tr -d '\\n'").out)
     }
 }
 

@@ -190,6 +190,11 @@ pub(crate) trait Parse {
         Vec::new()
     }
 
+    /// The entries already read that a later line added to, as an image's file to its message.
+    fn amended(&mut self) -> Vec<String> {
+        Vec::new()
+    }
+
     /// Whether the Agent's last reply ended its turn.
     fn turn_over(&self) -> bool {
         false

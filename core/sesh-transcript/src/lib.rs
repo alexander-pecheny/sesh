@@ -450,6 +450,10 @@ impl Transcript {
         self.parser.dropped()
     }
 
+    pub fn amended(&mut self) -> Vec<String> {
+        self.parser.amended()
+    }
+
     /// Whether the Agent's last reply ended its turn.
     pub fn turn_over(&self) -> bool {
         self.parser.turn_over()

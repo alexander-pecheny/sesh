@@ -340,6 +340,7 @@ impl Follower {
             .read_tail(None, |entries| entries.len() >= self.last)
             .map_err(|err| err.to_string())?;
         transcript.scan_background().map_err(|err| err.to_string())?;
+        transcript.amended();
         slim(&mut transcript.entries);
         let entries = transcript.entries.clone();
         self.transcript = Some(transcript);
@@ -371,6 +372,11 @@ impl Follower {
         let mark = if last.is_some_and(|last| dropped.contains(&last)) { mark - 1 } else { mark };
         for id in dropped {
             self.emit(Event::Dropped(id))?;
+        }
+        for id in transcript.amended() {
+            if let Some(entry) = transcript.entries[..mark].iter().find(|entry| entry.id == id) {
+                self.emit(Event::Entry { entry: entry.clone(), replaces: None })?;
+            }
         }
         slim(&mut transcript.entries[mark..]);
         let entries = transcript.entries[mark..].to_vec();

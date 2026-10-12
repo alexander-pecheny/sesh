@@ -12,6 +12,7 @@ final class DocumentText: ObservableObject {
     @Published var unreachable: String?
     @Published var clash: String?
     @Published private(set) var saving = false
+    @Published private(set) var image: PlatformImage?
 
     let vault: Vault
     let id: String
@@ -30,9 +31,12 @@ final class DocumentText: ObservableObject {
     var path: String? { record?.body.path }
     var machine: Machine { TaskActions.machine(record?.body.machine) }
     var dirty: Bool { loaded && text != (path == nil ? record?.body.text ?? "" : base ?? record?.body.text ?? "") }
-    var markdown: Bool { path.map { ["md", "markdown"].contains(($0 as NSString).pathExtension.lowercased()) } ?? true }
-    /// A file is read-only while its machine cannot be reached, and every non-Markdown file is.
-    var editable: Bool { markdown && unreachable == nil && loaded }
+    private var ext: String? { path.map { ($0 as NSString).pathExtension.lowercased() } }
+    var markdown: Bool { ext.map { ["md", "markdown"].contains($0) } ?? true }
+    var html: Bool { ext.map { ["html", "htm"].contains($0) } ?? false }
+    var picture: Bool { ext.map { ["png", "jpg", "jpeg", "gif", "webp", "heic", "heif", "tiff", "bmp"].contains($0) } ?? false }
+    /// A file is read-only while its machine cannot be reached, and every file but Markdown and HTML is.
+    var editable: Bool { (markdown || html) && unreachable == nil && loaded }
 
     private static let binary: Int32 = 3
 
@@ -48,6 +52,11 @@ final class DocumentText: ObservableObject {
         guard let path else {
             started = record.seq
             return text = record.body.text ?? ""
+        }
+        if picture {
+            image = await machine.read(path).flatMap(PlatformImage.init(data:))
+            unreachable = image == nil ? "\((path as NSString).lastPathComponent) could not be read from \(machine.title)." : nil
+            return
         }
         // An image or other binary, laid out as text, would hang the app on every launch.
         let file = shellPath(path)
