@@ -1,10 +1,10 @@
 {
-  "version": "ddb3a348a1dd",
-  "url": "https://github.com/alexander-pecheny/sesh/releases/download/mosh-server-ddb3a348a1dd/",
+  "version": "1b917501234f",
+  "url": "https://github.com/alexander-pecheny/sesh/releases/download/mosh-server-1b917501234f/",
   "sha256": {
-    "darwin-arm64": "1b7c1f83f917efcb9d0f8765ac0b439dc5ed350b4ab746ea28e1a3f1b1782a26",
-    "darwin-x86_64": "c3a51b013f6fc9cf71b45975bf44048c00c15348490c9ee4fe71baa3e381fae7",
-    "linux-aarch64": "e5f4425b288ebff713111dc393a1bb33a5271b9e18f0ff6b8cfc82c4526e1403",
-    "linux-x86_64": "2b8ab2379e9648bd6ab6a6c0e4715696d46fc237f88f615b3e904302a8e21eaf"
+    "darwin-arm64": "57819211287db069c67e0fe8aa830e01f9afa61fc438f953a36f06580f9e5102",
+    "darwin-x86_64": "6a02b8f559e8c48554ba8229533e5a811aa7fac5bae0aa3fe5366138210db069",
+    "linux-aarch64": "5f846c467c54e4cc5f1bd2b3e489f2abd4d2f28c5cd3547b74440d42bd30dedc",
+    "linux-x86_64": "82a8a71cf48264fcf8e8760cba2e87b9091f342808e09983a40798f0df203bc9"
   }
 }
