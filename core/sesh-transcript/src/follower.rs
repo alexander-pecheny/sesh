@@ -80,12 +80,14 @@ impl Source for Herdr {
 }
 
 
-/// Runs `herdr` with `args` and returns its stdout, or the message it failed with.
+/// Runs Sesh's own herdr, herdr-sesh, with `args` and returns its stdout, or the message it failed with.
 pub fn herdr(args: &[&str]) -> Result<String, String> {
-    let output = Command::new("herdr")
+    let home = std::env::var("HOME").unwrap_or_default();
+    let output = Command::new(format!("{home}/.sesh/bin/herdr-sesh"))
+        .args(["--session", "sesh"])
         .args(args)
         .output()
-        .map_err(|err| format!("herdr: {err}"))?;
+        .map_err(|err| format!("herdr-sesh: {err}"))?;
     if output.status.success() {
         return Ok(String::from_utf8_lossy(&output.stdout).into_owned());
     }

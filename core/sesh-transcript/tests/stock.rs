@@ -19,11 +19,13 @@ impl Host {
         // Short, as the follower's socket path under it must be.
         let root = PathBuf::from(format!("/tmp/sesh-{name}-{}", std::process::id()));
         std::fs::create_dir_all(root.join("claude/projects/-work")).unwrap();
-        let herdr = root.join("herdr");
+        std::fs::create_dir_all(root.join(".sesh/bin")).unwrap();
+        let herdr = root.join(".sesh/bin/herdr-sesh");
         // Answers what it is asked of the pane from files, and notes every input it is given;
         // while a `hold` file exists, an input waits, having said in `playing` that it started.
         let script = r#"#!/bin/sh
-dir="$(dirname "$0")"
+dir="$(dirname "$0")/../.."
+[ "$1 $2" = "--session sesh" ] && shift 2
 case "$1 $2" in
 'pane get') exec cat "$dir/pane.json" ;;
 'pane list') exec cat "$dir/panes.json" ;;
@@ -70,10 +72,8 @@ esac
 
     fn command(&self, args: &[&str]) -> Command {
         let mut command = Command::new(env!("CARGO_BIN_EXE_sesh-transcript"));
-        let path = format!("{}:{}", self.root.display(), std::env::var("PATH").unwrap());
         command
             .args(args)
-            .env("PATH", path)
             .env("HOME", &self.root)
             .env("CLAUDE_CONFIG_DIR", self.root.join("claude"));
         command

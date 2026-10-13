@@ -33,12 +33,12 @@ private final class Box: Runner {
         if command.contains(" worktree add ") { linked.insert(args[2]) }
         if command.contains(" for-each-ref ") { return Ran(status: 0, out: branches.joined(separator: "\n"), err: "") }
         if command.hasSuffix("status --porcelain") { return Ran(status: 0, out: dirty[args[0]] ?? "", err: "") }
-        if command == "herdr workspace list" {
+        if command == "\(Herdr.command) workspace list" {
             let list = workspaces.keys.map { #"{"workspace_id":"\#($0)","label":"Fix it"}"# }.joined(separator: ",")
             return Ran(status: 0, out: #"{"result":{"workspaces":[\#(list)]}}"#, err: "")
         }
-        if command.hasPrefix("herdr workspace close") { workspaces[args[0]] = nil }
-        if command.hasPrefix("herdr worktree remove") {
+        if command.hasPrefix("\(Herdr.command) workspace close") { workspaces[args[0]] = nil }
+        if command.hasPrefix("\(Herdr.command) worktree remove") {
             let ran = remove(workspaces[args[0]] ?? "", force: force)
             if ran.ok { workspaces[args[0]] = nil }
             return ran
@@ -92,7 +92,7 @@ final class CloseTests: XCTestCase {
         let failures = await close.perform(plan, discard: false)
         XCTAssertEqual(failures, [])
         XCTAssertEqual(removals, [])
-        XCTAssertTrue(mac.commands.contains("herdr workspace close 'w1'"))
+        XCTAssertTrue(mac.commands.contains("\(Herdr.command) workspace close 'w1'"))
         XCTAssertEqual(copied, [["s1"]])
         XCTAssertTrue(mac.commands.contains { $0.hasSuffix(" stop 's1:p1'") }, "the Agent is stopped")
     }
@@ -108,8 +108,8 @@ final class CloseTests: XCTestCase {
         XCTAssertTrue(plan.dirty.isEmpty)
         let failures = await close.perform(plan, discard: false)
         XCTAssertEqual(failures, [])
-        XCTAssertEqual(removals, ["herdr worktree remove --workspace 'w1' --force"], "only a clean Worktree is forced, for its submodules")
-        XCTAssertFalse(mac.commands.contains("herdr workspace close 'w1'"))
+        XCTAssertEqual(removals, ["\(Herdr.command) worktree remove --workspace 'w1' --force"], "only a clean Worktree is forced, for its submodules")
+        XCTAssertFalse(mac.commands.contains("\(Herdr.command) workspace close 'w1'"))
     }
 
     func testUncommittedWorkIsFlaggedAndKeptUntilTheUserDiscardsIt() async {
@@ -179,7 +179,7 @@ final class CloseTests: XCTestCase {
         let second = await close.perform(plan, discard: false)
         XCTAssertEqual(first + second, [])
         XCTAssertEqual(removals, [
-            "herdr worktree remove --workspace 'w1' --force", "git -C '/src/lib' worktree remove '/src/lib-fix' --force",
+            "\(Herdr.command) worktree remove --workspace 'w1' --force", "git -C '/src/lib' worktree remove '/src/lib-fix' --force",
         ])
     }
 

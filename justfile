@@ -40,6 +40,10 @@ helpers-release:
 mosh-release:
     ./scripts/release-mosh-server.sh
 
+# Publish the herdr fork as herdr-sesh the same way, pinned in Resources/herdr.json.
+herdr-release:
+    ./scripts/release-herdr.sh
+
 # Render every app-icon variant to build/icons; `just icon NAME` installs one.
 icons:
     uv run scripts/appicon.py --sheet
