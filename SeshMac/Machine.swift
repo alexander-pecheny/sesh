@@ -115,8 +115,30 @@ final class Machine: Runner, Identifiable, Hashable {
         return await stream("mkdir -p \"$(dirname \(target))\" && cat > \(target)", line: nil, input: data)
     }
 
+    /// A shared connection whose far end went away, as a devbox's does when it restarts behind
+    /// its gateway, still answers locally but refuses every session. It is stopped, so the next
+    /// command dials afresh, and a command it kept from running is run once more.
     private func stream(_ command: String, line: ((String) -> Void)?, input: Data? = nil,
                         opened: ((@escaping (String) -> Void) -> Void)? = nil) async -> Ran {
+        let (ran, started) = await launch(command, line: line, input: input, opened: opened)
+        guard let alias, ran.err.contains("Session open refused by peer") else { return ran }
+        FollowerLink.log.notice("\(alias, privacy: .public) refused a session on its shared connection, which is stopped")
+        let stop = Process()
+        stop.executableURL = URL(filePath: "/usr/bin/ssh")
+        stop.arguments = ["-o", "ControlPath=\(Self.controlPath)", "-O", "exit", alias]
+        stop.standardOutput = FileHandle.nullDevice
+        stop.standardError = FileHandle.nullDevice
+        await withCheckedContinuation { done in
+            stop.terminationHandler = { _ in done.resume() }
+            do { try stop.run() } catch { done.resume() }
+        }
+        guard !started, !Task.isCancelled else { return ran }
+        return await launch(command, line: line, input: input, opened: opened).ran
+    }
+
+    /// The command's result, and whether it started at all.
+    private func launch(_ command: String, line: ((String) -> Void)?, input: Data?,
+                        opened: ((@escaping (String) -> Void) -> Void)?) async -> (ran: Ran, started: Bool) {
         // The tether reads stdin itself, so a stream that is written to goes without one.
         let process = process(line == nil || opened != nil ? command : Self.tethered(command), piped: line != nil)
         let out = Pipe(), err = Pipe()
@@ -146,17 +168,18 @@ final class Machine: Runner, Identifiable, Hashable {
         drain(err) { collected.err.append($0) }
         finished.enter()
         return await withTaskCancellationHandler {
-            await withCheckedContinuation { (done: CheckedContinuation<Ran, Never>) in
+            await withCheckedContinuation { (done: CheckedContinuation<(ran: Ran, started: Bool), Never>) in
                 process.terminationHandler = { _ in finished.leave() }
                 finished.notify(queue: .main) { MainActor.assumeIsolated {
                     self.running.remove(process)
                     try? self.tethers.removeValue(forKey: ObjectIdentifier(process))?.fileHandleForWriting.close()
                     lines.flush()
                     let out = String(decoding: collected.out.data, as: UTF8.self)
-                    done.resume(returning: Ran(
+                    let marked = out.range(of: Self.mark + "\n")
+                    done.resume(returning: (Ran(
                         status: process.terminationStatus,
-                        out: out.range(of: Self.mark + "\n").map { String(out[$0.upperBound...]) } ?? out,
-                        err: String(decoding: collected.err.data, as: UTF8.self)))
+                        out: marked.map { String(out[$0.upperBound...]) } ?? out,
+                        err: String(decoding: collected.err.data, as: UTF8.self)), marked != nil || lines.greeted))
                 } }
                 do {
                     try process.run()
@@ -176,7 +199,7 @@ final class Machine: Runner, Identifiable, Hashable {
                         opened { text in try? feed.fileHandleForWriting.write(contentsOf: Data((text + "\n").utf8)) }
                     }
                 } catch {
-                    done.resume(returning: Ran(status: -1, out: "", err: error.localizedDescription))
+                    done.resume(returning: (Ran(status: -1, out: "", err: error.localizedDescription), false))
                 }
             }
         } onCancel: {
@@ -203,7 +226,7 @@ private final class Collector: @unchecked Sendable {
 private final class Greeted {
     private let line: ((String) -> Void)?
     private var lines = LineSplitter()
-    private var greeted = false
+    private(set) var greeted = false
 
     init(_ line: ((String) -> Void)?) { self.line = line }
 

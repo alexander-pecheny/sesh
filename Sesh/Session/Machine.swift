@@ -42,8 +42,9 @@ final class Machine: Runner, Identifiable, Hashable {
     }
 
     var title: String { host?.title ?? alias ?? "the Mac" }
-    /// The Link runs streams over ssh even when its Terminals use mosh.
-    var carrier: String? { alias == nil ? nil : "ssh" }
+    /// Streams run over mosh pipes wherever Sesh carries a mosh-server to put on the Host.
+    var carrier: String? { alias == nil ? nil : Helper.moshServer == nil ? "ssh" : "mosh" }
+    var talks: Bool { Helper.moshServer != nil }
 
     /// The Link to the Host, made again when the Host was edited since.
     var link: HostLink? {
@@ -68,7 +69,14 @@ final class Machine: Runner, Identifiable, Hashable {
 
     func stream(_ command: String, line: @escaping (String) -> Void) async -> Ran {
         guard let link else { return unreachable }
-        return await link.stream(command, line: line)
+        guard let server = Helper.moshServer else { return await link.stream(command, line: line) }
+        return await link.pipe(command, server: server, opened: nil, line: line)
+    }
+
+    func stream(_ command: String, opened: @escaping (@escaping (String) -> Void) -> Void, line: @escaping (String) -> Void) async -> Ran {
+        guard let link else { return unreachable }
+        guard let server = Helper.moshServer else { return await link.stream(command, line: line) }
+        return await link.pipe(command, server: server, opened: opened, line: line)
     }
 
     func put(_ data: Data, to path: String) async -> Ran {

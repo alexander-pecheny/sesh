@@ -20,10 +20,12 @@ sequence number, so a reconnect resumes from the last number seen.
 
 ## Consequences
 
-The phone's ssh streams cannot write to a running command's stdin, so a device names what
-it wants on `attach`'s command line instead: `--sessions` for every summary, and
-`--watch KEY:SEQ` for each session it shows, from the last item it has. Opening another
-session starts another `attach`, and earlier pages come through a one-shot `page`. The
+Both devices run their streams over mosh pipes, which carry stdin, so one `attach --sessions`
+per machine also carries a `watch` or `unwatch` line for each session the device opens or
+leaves. A stream that cannot be written to, as over plain ssh from the phone, names what it
+wants on `attach`'s command line instead: `--watch KEY:SEQ` for each session it shows, from
+the last item it has, so opening another session starts another `attach`. Earlier pages come
+through a one-shot `page`. The
 follower a device reaches is the one for its protocol and log, which a newer helper build
 takes over (ADR 0014), so a device never talks to a follower that speaks another protocol.
 

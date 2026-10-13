@@ -112,14 +112,39 @@ final class HostLink: ObservableObject, Identifiable {
         return await run("mkdir -p \"$(dirname \(target))\" && cat ~/\(staged) > \(target); s=$?; rm -f ~/\(staged); exit $s")
     }
 
-    private func call(line: ((String) -> Void)? = nil, start: (OpaquePointer) -> UInt32) async -> Ran {
-        guard !paused else { return Ran(status: -1, out: "", err: "not connected") }
+    /// As `stream`, but over a mosh pipe that `server` starts on the Host: once running it needs
+    /// nothing of the Link, so it roams, outlives the Link's drop in the background and picks
+    /// up on waking. `opened` is handed a way to write lines to the command's stdin.
+    func pipe(_ command: String, server: String, opened: ((@escaping (String) -> Void) -> Void)?,
+              line: @escaping (String) -> Void) async -> Ran {
+        if let problem = await up() { return Ran(status: -1, out: "", err: problem) }
+        guard let handle, !Task.isCancelled else { return Ran(status: -1, out: "", err: "not connected") }
+        let bridge = PipeBridge(line: line)
+        let ran = await withTaskCancellationHandler {
+            await withCheckedContinuation { ended in
+                bridge.ended = ended
+                bridge.pipe = sesh_session_pipe(handle, server, command, PipeBridge.callbacks, Unmanaged.passRetained(bridge).toOpaque())
+                opened?(bridge.write)
+            }
+        } onCancel: {
+            Task { @MainActor in bridge.close() }
+        }
+        if ran.status == -1, ran.err.hasPrefix("the connection to the Host is gone") { drop(ran.err) }
+        return ran
+    }
+
+    /// Why the Link is not up, after dialling it if need be; nil once it is.
+    private func up() async -> String? {
+        guard !paused else { return "not connected" }
         if !linked {
             if handle == nil { connect() }
-            guard await withCheckedContinuation({ linking.append($0) }) else {
-                return Ran(status: -1, out: "", err: message.isEmpty ? "not connected" : message)
-            }
+            guard await withCheckedContinuation({ linking.append($0) }) else { return message.isEmpty ? "not connected" : message }
         }
+        return nil
+    }
+
+    private func call(line: ((String) -> Void)? = nil, start: (OpaquePointer) -> UInt32) async -> Ran {
+        if let problem = await up() { return Ran(status: -1, out: "", err: problem) }
         guard let handle, !Task.isCancelled else { return Ran(status: -1, out: "", err: "not connected") }
         let id = start(handle)
         guard id != 0 else { return Ran(status: -1, out: "", err: "not connected") }
@@ -336,5 +361,60 @@ private final class LinkBridge {
 
     private static func of(_ userdata: UnsafeMutableRawPointer) -> LinkBridge {
         Unmanaged<LinkBridge>.fromOpaque(userdata).takeUnretainedValue()
+    }
+}
+
+/// One mosh pipe's way back from the core, which calls on its own threads.
+@MainActor
+private final class PipeBridge {
+    var pipe: OpaquePointer?
+    var ended: CheckedContinuation<Ran, Never>?
+    private var lines = LineSplitter()
+    private let line: (String) -> Void
+    private var closed = false
+
+    init(line: @escaping (String) -> Void) { self.line = line }
+
+    func write(_ text: String) {
+        guard let pipe, !closed else { return }
+        let bytes = Array((text + "\n").utf8)
+        sesh_pipe_write(pipe, bytes, UInt(bytes.count))
+    }
+
+    func close() {
+        closed = true
+        if let pipe { sesh_pipe_close(pipe) }
+    }
+
+    private func output(_ data: Data) { lines.feed(data).forEach(line) }
+
+    private func end(_ ran: Ran) {
+        if let rest = lines.flush() { line(rest) }
+        if let pipe { sesh_pipe_free(pipe) }
+        pipe = nil
+        ended?.resume(returning: ran)
+        ended = nil
+    }
+
+    static let callbacks = sesh_pipe_callbacks_t(
+        on_output: { userdata, bytes, len in
+            guard let userdata, let bytes else { return }
+            let data = Data(bytes: bytes, count: Int(len))
+            let bridge = of(userdata)
+            DispatchQueue.main.async { bridge.output(data) }
+        },
+        on_end: { userdata, status, err in
+            guard let userdata else { return }
+            let ran = Ran(status: status, out: "", err: err.map { String(cString: $0) } ?? "")
+            let bridge = of(userdata)
+            DispatchQueue.main.async { bridge.end(ran) }
+        },
+        on_release: { userdata in
+            guard let userdata else { return }
+            Unmanaged<PipeBridge>.fromOpaque(userdata).release()
+        })
+
+    private nonisolated static func of(_ userdata: UnsafeMutableRawPointer) -> PipeBridge {
+        Unmanaged<PipeBridge>.fromOpaque(userdata).takeUnretainedValue()
     }
 }

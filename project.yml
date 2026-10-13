@@ -47,6 +47,7 @@ targets:
       - path: Resources/licenses.json
       - path: Resources/helpers.json
       - path: Resources/herdr.json
+      - path: Resources/mosh-server.json
     dependencies:
       - framework: Frameworks/GhosttyKit.xcframework
         embed: false

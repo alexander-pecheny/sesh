@@ -110,6 +110,9 @@ async fn drive(config: Config, context: Context) -> Result<(), String> {
                     events.ran(id, &Ran { status, stdout: String::new(), stderr });
                 });
             }
+            Some(Command::Pipe(start)) => {
+                tokio::spawn(crate::pipe::run(handle.clone(), start));
+            }
             Some(Command::Close) | None => break,
             Some(_) => {}
         }

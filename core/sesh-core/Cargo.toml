@@ -11,6 +11,7 @@ crate-type = ["staticlib", "rlib"]
 log = "0.4"
 mosh = { path = "../../vendor/rmosh/crates/mosh" }
 mosh-client = { path = "../../vendor/rmosh/crates/mosh-client" }
+mosh-pipe = { path = "../../vendor/rmosh/crates/mosh-pipe" }
 mosh-sys = { path = "../../vendor/rmosh/crates/mosh-sys" }
 russh-sftp = "3"
 russh = { version = "0.54", default-features = false, features = ["flate2", "ring", "rsa"] }
