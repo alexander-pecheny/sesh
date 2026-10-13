@@ -417,11 +417,13 @@ fn run(record: Option<(PathBuf, String)>) -> Result<i32> {
             let _ = std::fs::remove_file(&path);
             return Ok(0);
         }
-        // Until the next tick, a device is answered as soon as it asks.
+        // Until the next tick, a device is answered as soon as it asks, and a long answer goes on
+        // as soon as the device's socket takes more.
         while let Some(rest) = TICK.checked_sub(started.elapsed()) {
-            let mut fds = vec![listener.as_raw_fd()];
-            fds.extend(clients.iter().filter(|client| !client.done_asking).map(|client| client.stream.as_raw_fd()));
-            if !crate::poll::readable(&fds, rest) {
+            let mut reads = vec![listener.as_raw_fd()];
+            reads.extend(clients.iter().filter(|client| !client.done_asking).map(|client| client.stream.as_raw_fd()));
+            let writes: Vec<_> = clients.iter().filter(|client| !client.write.is_empty()).map(|client| client.stream.as_raw_fd()).collect();
+            if !crate::poll::ready(&reads, &writes, rest) {
                 break;
             }
             accept(&listener, &mut clients);

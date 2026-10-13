@@ -29,9 +29,12 @@ fn wait(descriptors: &mut [PollFd], timeout: Duration) -> bool {
     unsafe { poll(descriptors.as_mut_ptr(), descriptors.len() as Nfds, millis) > 0 }
 }
 
-/// Waits up to `timeout` for any of `fds` to have something to read or to hang up.
-pub fn readable(fds: &[RawFd], timeout: Duration) -> bool {
-    let mut descriptors: Vec<PollFd> = fds.iter().map(|&fd| PollFd { fd, events: POLLIN, revents: 0 }).collect();
+/// Waits up to `timeout` for any of `reads` to have something to read or to hang up, or any
+/// of `writes` to take more.
+pub fn ready(reads: &[RawFd], writes: &[RawFd], timeout: Duration) -> bool {
+    let mut descriptors: Vec<PollFd> = reads.iter().map(|&fd| PollFd { fd, events: POLLIN, revents: 0 })
+        .chain(writes.iter().map(|&fd| PollFd { fd, events: POLLOUT, revents: 0 }))
+        .collect();
     wait(&mut descriptors, timeout)
 }
 
