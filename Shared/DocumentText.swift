@@ -35,8 +35,10 @@ final class DocumentText: ObservableObject {
     var markdown: Bool { ext.map { ["md", "markdown"].contains($0) } ?? true }
     var html: Bool { ext.map { ["html", "htm"].contains($0) } ?? false }
     var picture: Bool { ext.map { ["png", "jpg", "jpeg", "gif", "webp", "heic", "heif", "tiff", "bmp"].contains($0) } ?? false }
-    /// A file is read-only while its machine cannot be reached, and every file but Markdown and HTML is.
-    var editable: Bool { (markdown || html) && unreachable == nil && loaded }
+    /// Any other text file, which opens straight in the code editor.
+    var code: Bool { !markdown && !html && !picture }
+    /// A file is read-only while its machine cannot be reached or it is not text.
+    var editable: Bool { !picture && unreachable == nil && loaded }
 
     private static let binary: Int32 = 3
 

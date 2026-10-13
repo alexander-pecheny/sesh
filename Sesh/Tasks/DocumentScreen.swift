@@ -1,6 +1,6 @@
 import SwiftUI
 
-/// A Document of the Task, to read, and to edit when it is Markdown.
+/// A Document of the Task, to read and edit. Code opens straight in the editor.
 struct DocumentScreen: View {
     @Environment(\.colorScheme) private var colorScheme
     @EnvironmentObject private var library: Library
@@ -21,7 +21,9 @@ struct DocumentScreen: View {
                     .padding(.horizontal, Metric.pad)
                     .padding(.bottom, Metric.gap)
             }
-            if editing {
+            if document.code, document.editable {
+                CodeEditor(text: $document.text, path: path ?? "")
+            } else if editing {
                 PlainText(field: field, text: $document.text, font: .monospacedSystemFont(ofSize: Metric.label, weight: .regular))
                     .padding(Metric.gap)
                     .onAppear { DispatchQueue.main.async { field.focus() } }
@@ -65,13 +67,15 @@ struct DocumentScreen: View {
             Spacer()
             if document.saving { ProgressView().controlSize(.small) }
             if document.dirty { Text("Edited").font(.ui(Metric.small)).foregroundStyle(flavour(.subtext0)) }
-            Picker("Mode", selection: $editing) {
-                Text("Read").tag(false)
-                Text("Edit").tag(true)
+            if !document.code {
+                Picker("Mode", selection: $editing) {
+                    Text("Read").tag(false)
+                    Text("Edit").tag(true)
+                }
+                .pickerStyle(.segmented)
+                .fixedSize()
+                .disabled(!document.editable)
             }
-            .pickerStyle(.segmented)
-            .fixedSize()
-            .disabled(!document.editable)
             Button("Save") { Task { await document.write(force: false) } }
                 .font(.ui(Metric.label))
                 .disabled(!document.dirty || document.saving)
