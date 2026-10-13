@@ -16,6 +16,8 @@ final class Machine: Runner, Identifiable, Hashable {
 
     nonisolated var id: String { alias ?? "" }
     var title: String { alias ?? "This Mac" }
+    var carrier: String? { alias == nil ? nil : Helper.moshServer == nil ? "ssh" : "mosh" }
+    var talks: Bool { true }
 
     static let mac = Machine(alias: nil)
     /// The one ssh connection per Host that commands, streams and mosh's start-up all share.
@@ -83,6 +85,10 @@ final class Machine: Runner, Identifiable, Hashable {
         await stream(command, line: Optional(line))
     }
 
+    func stream(_ command: String, opened: @escaping (@escaping (String) -> Void) -> Void, line: @escaping (String) -> Void) async -> Ran {
+        await stream(command, line: line, opened: opened)
+    }
+
     private var home: String?
     private(set) lazy var follower = FollowerLink(self)
     private lazy var installer = HelperInstaller(
@@ -109,8 +115,10 @@ final class Machine: Runner, Identifiable, Hashable {
         return await stream("mkdir -p \"$(dirname \(target))\" && cat > \(target)", line: nil, input: data)
     }
 
-    private func stream(_ command: String, line: ((String) -> Void)?, input: Data? = nil) async -> Ran {
-        let process = process(line == nil ? command : Self.tethered(command), piped: line != nil)
+    private func stream(_ command: String, line: ((String) -> Void)?, input: Data? = nil,
+                        opened: ((@escaping (String) -> Void) -> Void)? = nil) async -> Ran {
+        // The tether reads stdin itself, so a stream that is written to goes without one.
+        let process = process(line == nil || opened != nil ? command : Self.tethered(command), piped: line != nil)
         let out = Pipe(), err = Pipe()
         process.standardOutput = out
         process.standardError = err
@@ -162,6 +170,11 @@ final class Machine: Runner, Identifiable, Hashable {
                         try? feed.fileHandleForWriting.close()
                     }
                     if let feed, input == nil { tethers[ObjectIdentifier(process)] = feed }
+                    if let feed, let opened {
+                        // A write after the command has gone fails rather than killing the app.
+                        _ = fcntl(feed.fileHandleForWriting.fileDescriptor, F_SETNOSIGPIPE, 1)
+                        opened { text in try? feed.fileHandleForWriting.write(contentsOf: Data((text + "\n").utf8)) }
+                    }
                 } catch {
                     done.resume(returning: Ran(status: -1, out: "", err: error.localizedDescription))
                 }

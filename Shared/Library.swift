@@ -523,7 +523,7 @@ final class Library: ObservableObject {
     }
 
     func reload(_ id: String) {
-        conversations[id] = nil
+        conversations.removeValue(forKey: id)?.unfollow()
         terminalFace.remove(id)
         reloads[id, default: 0] += 1
     }

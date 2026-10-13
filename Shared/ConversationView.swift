@@ -36,9 +36,6 @@ struct ConversationView: View {
             if !conversation.loaded { Skeleton(exchanges: 3).padding(Metric.wide) }
         }
         .overlay(alignment: .top) {
-            if conversation.syncing { SyncBar(tint: flavour(.mauve)) }
-        }
-        .overlay(alignment: .top) {
             if let notice {
                 Text(notice)
                     .font(.ui(Metric.note).weight(.medium))
@@ -89,7 +86,8 @@ struct ConversationView: View {
                 }
             }
         }
-        .task { await conversation.follow() }
+        .onAppear { conversation.shown() }
+        .onDisappear { conversation.hidden() }
         .environment(\.openURL, links)
         .onAppear(perform: appeared)
         .onReceive(NotificationCenter.default.publisher(for: .NSCalendarDayChanged).receive(on: RunLoop.main)) { _ in
@@ -182,14 +180,18 @@ struct ConversationView: View {
         let agent = conversation.agent?.title ?? "Agent"
         if resume != nil { return "Ended" }
         if conversation.starting { return "Starting \(agent)" }
-        if conversation.syncing { return "Syncing…" }
-        switch conversation.state {
-        case "working": return "\(agent) is working"
-        case "background": return "\(agent) is waiting on background work"
-        case "blocked": return "\(agent) needs you"
-        case "done", "idle": return "\(agent) is ready"
-        default: return agent
+        let over = conversation.runner?.carrier.map { " over \($0)" } ?? ""
+        if conversation.syncing { return "Syncing…" + over }
+        let state = switch conversation.state {
+        case "working": "\(agent) is working"
+        case "background": "\(agent) is waiting on background work"
+        case "blocked": "\(agent) needs you"
+        case "done", "idle": "\(agent) is ready"
+        default: agent
         }
+        guard let time = conversation.syncTime else { return state }
+        let seconds = Double(time.components.seconds) + Double(time.components.attoseconds) / 1e18
+        return "\(state). Last sync took \(String(format: "%.3g", seconds))s\(over)"
     }
 
     private var input: some View {
@@ -1736,32 +1738,3 @@ struct Skeleton: View {
     }
 }
 
-/// A thin bar sliding along the top while the follower catches the Conversation up. It waits
-/// a moment first, so a catch-up that takes no time shows nothing.
-private struct SyncBar: View {
-    let tint: Color
-    @State private var shown = false
-    @State private var moving = false
-
-    private static let height: CGFloat = 2
-    private static let delay = Duration.milliseconds(400)
-    private static let sweep = 1.2
-
-    var body: some View {
-        GeometryReader { box in
-            Capsule().fill(tint)
-                .frame(width: box.size.width / 3, height: Self.height)
-                .offset(x: moving ? box.size.width : -box.size.width / 3)
-        }
-        .frame(height: Self.height)
-        .clipped()
-        .opacity(shown ? 1 : 0)
-        .allowsHitTesting(false)
-        .accessibilityLabel("Syncing")
-        .task {
-            try? await Task.sleep(for: Self.delay)
-            shown = true
-            withAnimation(.linear(duration: Self.sweep).repeatForever(autoreverses: false)) { moving = true }
-        }
-    }
-}

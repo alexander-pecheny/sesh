@@ -141,12 +141,18 @@ protocol Runner: AnyObject {
     /// Runs `command` until it exits or the calling task is cancelled, handing each line of
     /// its stdout to `line` as it arrives.
     func stream(_ command: String, line: @escaping (String) -> Void) async -> Ran
+    /// Whether a stream can be written to, which the phone's cannot (ADR 0012).
+    var talks: Bool { get }
+    /// As `stream`, handing `opened` a way to write lines to the command's stdin once it runs.
+    func stream(_ command: String, opened: @escaping (@escaping (String) -> Void) -> Void, line: @escaping (String) -> Void) async -> Ran
     /// Writes `data` to `path` on the machine, relative to its home folder unless absolute.
     func put(_ data: Data, to path: String) async -> Ran
     /// Puts the pinned helper in place and herdr's server up, once a run, as every use of a
     /// machine asks first.
     func prepare() async -> String?
     var follower: FollowerLink { get }
+    /// What streams from the machine travel over, as "mosh" or "ssh"; nil on this device itself.
+    var carrier: String? { get }
 
     /// Saves a pasted image on the machine and returns its absolute path there.
     func upload(_ data: Data, ext: String) async -> String?
@@ -159,6 +165,11 @@ protocol Runner: AnyObject {
 }
 
 extension Runner {
+    var carrier: String? { nil }
+    var talks: Bool { false }
+    func stream(_ command: String, opened: @escaping (@escaping (String) -> Void) -> Void, line: @escaping (String) -> Void) async -> Ran {
+        await stream(command, line: line)
+    }
     func upload(_ data: Data, ext: String) async -> String? { nil }
     func claudeLink(for pane: String) async -> URL? { nil }
 
