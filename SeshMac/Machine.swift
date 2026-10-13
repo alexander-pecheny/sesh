@@ -50,9 +50,18 @@ final class Machine: Runner, Identifiable, Hashable {
         "{ \(command)\n} & child=$!; { cat >/dev/null; kill $child 2>/dev/null; } >/dev/null 2>&1 & wait $child"
     }
 
-    private func process(_ command: String) -> Process {
+    private func process(_ command: String, piped: Bool = false) -> Process {
         let process = Process()
-        if let alias {
+        if let alias, piped, let server = Helper.moshServer {
+            // A stream outlives sleep and roaming over its own mosh pipe, which the shared ssh
+            // connection only starts; a dead TCP link took a minute to notice.
+            let ssh = "ssh -o BatchMode=yes -o ControlMaster=auto -o ControlPath=\(Self.controlPath) -o ControlPersist=600"
+            process.executableURL = Bundle.main.bundleURL.appending(path: "Contents/MacOS/mosh")
+            process.arguments = [
+                "--pipe", "--experimental-remote-ip=remote", "--server=\(server)", "--ssh=\(ssh)", alias, "--",
+                "sh", "-c", "exec \"$SHELL\" -lic \(quote("echo \(Self.mark); " + command))",
+            ]
+        } else if let alias {
             process.executableURL = URL(filePath: "/usr/bin/ssh")
             process.arguments = [
                 "-o", "BatchMode=yes", "-o", "ControlMaster=auto", "-o", "ControlPath=\(Self.controlPath)",
@@ -101,7 +110,7 @@ final class Machine: Runner, Identifiable, Hashable {
     }
 
     private func stream(_ command: String, line: ((String) -> Void)?, input: Data? = nil) async -> Ran {
-        let process = process(line == nil ? command : Self.tethered(command))
+        let process = process(line == nil ? command : Self.tethered(command), piped: line != nil)
         let out = Pipe(), err = Pipe()
         process.standardOutput = out
         process.standardError = err
