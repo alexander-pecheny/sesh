@@ -212,23 +212,28 @@ enum TaskActions {
         #endif
     }
 
-    /// Starts a session's Agent again on its last Transcript, in a fresh pane in its folder.
+    /// Starts a session's Agent again on its last Transcript: in the shell its Agent exited to,
+    /// or in a fresh pane in its folder.
     static func resume(_ session: Record, of task: Record, in vault: Vault) async -> String? {
         guard let agent = session.body.agent.flatMap(Agent.init), let transcript = session.body.transcripts?.last else {
             return "Sesh holds no Transcript of this Agent session, so there is nothing to resume."
         }
         let machine = machine(session.body.machine)
         if let problem = await machine.prepare() { return problem }
-        let opened: Herdr.Opened
-        switch await pane(for: task, on: machine, label: agent.title, folder: session.body.path) {
-        case .failure(let failure): return failure.message
-        case .success(let value): opened = value.0
+        var pane = ""
+        if let left = session.body.pane, case .found(let found) = await Herdr.look(for: left, on: machine), found.agent == nil {
+            pane = left
+        } else {
+            switch await self.pane(for: task, on: machine, label: agent.title, folder: session.body.path) {
+            case .failure(let failure): return failure.message
+            case .success(let value): pane = value.0.pane
+            }
         }
         let name = Names.slug("\(task.body.title ?? "task")-\(agent.rawValue)")
         if let problem = await Herdr.launch(
-            agent, name: name, pane: opened.pane, resuming: transcript, config: claudeConfig(vault, on: machine), on: machine) { return problem }
+            agent, name: name, pane: pane, resuming: transcript, config: claudeConfig(vault, on: machine), on: machine) { return problem }
         var record = vault.records[session.id] ?? session
-        record.body.pane = opened.pane
+        record.body.pane = pane
         vault.write(record)
         return nil
     }
