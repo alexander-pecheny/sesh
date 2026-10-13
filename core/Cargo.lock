@@ -1798,6 +1798,7 @@ dependencies = [
  "log",
  "mosh",
  "mosh-client",
+ "mosh-pipe",
  "mosh-sys",
  "russh",
  "russh-sftp",

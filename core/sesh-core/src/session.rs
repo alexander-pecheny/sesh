@@ -74,6 +74,7 @@ pub enum Command {
     Stream(u32, String),
     Cancel(u32),
     Put(u32, PathBuf, String),
+    Pipe(crate::pipe::Start),
 }
 
 #[derive(Default)]
@@ -170,6 +171,10 @@ impl Session {
         let id = self.next_request.fetch_add(1, Ordering::Relaxed) + 1;
         let _ = self.commands.send(Command::Put(id, local, remote));
         id
+    }
+
+    pub fn pipe(&self, start: crate::pipe::Start) {
+        let _ = self.commands.send(Command::Pipe(start));
     }
 
     pub fn cancel(&self, id: u32) {

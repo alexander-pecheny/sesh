@@ -14,6 +14,7 @@ use std::sync::Arc;
 use crate::flags::{self, Transport};
 use crate::link::{self, Ran};
 use crate::mosh;
+use crate::pipe;
 use crate::session::{self, Prompt, Session, State, Upload};
 use crate::ssh;
 
@@ -127,6 +128,53 @@ pub struct sesh_link_config_t {
 
 pub struct sesh_session_t {
     session: Session,
+}
+
+/// A pipe's output, as it arrives and with no regard for line ends, then its end: the
+/// command's status (-1 when it never ran, 255 when the Host stopped answering) and its
+/// stderr or why it failed. `on_release` is the last call on `userdata`.
+#[repr(C)]
+#[derive(Clone, Copy)]
+pub struct sesh_pipe_callbacks_t {
+    pub on_output: Option<extern "C" fn(*mut c_void, *const u8, usize)>,
+    pub on_end: Option<extern "C" fn(*mut c_void, i32, *const c_char)>,
+    pub on_release: Option<extern "C" fn(*mut c_void)>,
+}
+
+pub struct sesh_pipe_t {
+    pipe: pipe::Pipe,
+}
+
+struct PipeSink {
+    callbacks: sesh_pipe_callbacks_t,
+    userdata: *mut c_void,
+}
+
+// As for Sink: the embedder promises `userdata` outlives the pipe.
+unsafe impl Send for PipeSink {}
+unsafe impl Sync for PipeSink {}
+
+impl Drop for PipeSink {
+    fn drop(&mut self) {
+        if let Some(callback) = self.callbacks.on_release {
+            callback(self.userdata);
+        }
+    }
+}
+
+impl pipe::Events for PipeSink {
+    fn output(&self, bytes: &[u8]) {
+        if let Some(callback) = self.callbacks.on_output {
+            callback(self.userdata, bytes.as_ptr(), bytes.len());
+        }
+    }
+
+    fn ended(&self, status: i32, stderr: &str) {
+        if let Some(callback) = self.callbacks.on_end {
+            let stderr = CString::new(stderr.replace('\0', "")).unwrap_or_default();
+            callback(self.userdata, status, stderr.as_ptr());
+        }
+    }
 }
 
 struct Sink {
@@ -380,6 +428,57 @@ pub unsafe extern "C" fn sesh_session_stream(session: *mut sesh_session_t, comma
     match (session.as_ref(), text(command)) {
         (Some(session), Some(command)) => session.session.stream(command),
         _ => 0,
+    }
+}
+
+/// Runs `command` in the login shell of a Link's Host over a mosh pipe: `server`, a
+/// mosh-server that knows pipes, is started over the Link, and the pipe then roams and
+/// outlives the Link. Returns NULL only when an argument is NULL; any failure arrives on
+/// `on_end`. Free the pipe with `sesh_pipe_free` once `on_end` has come.
+#[no_mangle]
+pub unsafe extern "C" fn sesh_session_pipe(
+    session: *mut sesh_session_t,
+    server: *const c_char,
+    command: *const c_char,
+    callbacks: sesh_pipe_callbacks_t,
+    userdata: *mut c_void,
+) -> *mut sesh_pipe_t {
+    let (Some(session), Some(server), Some(command)) = (session.as_ref(), text(server), text(command)) else {
+        return std::ptr::null_mut();
+    };
+    let sink = Arc::new(PipeSink { callbacks, userdata });
+    match pipe::Pipe::new(server, command, sink.clone()) {
+        Ok((pipe, start)) => {
+            session.session.pipe(start);
+            Box::into_raw(Box::new(sesh_pipe_t { pipe }))
+        }
+        Err(e) => {
+            pipe::Events::ended(&*sink, -1, &e.to_string());
+            std::ptr::null_mut()
+        }
+    }
+}
+
+/// Passes `bytes` to the command's stdin.
+#[no_mangle]
+pub unsafe extern "C" fn sesh_pipe_write(pipe: *mut sesh_pipe_t, bytes: *const u8, len: usize) {
+    if let (Some(pipe), false) = (pipe.as_ref(), bytes.is_null()) {
+        pipe.pipe.write(std::slice::from_raw_parts(bytes, len));
+    }
+}
+
+/// Stops the command; `on_end` still follows.
+#[no_mangle]
+pub unsafe extern "C" fn sesh_pipe_close(pipe: *mut sesh_pipe_t) {
+    if let Some(pipe) = pipe.as_ref() {
+        pipe.pipe.close();
+    }
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn sesh_pipe_free(pipe: *mut sesh_pipe_t) {
+    if !pipe.is_null() {
+        drop(Box::from_raw(pipe));
     }
 }
 

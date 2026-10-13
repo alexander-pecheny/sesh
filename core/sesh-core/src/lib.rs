@@ -4,6 +4,7 @@ pub mod flags;
 pub mod known_hosts;
 pub mod link;
 pub mod mosh;
+pub mod pipe;
 pub mod session;
 pub mod ssh;
 pub mod upload;
