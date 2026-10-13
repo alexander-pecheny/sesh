@@ -20,7 +20,7 @@ enum Highlight {
         return coloured
     }
 
-    private static func colour(_ text: String, language: String?, dark: Bool, size: CGFloat) -> NSAttributedString? {
+    static func colour(_ text: String, language: String?, dark: Bool, size: CGFloat) -> NSAttributedString? {
         guard let highlighter, let language = language.flatMap(name) else { return nil }
         let wanted = dark ? "atom-one-dark" : "atom-one-light"
         if theme != wanted {

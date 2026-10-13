@@ -166,10 +166,11 @@ One item in a Journal: Markdown text stamped with a moment.
 _Avoid_: note, post, record
 
 **Document**:
-A Markdown file shown in a Tab of a Task, for reading and editing. It lives either in the
-Vault or on a Host, as a file an Agent wrote.
-Clicking a Markdown path in a Conversation opens it as a Document in the same Task; any
-other file opens read-only. A Task keeps every Document it has opened, so a closed one can
+A file shown in a Tab of a Task, for reading and editing. It lives either in the Vault, as
+Markdown, or on a Host, as a file an Agent wrote.
+Clicking a path in a Conversation opens it as a Document in the same Task. Markdown and
+HTML switch between reading and editing; any other text file opens in a code editor, and
+images and binaries open read-only. A Task keeps every Document it has opened, so a closed one can
 be reopened.
 _Avoid_: note, page, file
 

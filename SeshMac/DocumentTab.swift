@@ -2,7 +2,8 @@ import SwiftUI
 import WebKit
 
 /// A Document of the Task: Markdown kept in the Vault, or a file on a machine that the Vault
-/// remembers the last text of. Edits to a file go to the file itself (ADR 0008).
+/// remembers the last text of. Edits to a file go to the file itself (ADR 0008); code is always
+/// open for editing, while Markdown and HTML switch between reading and editing.
 struct DocumentTab: View {
     @Environment(\.colorScheme) private var colorScheme
     @EnvironmentObject private var library: Library
@@ -23,7 +24,9 @@ struct DocumentTab: View {
                     .frame(maxWidth: .infinity, alignment: .leading)
                     .padding(Metric.gap)
             }
-            if editing {
+            if document.code, document.editable {
+                CodeEditor(text: $document.text, path: path ?? "")
+            } else if editing {
                 PlainText(field: field, text: $document.text, font: .monospacedSystemFont(ofSize: Metric.label, weight: .regular))
                     .padding(Metric.pad)
                     .onAppear { DispatchQueue.main.async { field.focus() } }
@@ -73,16 +76,18 @@ struct DocumentTab: View {
             Spacer()
             if document.saving { ProgressView().controlSize(.small) }
             if document.dirty { Text("Edited").font(.caption).foregroundStyle(.secondary) }
-            Picker("", selection: $editing) {
-                Text("Read").tag(false)
-                Text("Edit").tag(true)
-            }
-            .pickerStyle(.segmented)
-            .fixedSize()
-            .disabled(!document.editable)
-            .help("Read or edit (⇧⌘E)")
-            .background {
-                Button("") { if document.editable { editing.toggle() } }.keyboardShortcut("e", modifiers: [.command, .shift]).hidden()
+            if !document.code {
+                Picker("", selection: $editing) {
+                    Text("Read").tag(false)
+                    Text("Edit").tag(true)
+                }
+                .pickerStyle(.segmented)
+                .fixedSize()
+                .disabled(!document.editable)
+                .help("Read or edit (⇧⌘E)")
+                .background {
+                    Button("") { if document.editable { editing.toggle() } }.keyboardShortcut("e", modifiers: [.command, .shift]).hidden()
+                }
             }
             Button("Save") { Task { await document.write(force: false) } }
                 .keyboardShortcut("s")
@@ -93,7 +98,7 @@ struct DocumentTab: View {
     }
 }
 
-/// A source file, coloured and selectable, at its own width: code is not reflowed.
+/// A source file that cannot be edited, coloured and selectable, at its own width: code is not reflowed.
 private struct CodeView: NSViewRepresentable {
     @Environment(\.colorScheme) private var colorScheme
     let text: String
