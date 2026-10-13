@@ -2,7 +2,7 @@ import XCTest
 
 /// The Mac or a Host as Sesh reaches it, through a login shell, for closing real Tasks.
 @MainActor
-private final class Shell: Runner {
+final class LiveShell: Runner {
     let alias: String?
     var title: String { alias ?? "This Mac" }
     private(set) lazy var follower = FollowerLink(self)
@@ -16,7 +16,7 @@ private final class Shell: Runner {
         let process = Process()
         if let alias {
             process.executableURL = URL(filePath: "/usr/bin/ssh")
-            process.arguments = ["-o", "BatchMode=yes", alias, "exec \"$SHELL\" -lic \(quote("echo \(Self.mark); " + command))"]
+            process.arguments = ["-o", "BatchMode=yes", "-o", "ControlMaster=auto", "-o", "ControlPath=\(NSHomeDirectory())/.sesh/ssh/%C", "-o", "ControlPersist=600", alias, "exec \"$SHELL\" -lic \(quote("echo \(Self.mark); " + command))"]
         } else {
             process.executableURL = URL(filePath: "/bin/zsh")
             process.arguments = ["-lic", "echo \(Self.mark); " + command]
@@ -54,7 +54,7 @@ final class CloseLiveTests: XCTestCase {
     }
 
     /// A Task on a fresh herdr Worktree, with an Agent session in each of its first `agents` panes.
-    private func open(on shell: Shell, name: String, agents: Int, submodule: Bool, claude: Bool) async throws -> Opened {
+    private func open(on shell: LiveShell, name: String, agents: Int, submodule: Bool, claude: Bool) async throws -> Opened {
         let repo = "/tmp/sesh-close-live/\(name)"
         let repoMade = await shell.run("""
             mkdir -p \(repo)-sub \(repo) && cd \(repo)-sub && git init -q && git commit -q --allow-empty -m sub \
@@ -87,7 +87,7 @@ final class CloseLiveTests: XCTestCase {
         return Opened(task: task, sessions: sessions)
     }
 
-    private func close(_ opened: Opened, on shell: Shell) async -> [Close.Failure] {
+    private func close(_ opened: Opened, on shell: LiveShell) async -> [Close.Failure] {
         let close = Close(task: opened.task, sessions: opened.sessions, runner: { _ in shell }, copy: { _ in })
         let plan = await close.plan()
         XCTAssertEqual(plan.removed.map(\.path), [opened.task.body.path!])
@@ -98,7 +98,7 @@ final class CloseLiveTests: XCTestCase {
     private func check(agents: Int, submodule: Bool, claude: Bool = false) async throws {
         guard !machines.isEmpty else { throw XCTSkip("SESH_LIVE_HOSTS is not set") }
         for alias in machines {
-            let shell = Shell(alias)
+            let shell = LiveShell(alias)
             let name = "t\(agents)\(submodule ? "s" : "")\(claude ? "c" : "")-\(Int(Date().timeIntervalSince1970))"
             let opened = try await open(on: shell, name: name, agents: agents, submodule: submodule, claude: claude)
             let failures = await close(opened, on: shell)

@@ -8,10 +8,16 @@ enum Git {
         await runner.run("[ -f \(quote(path))/.git ]").ok
     }
 
-    /// What `git status` says is uncommitted at `path`; empty when clean or unreadable.
-    static func uncommitted(_ path: String, on runner: Runner) async -> String {
-        let ran = await runner.run("git -C \(quote(path)) status --porcelain")
-        return ran.ok ? ran.out.trimmingCharacters(in: .whitespacesAndNewlines) : ""
+    /// What `git status` says is uncommitted in each of `paths` that is a linked worktree, empty
+    /// when clean or unreadable, asked in one command.
+    static func survey(_ paths: [String], on runner: Runner) async -> [String: String] {
+        let script = paths.map {
+            "echo --sesh-path--; [ -f \(quote($0))/.git ] && echo linked && git -C \(quote($0)) status --porcelain"
+        }.joined(separator: "; ")
+        let sections = (await runner.run(script)).out.components(separatedBy: "--sesh-path--\n").dropFirst()
+        return Dictionary(zip(paths, sections).compactMap { path, section in
+            section.hasPrefix("linked\n") ? (path, section.dropFirst(7).trimmingCharacters(in: .whitespacesAndNewlines)) : nil
+        }, uniquingKeysWith: { a, _ in a })
     }
 
     /// Whether `git status` at `path` answers and finds nothing uncommitted, submodules included.
