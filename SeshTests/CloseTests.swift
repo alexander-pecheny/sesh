@@ -23,6 +23,11 @@ private final class Box: Runner {
         commands.append(command)
         let args = command.components(separatedBy: "'").enumerated().filter { $0.offset % 2 == 1 }.map(\.element)
         let force = command.hasSuffix("--force")
+        if command.hasPrefix("echo --sesh-path--") {
+            let paths = stride(from: 0, to: args.count, by: 2).map { args[$0] }
+            let out = paths.map { "--sesh-path--\n" + (linked.contains($0) ? "linked\n" + (dirty[$0] ?? "") : "") }.joined()
+            return Ran(status: 0, out: out, err: "")
+        }
         if command.hasPrefix("[ -f ") { return Ran(status: linked.contains(args[0]) ? 0 : 1, out: "", err: "") }
         if command == "printf %s \"$HOME\"" { return Ran(status: 0, out: "/home/me", err: "") }
         if command.contains(" worktree add ") { linked.insert(args[2]) }

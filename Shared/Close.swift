@@ -52,18 +52,28 @@ struct Close {
             guard let repo = session.body.repo, let path = session.body.path, path != repo else { return nil }
             return (session.body.machine, repo, path, session.body.branch ?? task.body.branch)
         }
-        var seen = Set<String>(), worktrees: [Worktree] = []
-        for (machine, repo, path, branch) in own + others where seen.insert("\(machine ?? ""):\(path)").inserted {
-            let runner = runner(machine)
-            let linked = await Git.linked(path, on: runner)
-            worktrees.append(Worktree(
-                machine: machine, place: runner.title, repo: repo, path: path, branch: branch, linked: linked,
-                uncommitted: linked ? await Git.uncommitted(path, on: runner) : ""))
+        var seen = Set<String>()
+        let wanted = (own + others).filter { seen.insert("\(machine($0.0)):\($0.2)").inserted }
+        async let open = Herdr.workspaces(on: runner(task.body.machine))
+        let found = await withTaskGroup(of: (String, [String: String]).self) { group in
+            for machine in Set(wanted.map { machine($0.0) }) {
+                let paths = wanted.filter { self.machine($0.0) == machine }.map(\.2)
+                group.addTask { @MainActor in (machine, await Git.survey(paths, on: runner(machine.isEmpty ? nil : machine))) }
+            }
+            return await group.reduce(into: [:]) { $0[$1.0] = $1.1 }
         }
-        let open = await Herdr.workspaces(on: runner(task.body.machine))
-        let workspace = task.body.workspace.flatMap { open[$0] != nil ? $0 : nil } ?? open.first { $0.value == task.body.title }?.key
+        let worktrees = wanted.map { machine, repo, path, branch in
+            let uncommitted = found[self.machine(machine)]?[path]
+            return Worktree(machine: machine, place: runner(machine).title, repo: repo, path: path, branch: branch,
+                            linked: uncommitted != nil, uncommitted: uncommitted ?? "")
+        }
+        let workspaces = await open
+        let workspace = task.body.workspace.flatMap { workspaces[$0] != nil ? $0 : nil }
+            ?? workspaces.first { $0.value == task.body.title }?.key
         return Plan(worktrees: worktrees, workspace: workspace, sessions: sessions)
     }
+
+    private func machine(_ alias: String?) -> String { alias ?? "" }
 
     /// Copies, stops and removes what `plan` lists. A Worktree already gone is passed over, so
     /// a run again after a failure only retries what is left.
