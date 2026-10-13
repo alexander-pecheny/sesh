@@ -588,6 +588,19 @@ fn an_agent_claude_sent_to_the_background_unasked_counts_until_its_notification(
 }
 
 #[test]
+fn an_agent_ends_on_a_notification_that_names_only_its_agent_id() {
+    let at = "2026-10-07T11:56:45.159Z";
+    let launch = json!({"type":"assistant","timestamp":at,"message":{"content":[{"type":"tool_use","id":"toolu_f","name":"Agent",
+        "input":{"description":"Analyse cases","prompt":"...","run_in_background":true}}]}});
+    let launched = json!({"type":"user","timestamp":at,"message":{"role":"user","content":[{"type":"tool_result","tool_use_id":"toolu_f",
+        "content":[{"type":"text","text":"Async agent launched successfully."}]}]},
+        "toolUseResult":{"isAsync":true,"status":"async_launched","agentId":"a849","description":"Analyse cases"}});
+    let notified = json!({"type":"user","timestamp":at,"origin":{"kind":"task-notification"},"message":{"role":"user",
+        "content":"<task-notification>\n<task-id>a849</task-id>\n<status>completed</status>\n</task-notification>"}});
+    assert!(parse(Agent::Claude, &[launch, launched, notified]).background().is_empty());
+}
+
+#[test]
 fn claude_turn_is_over_after_end_turn_until_the_user_speaks() {
     let at = "2026-10-05T14:54:42.186Z";
     let reply = |reason: &str| json!({"type":"assistant","timestamp":at,"message":{"stop_reason":reason,"content":[{"type":"text","text":"ok"}]}});

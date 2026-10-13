@@ -36,6 +36,9 @@ pub(super) struct Parser {
     /// Commands and Agents started in the background and not yet reported finished, by the
     /// call that started them, with what to call them.
     background: Vec<Background>,
+    /// The call that started each background Agent, by its agent id, which is all some of its
+    /// notifications name.
+    agents: HashMap<String, String>,
     /// Whether Claude's last reply ended its turn, so what herdr calls working is only Claude
     /// waiting on its background work.
     turn_over: bool,
@@ -268,7 +271,8 @@ impl Parser {
             let end = text[start..].find(&format!("</{name}>"))? + start;
             Some(text[start..end].trim().to_string())
         };
-        let (Some(call), Some(status)) = (tag("tool-use-id"), tag("status")) else {
+        let call = tag("tool-use-id").or_else(|| self.agents.get(&tag("task-id")?).cloned());
+        let (Some(call), Some(status)) = (call, tag("status")) else {
             return;
         };
         if status != "running" {
@@ -320,6 +324,9 @@ impl Parser {
             return;
         }
         // Claude may run an Agent in the background unasked; only its result says so.
+        if let Some(agent) = result["agentId"].as_str() {
+            self.agents.insert(agent.to_string(), call.to_string());
+        }
         if result["status"] == "async_launched" && !self.background.iter().any(|work| work.call == call) {
             self.background.push(Background {
                 call: call.to_string(),
