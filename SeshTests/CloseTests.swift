@@ -103,7 +103,7 @@ final class CloseTests: XCTestCase {
         XCTAssertTrue(plan.dirty.isEmpty)
         let failures = await close.perform(plan, discard: false)
         XCTAssertEqual(failures, [])
-        XCTAssertEqual(removals, ["herdr worktree remove --workspace 'w1'"])
+        XCTAssertEqual(removals, ["herdr worktree remove --workspace 'w1' --force"], "only a clean Worktree is forced, for its submodules")
         XCTAssertFalse(mac.commands.contains("herdr workspace close 'w1'"))
     }
 
@@ -116,6 +116,7 @@ final class CloseTests: XCTestCase {
         let kept = await close.perform(plan, discard: false)
         XCTAssertEqual(kept.map(\.worktree.path), ["/src/app-fix"])
         XCTAssertTrue(mac.linked.contains("/src/app-fix"))
+        XCTAssertFalse(removals[0].hasSuffix("--force"))
         let discarded = await close.perform(plan, discard: true)
         XCTAssertEqual(discarded, [])
         XCTAssertEqual(removals.last, "git -C '/src/app' worktree remove '/src/app-fix' --force")
@@ -172,7 +173,9 @@ final class CloseTests: XCTestCase {
         let first = await close.perform(plan, discard: false)
         let second = await close.perform(plan, discard: false)
         XCTAssertEqual(first + second, [])
-        XCTAssertEqual(removals, ["herdr worktree remove --workspace 'w1'", "git -C '/src/lib' worktree remove '/src/lib-fix'"])
+        XCTAssertEqual(removals, [
+            "herdr worktree remove --workspace 'w1' --force", "git -C '/src/lib' worktree remove '/src/lib-fix' --force",
+        ])
     }
 
     func testTheWorktreeIsRemovedWhenStoppingItsAgentClosedTheWorkspace() async {
@@ -181,7 +184,7 @@ final class CloseTests: XCTestCase {
         let close = close(task(path: "/src/app-fix"), [session("w1", repo: "/src/app", path: "/src/app-fix")])
         let failures = await close.perform(await close.plan(), discard: false)
         XCTAssertEqual(failures, [])
-        XCTAssertEqual(removals, ["git -C '/src/app' worktree remove '/src/app-fix'"])
+        XCTAssertEqual(removals, ["git -C '/src/app' worktree remove '/src/app-fix' --force"])
     }
 
     func testANewWorktreeOfARepositoryWithoutTheTasksBranchStartsFromItsCheckout() async {
