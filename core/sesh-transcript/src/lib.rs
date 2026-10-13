@@ -6,6 +6,7 @@ pub use agent::claude::Background;
 pub use agent::Agent;
 pub mod follower;
 pub mod log;
+pub mod poll;
 pub mod reconcile;
 pub mod replay;
 pub mod screen;

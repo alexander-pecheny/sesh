@@ -217,7 +217,7 @@ fn follow(args: &[String]) -> Exit {
     let mut pinged = Instant::now();
     loop {
         std::thread::sleep(POLL);
-        if stdout_closed() {
+        if sesh_transcript::poll::hung_up(1) {
             return Ok(0);
         }
         if pinged.elapsed() > PING {
@@ -234,36 +234,6 @@ fn follow(args: &[String]) -> Exit {
         }
         print_events(&follower.drain())?;
     }
-}
-
-#[repr(C)]
-struct PollFd {
-    fd: i32,
-    events: i16,
-    revents: i16,
-}
-
-#[cfg(target_os = "linux")]
-type Nfds = std::ffi::c_ulong;
-#[cfg(not(target_os = "linux"))]
-type Nfds = std::ffi::c_uint;
-
-extern "C" {
-    fn poll(fds: *mut PollFd, count: Nfds, timeout: i32) -> i32;
-}
-
-/// Whether Sesh has hung up, which a quiet Agent session would otherwise never notice.
-fn stdout_closed() -> bool {
-    const POLLOUT: i16 = 0x4;
-    const POLLERR: i16 = 0x8;
-    const POLLHUP: i16 = 0x10;
-    let mut descriptor = PollFd {
-        fd: 1,
-        events: POLLOUT,
-        revents: 0,
-    };
-    let ready = unsafe { poll(&mut descriptor, 1, 0) };
-    ready > 0 && descriptor.revents & (POLLERR | POLLHUP) != 0
 }
 
 // MARK: entry and history
@@ -429,7 +399,7 @@ fn vault_follow(dir: &str, mut since: i64, follow: bool) -> Exit {
             return Ok(0);
         }
         std::thread::sleep(VAULT_POLL);
-        if stdout_closed() {
+        if sesh_transcript::poll::hung_up(1) {
             return Ok(0);
         }
     }

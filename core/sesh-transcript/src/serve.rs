@@ -5,6 +5,7 @@ use std::cell::RefCell;
 use std::collections::{HashMap, VecDeque};
 use std::fs::{File, OpenOptions};
 use std::io::{BufRead as _, BufReader, ErrorKind, Read as _, Write as _};
+use std::os::fd::AsRawFd as _;
 use std::os::unix::net::{UnixListener, UnixStream};
 use std::os::unix::process::CommandExt as _;
 use std::path::{Path, PathBuf};
@@ -388,11 +389,7 @@ fn run(record: Option<(PathBuf, String)>) -> Result<i32> {
     let mut panes: Vec<Value> = Vec::new();
     loop {
         let started = Instant::now();
-        while let Ok((stream, _)) = listener.accept() {
-            if stream.set_nonblocking(true).is_ok() {
-                clients.push(Client::new(stream));
-            }
-        }
+        accept(&listener, &mut clients);
         if ticks % LIST_EVERY == 0 {
             panes = source.borrow_mut().panes().unwrap_or_default();
         }
@@ -420,8 +417,26 @@ fn run(record: Option<(PathBuf, String)>) -> Result<i32> {
             let _ = std::fs::remove_file(&path);
             return Ok(0);
         }
-        if let Some(rest) = TICK.checked_sub(started.elapsed()) {
-            std::thread::sleep(rest);
+        // Until the next tick, a device is answered as soon as it asks.
+        while let Some(rest) = TICK.checked_sub(started.elapsed()) {
+            let mut fds = vec![listener.as_raw_fd()];
+            fds.extend(clients.iter().filter(|client| !client.done_asking).map(|client| client.stream.as_raw_fd()));
+            if !crate::poll::readable(&fds, rest) {
+                break;
+            }
+            accept(&listener, &mut clients);
+            for client in &mut clients {
+                client.serve(&mut machine);
+            }
+            clients.retain(|client| client.open);
+        }
+    }
+}
+
+fn accept(listener: &UnixListener, clients: &mut Vec<Client>) {
+    while let Ok((stream, _)) = listener.accept() {
+        if stream.set_nonblocking(true).is_ok() {
+            clients.push(Client::new(stream));
         }
     }
 }
