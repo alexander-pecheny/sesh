@@ -153,7 +153,8 @@ pub struct Follower {
     /// While the session's Transcript is not found, polls since it was last looked for.
     lost: Option<u32>,
     wrote: bool,
-    /// The background work last reported, so only a change is sent.
+    /// The background work last reported, so only a change is sent; nothing at first, so a
+    /// new follower overwrites what the one before it left in the Session log.
     background: Value,
     /// What herdr last said the Agent was doing.
     reported: Option<String>,
@@ -184,7 +185,7 @@ impl Follower {
             session: Value::Null,
             lost: None,
             wrote: false,
-            background: json!([]),
+            background: Value::Null,
             reported: None,
             live: Reconciler::default(),
             sent: None,

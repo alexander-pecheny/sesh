@@ -36,6 +36,9 @@ pub(super) struct Parser {
     /// Commands and Agents started in the background and not yet reported finished, by the
     /// call that started them, with what to call them.
     background: Vec<Background>,
+    /// The call that started each piece of background work, by the task id that some of its
+    /// notifications and TaskStop name instead.
+    started: HashMap<String, String>,
     /// Whether Claude's last reply ended its turn, so what herdr calls working is only Claude
     /// waiting on its background work.
     turn_over: bool,
@@ -86,7 +89,7 @@ impl super::Parse for Parser {
         let mut line = Vec::new();
         while reader.read_until(b'\n', &mut line)? > 0 {
             let text = std::str::from_utf8(&line).unwrap_or_default();
-            if ["run_in_background", "task-notification", "async_launched"].iter().any(|word| text.contains(word)) {
+            if ["run_in_background", "task-notification", "async_launched", "backgroundTaskId", "TaskStop"].iter().any(|word| text.contains(word)) {
                 if let Ok(value) = serde_json::from_str::<Value>(text) {
                     scan.read(&value, &mut ids, &mut out);
                     out.clear();
@@ -218,6 +221,12 @@ impl Parser {
                     return;
                 };
                 let input = &block["input"];
+                if name == "TaskStop" {
+                    if let Some(call) = input["task_id"].as_str().and_then(|task| self.started.get(task)) {
+                        let call = call.clone();
+                        self.background.retain(|work| work.call != call);
+                    }
+                }
                 // Claude writes the flag as a string; older versions wrote a boolean.
                 if input["run_in_background"] == true || input["run_in_background"] == "true" {
                     let label = ["description", "command", "prompt"]
@@ -268,7 +277,8 @@ impl Parser {
             let end = text[start..].find(&format!("</{name}>"))? + start;
             Some(text[start..end].trim().to_string())
         };
-        let (Some(call), Some(status)) = (tag("tool-use-id"), tag("status")) else {
+        let call = tag("tool-use-id").or_else(|| self.started.get(&tag("task-id")?).cloned());
+        let (Some(call), Some(status)) = (call, tag("status")) else {
             return;
         };
         if status != "running" {
@@ -320,6 +330,9 @@ impl Parser {
             return;
         }
         // Claude may run an Agent in the background unasked; only its result says so.
+        if let Some(task) = result["agentId"].as_str().or(result["backgroundTaskId"].as_str()) {
+            self.started.insert(task.to_string(), call.to_string());
+        }
         if result["status"] == "async_launched" && !self.background.iter().any(|work| work.call == call) {
             self.background.push(Background {
                 call: call.to_string(),

@@ -588,6 +588,32 @@ fn an_agent_claude_sent_to_the_background_unasked_counts_until_its_notification(
 }
 
 #[test]
+fn an_agent_ends_on_a_notification_that_names_only_its_agent_id() {
+    let at = "2026-10-07T11:56:45.159Z";
+    let launch = json!({"type":"assistant","timestamp":at,"message":{"content":[{"type":"tool_use","id":"toolu_f","name":"Agent",
+        "input":{"description":"Analyse cases","prompt":"...","run_in_background":true}}]}});
+    let launched = json!({"type":"user","timestamp":at,"message":{"role":"user","content":[{"type":"tool_result","tool_use_id":"toolu_f",
+        "content":[{"type":"text","text":"Async agent launched successfully."}]}]},
+        "toolUseResult":{"isAsync":true,"status":"async_launched","agentId":"a849","description":"Analyse cases"}});
+    let notified = json!({"type":"user","timestamp":at,"origin":{"kind":"task-notification"},"message":{"role":"user",
+        "content":"<task-notification>\n<task-id>a849</task-id>\n<status>completed</status>\n</task-notification>"}});
+    assert!(parse(Agent::Claude, &[launch, launched, notified]).background().is_empty());
+}
+
+#[test]
+fn a_command_ends_when_claude_stops_it() {
+    let at = "2026-10-09T12:00:00.000Z";
+    let start = json!({"type":"assistant","timestamp":at,"message":{"content":[{"type":"tool_use","id":"toolu_w","name":"Bash",
+        "input":{"command":"sleep 600","description":"Wait for CI","run_in_background":true}}]}});
+    let started = json!({"type":"user","timestamp":at,"message":{"role":"user","content":[{"type":"tool_result","tool_use_id":"toolu_w",
+        "content":"Command running in background with ID: bducvc8hm."}]},"toolUseResult":{"backgroundTaskId":"bducvc8hm"}});
+    let stop = json!({"type":"assistant","timestamp":at,"message":{"content":[{"type":"tool_use","id":"toolu_s","name":"TaskStop",
+        "input":{"task_id":"bducvc8hm"}}]}});
+    assert_eq!(parse(Agent::Claude, &[start.clone(), started.clone()]).background().len(), 1);
+    assert!(parse(Agent::Claude, &[start, started, stop]).background().is_empty());
+}
+
+#[test]
 fn claude_turn_is_over_after_end_turn_until_the_user_speaks() {
     let at = "2026-10-05T14:54:42.186Z";
     let reply = |reason: &str| json!({"type":"assistant","timestamp":at,"message":{"stop_reason":reason,"content":[{"type":"text","text":"ok"}]}});
