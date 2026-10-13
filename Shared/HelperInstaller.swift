@@ -1,9 +1,9 @@
 import CryptoKit
 import Foundation
 
-/// Puts the pinned transcript helper and mosh-server on a machine (ADR 0006) unless those
-/// versions are there, and starts herdr's server there if it is down; once a run, however the
-/// machine is reached.
+/// Puts the pinned transcript helper, mosh-server and herdr-sesh on a machine (ADR 0006, 0009)
+/// unless those versions are there, and starts Sesh's herdr server there if it is down; once a
+/// run, however the machine is reached.
 @MainActor
 final class HelperInstaller {
     /// What a machine's answer to `probe` calls for.
@@ -16,14 +16,14 @@ final class HelperInstaller {
         case download(String)
     }
 
-    static let probe = Herdr.wake + "\nuname -sm\n\(Helper.path) --version 2>/dev/null || echo"
+    static let probe = "uname -sm\n\(Helper.path) --version 2>/dev/null || echo"
         + "\ntest -x ~/.sesh/bin/\(Helper.moshFile ?? "-") && echo mosh || echo"
+        + "\ncat ~/.sesh/bin/herdr-sesh.version 2>/dev/null || echo"
 
     static func plan(_ probed: Ran, on title: String, version: String? = Helper.version, local: Bool = Helper.local != nil,
                      published: Helper.Published? = Helper.published) -> Plan {
         let lines = probed.out.components(separatedBy: "\n")
         guard probed.ok, lines.count > 1 else { return .failed(probed.problem) }
-        guard lines[0] != "missing" else { return .failed("\(title) has no herdr, which Tasks run their Agents in.") }
         let (platform, found) = (lines[0], lines[1])
         if found == version { return .ready }
         if local { return .local(platform: platform) }
@@ -57,19 +57,35 @@ final class HelperInstaller {
         let probed = await run(Self.probe)
         if let problem = await install(Self.plan(probed, on: title)) { return problem }
         let lines = probed.out.components(separatedBy: "\n")
-        guard let file = Helper.moshFile, lines.count > 2, lines[2] != "mosh" else { return nil }
+        guard lines.count > 3 else { return nil }
         let name = Helper.name(lines[0])
+        if let file = Helper.moshFile, lines[2] != "mosh",
+           let problem = await install("mosh-server", as: file, for: name, from: Helper.mosh) { return problem }
+        let herdr = lines[3]
+        if let version = Helper.herdrVersion, herdr != version {
+            if let problem = await install("herdr-sesh", as: "herdr-sesh", for: name, from: Helper.herdr) { return problem }
+            let noted = await run(Herdr.importer + "\nprintf '%s\\n' \(quote(version)) > ~/.sesh/bin/herdr-sesh.version")
+            guard noted.ok else { return "Sesh could not install herdr-sesh on \(title): \(noted.problem)" }
+        }
+        let woke = await run(Herdr.wake(upgrade: !herdr.isEmpty && herdr != Helper.herdrVersion))
+        return woke.ok ? nil : "Sesh could not start its herdr server on \(title): \(woke.problem). If herdr's own server there"
+            + " could not be moved into it, `herdr server stop` ends that server's Agents and lets Sesh start afresh."
+    }
+
+    /// Puts `program`'s build for platform `name` in `~/.sesh/bin` as `file`: the local one under
+    /// `-helpers DIR`, or else the one `published` pins, fetched by the machine or through this device.
+    private func install(_ program: String, as file: String, for name: String, from published: Helper.Published?) async -> String? {
         var ran: Ran
         if let local = Helper.local {
-            guard let data = try? Data(contentsOf: local.appending(path: "mosh-server-\(name).gz")) else { return "There is no local mosh-server for \(name)." }
+            guard let data = try? Data(contentsOf: local.appending(path: "\(program)-\(name).gz")) else { return "There is no local \(program) for \(name)." }
             ran = await place(data, as: file)
-        } else if let mosh = Helper.mosh {
-            ran = await run(Helper.download("mosh-server", as: file, from: mosh, for: name) ?? "false")
-            if !ran.ok, let data = await Self.fetch("mosh-server", for: name, from: mosh) { ran = await place(data, as: file) }
+        } else if let published {
+            ran = await run(Helper.download(program, as: file, from: published, for: name) ?? "false")
+            if !ran.ok, let data = await Self.fetch(program, for: name, from: published) { ran = await place(data, as: file) }
         } else {
             return nil
         }
-        return ran.ok ? nil : "Sesh could not install mosh-server on \(title): \(ran.problem)"
+        return ran.ok ? nil : "Sesh could not install \(program) on \(title): \(ran.problem)"
     }
 
     private func install(_ plan: Plan) async -> String? {

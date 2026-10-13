@@ -3,15 +3,53 @@ import Foundation
 /// What Sesh asks of herdr on any machine, through whichever Runner reaches it.
 @MainActor
 enum Herdr {
-    /// Shell lines that print `missing` where herdr is not installed, and start its server
-    /// where it is down.
-    nonisolated static let wake = """
-        command -v herdr >/dev/null 2>&1 || echo missing
-        if command -v herdr >/dev/null 2>&1 && ! herdr workspace list >/dev/null 2>&1; then
-            nohup herdr server </dev/null >/dev/null 2>&1 &
-            for i in 1 2 3 4 5; do sleep 1; herdr workspace list >/dev/null 2>&1 && break; done
-        fi
+    /// The herdr fork as Sesh installs it, with a server of its own apart from any herdr the
+    /// user runs (ADR 0009).
+    nonisolated static let command = "~/.sesh/bin/herdr-sesh --session sesh"
+
+    /// Starts herdr-sesh in place of a running server, keeping its panes; installed with it.
+    nonisolated static let importer = """
+        cat > ~/.sesh/bin/herdr-sesh-import <<'EOF'
+        #!/bin/sh
+        unset HERDR_SOCKET_PATH HERDR_CLIENT_SOCKET_PATH
+        HERDR_SESSION=sesh exec "$HOME/.sesh/bin/herdr-sesh" "$@"
+        EOF
+        chmod 755 ~/.sesh/bin/herdr-sesh-import
         """
+
+    /// Shell lines that start Sesh's herdr server where it is down, or fail saying why they
+    /// could not. Where it has never run, the user's own herdr server becomes it, panes and
+    /// all, so Agents started before herdr-sesh carry on; `upgrade` hands a running one over to
+    /// the herdr-sesh just installed the same way.
+    nonisolated static func wake(upgrade: Bool) -> String {
+        let handoff = "server live-handoff --import-exe ~/.sesh/bin/herdr-sesh-import"
+        let user = "env -u HERDR_SOCKET_PATH -u HERDR_SESSION herdr"
+        return """
+            if \(command) workspace list >/dev/null 2>&1; then
+                \(upgrade ? "\(command) \(handoff) >/dev/null 2>&1" : ":")
+            else
+                if [ ! -e ~/.sesh/herdr-moved ] && \(user) workspace list >/dev/null 2>&1; then
+                    if moved=$(\(user) \(handoff) 2>&1); then
+                        # Left in place, the old layout would come back in the user's herdr, its
+                        # Agents resumed a second time.
+                        for i in 1 2 3 4 5; do \(user) workspace list >/dev/null 2>&1 || break; sleep 1; done
+                        layout=${XDG_CONFIG_HOME:-$HOME/.config}/herdr/session.json
+                        [ ! -e "$layout" ] || mv "$layout" "$layout.moved-to-sesh"
+                    else
+                        failed=$moved
+                    fi
+                fi
+                if [ -z "${failed-}" ]; then
+                    touch ~/.sesh/herdr-moved
+                    if ! \(command) workspace list >/dev/null 2>&1; then
+                        nohup \(command) server </dev/null >/dev/null 2>&1 &
+                    fi
+                    for i in 1 2 3 4 5; do \(command) workspace list >/dev/null 2>&1 && break; sleep 1; done
+                fi
+                \(command) workspace list >/dev/null 2>&1 || { echo "${failed:-herdr-sesh did not start}" >&2; exit 1; }
+            fi
+            """
+    }
 
     /// Menus an Agent may open before its first prompt, and the keys that get past them.
     private static let menus = [
@@ -27,10 +65,10 @@ enum Herdr {
                        config: String? = nil, on runner: Runner) async -> String? {
         let name = Names.free(wanted, taken: await agentNames(on: runner))
         if agent == .claude, let config, !config.isEmpty {
-            _ = await runner.run("herdr pane run \(quote(pane)) \(quote("export CLAUDE_CONFIG_DIR=\(shellPath(config))"))")
+            _ = await runner.run("\(command) pane run \(quote(pane)) \(quote("export CLAUDE_CONFIG_DIR=\(shellPath(config))"))")
         }
         var ran = await runner.run(
-            "herdr agent start \(quote(name)) --kind \(agent.rawValue) --pane \(quote(pane)) --timeout 60000"
+            "\(command) agent start \(quote(name)) --kind \(agent.rawValue) --pane \(quote(pane)) --timeout 60000"
                 + " -- \(agent.flags(name, resuming: transcript))")
         let notReady = !ran.ok && (ran.err + ran.out).contains("agent_not_ready")
         if ran.ok || notReady {
@@ -38,22 +76,22 @@ enum Herdr {
             // updates are skipped and new hooks left for the user to trust.
             var answered = false
             for _ in menus.indices {
-                let screen = await runner.run("herdr pane read \(quote(pane)) --source visible")
+                let screen = await runner.run("\(command) pane read \(quote(pane)) --source visible")
                 guard let menu = menus.first(where: { screen.out.contains($0.prompt) }) else { break }
-                _ = await runner.run("herdr agent send-keys \(quote(pane)) \(menu.keys)")
+                _ = await runner.run("\(command) agent send-keys \(quote(pane)) \(menu.keys)")
                 answered = true
                 for _ in 0..<20 {
                     try? await Task.sleep(for: .milliseconds(100))
-                    if !(await runner.run("herdr pane read \(quote(pane)) --source visible")).out.contains(menu.prompt) { break }
+                    if !(await runner.run("\(command) pane read \(quote(pane)) --source visible")).out.contains(menu.prompt) { break }
                 }
             }
             if answered || notReady {
-                ran = await runner.run("herdr agent wait \(quote(pane)) --until idle --until done --timeout 30000")
+                ran = await runner.run("\(command) agent wait \(quote(pane)) --until idle --until done --timeout 30000")
             }
         }
         guard !ran.ok else { return nil }
-        let screen = await runner.run("herdr pane read \(quote(pane)) --source recent-unwrapped --lines 40")
-        _ = await runner.run("herdr pane close \(quote(pane))")
+        let screen = await runner.run("\(command) pane read \(quote(pane)) --source recent-unwrapped --lines 40")
+        _ = await runner.run("\(command) pane close \(quote(pane))")
         let tail = screen.out.split(separator: "\n").filter { !$0.allSatisfy(\.isWhitespace) }.suffix(12)
         return ([ran.problem] + tail.map(String.init)).joined(separator: "\n")
     }
@@ -98,17 +136,17 @@ enum Herdr {
     /// A new branch of `repo` in its own worktree, as a herdr Workspace labelled `label`.
     static func worktree(_ repo: String, branch: String, label: String, on runner: Runner) async -> Result<Opened, Failure> {
         opened(await runner.run(
-            "herdr worktree create --cwd \(quote(repo)) --branch \(quote(branch)) --label \(quote(label)) --no-focus"))
+            "\(command) worktree create --cwd \(quote(repo)) --branch \(quote(branch)) --label \(quote(label)) --no-focus"))
     }
 
     static func workspace(_ folder: String, label: String, on runner: Runner) async -> Result<Opened, Failure> {
-        opened(await runner.run("herdr workspace create --cwd \(quote(folder)) --label \(quote(label)) --no-focus"))
+        opened(await runner.run("\(command) workspace create --cwd \(quote(folder)) --label \(quote(label)) --no-focus"))
     }
 
     /// Another pane in an existing Workspace, for a second Agent session or a Terminal.
     static func tab(in workspace: String, folder: String, label: String, on runner: Runner) async -> Result<Opened, Failure> {
         let ran = await runner.run(
-            "herdr tab create --workspace \(quote(workspace)) --cwd \(quote(folder)) --label \(quote(label)) --no-focus")
+            "\(command) tab create --workspace \(quote(workspace)) --cwd \(quote(folder)) --label \(quote(label)) --no-focus")
         return opened(ran).map { Opened(workspace: workspace, pane: $0.pane) }
     }
 
@@ -135,34 +173,34 @@ enum Herdr {
             struct Result: Decodable { let pane: Pane }
             let result: Result
         }
-        let ran = await runner.run("herdr pane get \(quote(pane))")
+        let ran = await runner.run("\(command) pane get \(quote(pane))")
         if let got = try? JSONDecoder().decode(Got.self, from: Data(ran.out.utf8)) { return .found(got.result.pane) }
         return (ran.err + ran.out).contains("pane_not_found") ? .gone : .unreachable(ran.problem)
     }
 
     /// The command that shows a pane's terminal, taken over from any other device showing it.
-    static func attach(_ terminal: String) -> String { "herdr terminal attach \(quote(terminal)) --takeover" }
+    static func attach(_ terminal: String) -> String { "\(command) terminal attach \(quote(terminal)) --takeover" }
 
     /// Ends a Terminal's shell.
     static func close(_ pane: String, on runner: Runner) async {
-        _ = await runner.run("herdr pane close \(quote(pane))")
+        _ = await runner.run("\(command) pane close \(quote(pane))")
     }
 
     /// The link `--remote-control` prints when it starts, which opens the Claude app on
     /// exactly this conversation.
     static func claudeLink(for pane: String, on runner: Runner) async -> URL? {
         let ran = await runner.run(
-            "herdr agent read \(quote(pane)) --source recent-unwrapped --lines 1000"
+            "\(command) agent read \(quote(pane)) --source recent-unwrapped --lines 1000"
                 + " | grep -o 'https://claude.ai/code/session_[A-Za-z0-9_]*' | tail -n 1")
         return URL(string: ran.out.trimmingCharacters(in: .whitespacesAndNewlines)).flatMap { $0.host == nil ? nil : $0 }
     }
 
     static func removeWorktree(of workspace: String, force: Bool, on runner: Runner) async -> Ran {
-        await runner.run("herdr worktree remove --workspace \(quote(workspace))\(force ? " --force" : "")")
+        await runner.run("\(command) worktree remove --workspace \(quote(workspace))\(force ? " --force" : "")")
     }
 
     static func closeWorkspace(_ workspace: String, on runner: Runner) async {
-        _ = await runner.run("herdr workspace close \(quote(workspace))")
+        _ = await runner.run("\(command) workspace close \(quote(workspace))")
     }
 
     /// The names herdr's running Agents go by.
@@ -174,7 +212,7 @@ enum Herdr {
             }
             let result: Result
         }
-        let ran = await runner.run("herdr agent list")
+        let ran = await runner.run("\(command) agent list")
         let list = try? JSONDecoder().decode(List.self, from: Data(ran.out.utf8))
         return Set(list?.result.agents.compactMap(\.name) ?? [])
     }
@@ -191,7 +229,7 @@ enum Herdr {
             }
             let result: Result
         }
-        let ran = await runner.run("herdr workspace list")
+        let ran = await runner.run("\(command) workspace list")
         let list = try? JSONDecoder().decode(List.self, from: Data(ran.out.utf8))
         return Dictionary(list?.result.workspaces.map { ($0.workspace_id, $0.label) } ?? [], uniquingKeysWith: { a, _ in a })
     }

@@ -46,6 +46,7 @@ targets:
         buildPhase: resources
       - path: Resources/licenses.json
       - path: Resources/helpers.json
+      - path: Resources/herdr.json
     dependencies:
       - framework: Frameworks/GhosttyKit.xcframework
         embed: false
@@ -89,6 +90,7 @@ targets:
       - path: Resources/Icons.xcassets
       - path: Resources/helpers.json
       - path: Resources/mosh-server.json
+      - path: Resources/herdr.json
       - path: Resources/Fonts
         type: folder
         buildPhase: resources

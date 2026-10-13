@@ -36,9 +36,7 @@ enum Helper {
         let url: String
         let sha256: [String: String]
     }
-    static let published = Bundle.main.url(forResource: "helpers", withExtension: "json")
-        .flatMap { try? Data(contentsOf: $0) }
-        .flatMap { try? JSONDecoder().decode(Published.self, from: $0) }
+    static let published = pinned("helpers")
 
     #if os(macOS)
     /// `-helpers DIR` points at `build/helpers`, so a helper not yet released can be tried.
@@ -67,13 +65,25 @@ enum Helper {
 
     /// rmosh's mosh-server, which the Mac's Terminals start on the Host. It is GPL, so it ships
     /// beside the helper rather than inside it, pinned by the rmosh commit it was built from.
-    static let mosh = Bundle.main.url(forResource: "mosh-server", withExtension: "json")
-        .flatMap { try? Data(contentsOf: $0) }
-        .flatMap { try? JSONDecoder().decode(Published.self, from: $0) }
-    static let moshFile = (local.flatMap {
-        (try? String(contentsOf: $0.appending(path: "mosh-version"), encoding: .utf8))?.trimmingCharacters(in: .whitespacesAndNewlines)
-    } ?? mosh?.version).map { "mosh-server-\($0)" }
+    static let mosh = pinned("mosh-server")
+    static let moshFile = version(local: "mosh-version", pinned: mosh).map { "mosh-server-\($0)" }
     static let moshServer = moshFile.map { "~/.sesh/bin/\($0)" }
+
+    /// The herdr fork that Tasks run in, installed as herdr-sesh and pinned by its commit.
+    static let herdr = pinned("herdr")
+    static let herdrVersion = version(local: "herdr-version", pinned: herdr)
+
+    private static func pinned(_ resource: String) -> Published? {
+        Bundle.main.url(forResource: resource, withExtension: "json")
+            .flatMap { try? Data(contentsOf: $0) }
+            .flatMap { try? JSONDecoder().decode(Published.self, from: $0) }
+    }
+
+    private static func version(local file: String, pinned: Published?) -> String? {
+        local.flatMap {
+            (try? String(contentsOf: $0.appending(path: file), encoding: .utf8))?.trimmingCharacters(in: .whitespacesAndNewlines)
+        } ?? pinned?.version
+    }
 
     /// The build's name for what `uname -sm` printed, as in `linux-x86_64`.
     static func name(_ platform: String) -> String { platform.lowercased().replacingOccurrences(of: " ", with: "-") }

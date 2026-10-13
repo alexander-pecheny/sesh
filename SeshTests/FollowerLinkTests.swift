@@ -121,7 +121,6 @@ final class HelperInstallerTests: XCTestCase {
         XCTAssertEqual(plan("Linux x86_64\n\n"), .download("linux-x86_64"))
         XCTAssertEqual(plan("Linux x86_64\n\n", local: true), .local(platform: "Linux x86_64"))
         XCTAssertEqual(plan("Darwin arm64\n\n"), .failed("Sesh has no helper for Darwin arm64 on box."))
-        XCTAssertEqual(plan("missing\nLinux x86_64\n\n"), .failed("box has no herdr, which Tasks run their Agents in."))
         XCTAssertEqual(plan("", status: 255), .failed("no route"))
     }
 
