@@ -80,6 +80,21 @@ enum PathLinks {
         }
     }
 
+    /// Plain text, such as a command's output, with every absolute file path in it a file link.
+    static func link(plain text: String) -> AttributedString {
+        var linked = AttributedString(text)
+        for match in text.matches(of: /~?\/[\w.\/@+-]*[\w@+-]/) {
+            let path = String(match.output)
+            let before = match.range.lowerBound == text.startIndex ? " " : text[text.index(before: match.range.lowerBound)]
+            guard before.isWhitespace || "\"'`([<=:".contains(before), !path.hasPrefix("//"), isPath(path),
+                  let range = Range(match.range, in: linked),
+                  let url = URL(string: "\(scheme):" + (path.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed) ?? path))
+            else { continue }
+            linked[range].link = url
+        }
+        return linked
+    }
+
     /// A file name with an extension, alone or behind folders, and no spaces.
     static func isPath(_ text: String) -> Bool {
         guard !text.contains(where: \.isWhitespace), text.count < 300,
