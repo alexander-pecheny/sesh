@@ -32,6 +32,9 @@ struct ConversationView: View {
 
     var body: some View {
         chat
+        .overlay(alignment: .bottom) {
+            if !conversation.loaded { Skeleton(exchanges: 3).padding(Metric.wide) }
+        }
         .overlay(alignment: .top) {
             if conversation.syncing { SyncBar(tint: flavour(.mauve)) }
         }
@@ -1694,6 +1697,44 @@ private struct UploadButton: View {
     }
 }
 #endif
+
+/// Bars in the shape of a chat, standing in for messages still on their way.
+struct Skeleton: View {
+    var exchanges: Int
+    @Environment(\.colorScheme) private var colorScheme
+    @State private var faded = false
+
+    private static let line: CGFloat = 12
+    private static let reply: [CGFloat] = [0.92, 0.8, 0.55]
+    private static let message: CGFloat = 0.4
+    private static let pulse = 0.9
+    private static let dim = 0.45
+
+    var body: some View {
+        let tint = (colorScheme == .dark ? Catppuccin.Flavour.mocha : .latte)(.surface0)
+        VStack(alignment: .leading, spacing: Metric.wide) {
+            ForEach(0..<exchanges, id: \.self) { _ in
+                bar(Self.message, height: Metric.control, tint, alignment: .trailing)
+                VStack(alignment: .leading, spacing: Metric.gap) {
+                    ForEach(Self.reply, id: \.self) { bar($0, height: Self.line, tint, alignment: .leading) }
+                }
+            }
+        }
+        .opacity(faded ? Self.dim : 1)
+        .onAppear { withAnimation(.easeInOut(duration: Self.pulse).repeatForever()) { faded = true } }
+        .allowsHitTesting(false)
+        .accessibilityLabel("Loading messages")
+    }
+
+    private func bar(_ share: CGFloat, height: CGFloat, _ tint: Color, alignment: Alignment) -> some View {
+        GeometryReader { box in
+            RoundedRectangle(cornerRadius: min(height / 2, Metric.corner)).fill(tint)
+                .frame(width: box.size.width * share)
+                .frame(maxWidth: .infinity, alignment: alignment)
+        }
+        .frame(height: height)
+    }
+}
 
 /// A thin bar sliding along the top while the follower catches the Conversation up. It waits
 /// a moment first, so a catch-up that takes no time shows nothing.
