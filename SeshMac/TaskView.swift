@@ -8,6 +8,7 @@ struct TaskView: View {
 
     private var tabs: [TabItem] { [.journal] + (library.tabs[id] ?? []) }
     private var current: TabItem { library.current[id] ?? .journal }
+    private var sessions: [String] { tabs.compactMap { if case .session(let session) = $0 { session } else { nil } } }
 
     var body: some View {
         VStack(spacing: 0) {
@@ -59,6 +60,7 @@ struct TaskView: View {
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
         }
         .navigationTitle(vault.records[id]?.body.title ?? "Task")
+        .task(id: sessions) { await library.prewatch(sessions, in: vault) }
         .confirmsClosing(library)
         .confirmsEnding(library)
         #if DEBUG

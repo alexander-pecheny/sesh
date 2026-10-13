@@ -16,6 +16,8 @@ final class Machine: Runner, Identifiable, Hashable {
 
     nonisolated var id: String { alias ?? "" }
     var title: String { alias ?? "This Mac" }
+    var carrier: String? { alias == nil ? nil : Helper.moshServer == nil ? "ssh" : "mosh" }
+    var talks: Bool { true }
 
     static let mac = Machine(alias: nil)
     /// The one ssh connection per Host that commands, streams and mosh's start-up all share.
@@ -50,9 +52,18 @@ final class Machine: Runner, Identifiable, Hashable {
         "{ \(command)\n} & child=$!; { cat >/dev/null; kill $child 2>/dev/null; } >/dev/null 2>&1 & wait $child"
     }
 
-    private func process(_ command: String) -> Process {
+    private func process(_ command: String, piped: Bool = false) -> Process {
         let process = Process()
-        if let alias {
+        if let alias, piped, let server = Helper.moshServer {
+            // A stream outlives sleep and roaming over its own mosh pipe, which the shared ssh
+            // connection only starts; a dead TCP link took a minute to notice.
+            let ssh = "ssh -o BatchMode=yes -o ControlMaster=auto -o ControlPath=\(Self.controlPath) -o ControlPersist=600"
+            process.executableURL = Bundle.main.bundleURL.appending(path: "Contents/MacOS/mosh")
+            process.arguments = [
+                "--pipe", "--experimental-remote-ip=remote", "--server=\(server)", "--ssh=\(ssh)", alias, "--",
+                "sh", "-c", "exec \"$SHELL\" -lic \(quote("echo \(Self.mark); " + command))",
+            ]
+        } else if let alias {
             process.executableURL = URL(filePath: "/usr/bin/ssh")
             process.arguments = [
                 "-o", "BatchMode=yes", "-o", "ControlMaster=auto", "-o", "ControlPath=\(Self.controlPath)",
@@ -72,6 +83,10 @@ final class Machine: Runner, Identifiable, Hashable {
 
     func stream(_ command: String, line: @escaping (String) -> Void) async -> Ran {
         await stream(command, line: Optional(line))
+    }
+
+    func stream(_ command: String, opened: @escaping (@escaping (String) -> Void) -> Void, line: @escaping (String) -> Void) async -> Ran {
+        await stream(command, line: line, opened: opened)
     }
 
     private var home: String?
@@ -100,8 +115,10 @@ final class Machine: Runner, Identifiable, Hashable {
         return await stream("mkdir -p \"$(dirname \(target))\" && cat > \(target)", line: nil, input: data)
     }
 
-    private func stream(_ command: String, line: ((String) -> Void)?, input: Data? = nil) async -> Ran {
-        let process = process(line == nil ? command : Self.tethered(command))
+    private func stream(_ command: String, line: ((String) -> Void)?, input: Data? = nil,
+                        opened: ((@escaping (String) -> Void) -> Void)? = nil) async -> Ran {
+        // The tether reads stdin itself, so a stream that is written to goes without one.
+        let process = process(line == nil || opened != nil ? command : Self.tethered(command), piped: line != nil)
         let out = Pipe(), err = Pipe()
         process.standardOutput = out
         process.standardError = err
@@ -153,6 +170,11 @@ final class Machine: Runner, Identifiable, Hashable {
                         try? feed.fileHandleForWriting.close()
                     }
                     if let feed, input == nil { tethers[ObjectIdentifier(process)] = feed }
+                    if let feed, let opened {
+                        // A write after the command has gone fails rather than killing the app.
+                        _ = fcntl(feed.fileHandleForWriting.fileDescriptor, F_SETNOSIGPIPE, 1)
+                        opened { text in try? feed.fileHandleForWriting.write(contentsOf: Data((text + "\n").utf8)) }
+                    }
                 } catch {
                     done.resume(returning: Ran(status: -1, out: "", err: error.localizedDescription))
                 }

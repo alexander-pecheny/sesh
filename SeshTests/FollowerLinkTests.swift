@@ -9,6 +9,8 @@ private final class Scripted: Runner {
     var answer = Ran(status: 0, out: "", err: "")
     private(set) var commands: [String] = []
     private(set) var streams = 0
+    var talks = false
+    private(set) var written: [String] = []
     private(set) lazy var follower = FollowerLink(self, pause: .milliseconds(1))
 
     init(_ scripts: [(lines: [String], status: Int32)]) { self.scripts = scripts }
@@ -28,6 +30,11 @@ private final class Scripted: Runner {
         let script = scripts.removeFirst()
         script.lines.forEach(line)
         return Ran(status: script.status, out: "", err: script.status > 0 ? "it broke" : "")
+    }
+
+    func stream(_ command: String, opened: @escaping (@escaping (String) -> Void) -> Void, line: @escaping (String) -> Void) async -> Ran {
+        opened { [weak self] in self?.written.append($0) }
+        return await stream(command, line: line)
     }
 
     func put(_ data: Data, to path: String) async -> Ran { answer }
@@ -61,6 +68,27 @@ final class FollowerLinkTests: XCTestCase {
         XCTAssertEqual(lines, [hello, item(seq: 7)])
         XCTAssertTrue(machine.commands[0].hasSuffix("attach --watch 'w1:p1'"), machine.commands[0])
         XCTAssertTrue(machine.commands[1].hasSuffix("attach --watch 'w1:p1:7'"), machine.commands[1])
+    }
+
+    /// Where a stream can be written to, one carries every watch, each line reaches only its
+    /// session, and a drop asks for each again from the last item held.
+    func testOneStreamCarriesEveryWatch() async {
+        let p2 = #"{"t":"item","session":"w1:p2","id":"b","seq":8}"#
+        let machine = Scripted([([hello, item(seq: 7), p2], -1)])
+        machine.talks = true
+        var one: [String] = [], two: [String] = [], seq = 0
+        let watching = [
+            Task { await machine.follower.watch("w1:p1", from: { seq }, line: { one.append($0); if $0.contains(#""seq":7"#) { seq = 7 } }, problem: { XCTFail($0) }) },
+            Task { await machine.follower.watch("w1:p2", from: { 0 }, line: { two.append($0) }, problem: { XCTFail($0) }) },
+        ]
+        for _ in 0..<2000 where machine.streams < 2 { try? await Task.sleep(for: .milliseconds(1)) }
+        watching.forEach { $0.cancel() }
+        for task in watching { await task.value }
+        XCTAssertEqual(one, [hello, item(seq: 7)])
+        XCTAssertEqual(two, [hello, p2])
+        XCTAssertTrue(machine.commands.allSatisfy { $0.hasSuffix("attach --sessions") }, "\(machine.commands)")
+        XCTAssertTrue(machine.written.contains { $0.contains("w1:p1") && $0.contains("\"since\":7") }, "\(machine.written)")
+        XCTAssertTrue(machine.written.contains { $0.contains("unwatch") && $0.contains("w1:p2") }, "\(machine.written)")
     }
 
     func testTheFollowersErrorsSurfaceAndAStaleHelperIsRefused() async {

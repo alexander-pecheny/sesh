@@ -90,6 +90,9 @@ final class Conversation: ObservableObject {
     @Published private(set) var loaded = false
     /// Whether the follower is still catching up after an attach, as after a long time away.
     @Published private(set) var syncing = false
+    /// How long the last catch-up took, from asking the follower to its `synced`.
+    @Published private(set) var syncTime: Duration?
+    private var syncStart: ContinuousClock.Instant?
     private var hellos = 0
     /// A follower from before `synced` never says it; it would have said it right after its hello.
     private static let syncedWait = Duration.seconds(3)
@@ -123,7 +126,53 @@ final class Conversation: ObservableObject {
         }
     }
 
-    /// Follows until the screen goes away, the pane's Session log (ADR 0010) or a Transcript
+    private var following: Task<Void, Never>?
+    private var lettingGo: Task<Void, Never>?
+    private var viewers = 0
+    private var follows = 0
+    /// How long a stream goes on after its screen closes, so coming back finds it caught up
+    /// instead of starting a new stream, which takes a second over a pipe.
+    private static let linger = Duration.seconds(600)
+    /// Hidden Conversations still following, longest hidden first. Each stream's process
+    /// takes about 2.5 MB, so the cap keeps them under 100 MB.
+    private static var lingering: [Conversation] = []
+    private static let lingeringMax = 30
+
+    func shown() {
+        viewers += 1
+        lettingGo?.cancel()
+        lettingGo = nil
+        Self.lingering.removeAll { $0 === self }
+        guard following == nil else { return }
+        follows += 1
+        let mine = follows
+        following = Task {
+            await follow()
+            if follows == mine { following = nil }
+        }
+    }
+
+    func hidden() {
+        viewers -= 1
+        guard viewers == 0, following != nil else { return }
+        Self.lingering.append(self)
+        if Self.lingering.count > Self.lingeringMax { Self.lingering.removeFirst().unfollow() }
+        lettingGo = Task { @MainActor [weak self] in
+            try? await Task.sleep(for: Self.linger)
+            guard !Task.isCancelled else { return }
+            self?.unfollow()
+        }
+    }
+
+    func unfollow() {
+        following?.cancel()
+        following = nil
+        lettingGo?.cancel()
+        lettingGo = nil
+        Self.lingering.removeAll { $0 === self }
+    }
+
+    /// Follows until stopped, the pane's Session log (ADR 0010) or a Transcript
     /// file, going on after a drop from the last item or cursor held.
     func follow() async {
         // The helper follows only a pane that runs an Agent, and a starting one does not yet.
@@ -137,6 +186,7 @@ final class Conversation: ObservableObject {
                 guard let self else { return }
                 log.syncing = true
                 syncing = true
+                syncStart = .now
             }
             await follower.watch(pane, from: { [weak self] in self?.log.seq ?? 0 }, attaching: attaching, line: line, problem: problem)
         case .file(let path, let agent):
@@ -169,7 +219,14 @@ final class Conversation: ObservableObject {
         if background != log.background { background = log.background }
         if status != log.status { status = log.status }
         if earlier != log.earlier { earlier = log.earlier }
-        if syncing != log.syncing { syncing = log.syncing }
+        if syncing != log.syncing {
+            syncing = log.syncing
+            if !syncing, let syncStart {
+                let took = ContinuousClock.now - syncStart
+                syncTime = took
+                FollowerLink.log.notice("\(self.pane ?? "", privacy: .public) synced in \(took, privacy: .public)")
+            }
+        }
         if hellos != log.hellos {
             hellos = log.hellos
             let hello = hellos

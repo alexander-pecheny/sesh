@@ -113,6 +113,19 @@ final class Library: ObservableObject {
     /// Kept while the app runs, so switching Tabs neither loses the place nor refetches.
     private var conversations: [String: Conversation] = [:]
 
+    /// Follows a Task's open sessions while it is shown, so switching to one finds it caught up.
+    func prewatch(_ sessions: [String], in vault: Vault) async {
+        var held: [Conversation] = []
+        for id in sessions {
+            guard let record = vault.records[id], record.body.pane != nil, !ended(record), !Task.isCancelled else { continue }
+            let conversation = await conversation(for: record)
+            conversation.shown()
+            held.append(conversation)
+        }
+        while !Task.isCancelled { try? await Task.sleep(for: .seconds(3600)) }
+        held.forEach { $0.hidden() }
+    }
+
     /// The live pane while its machine has it; otherwise the Vault's copy of the last Transcript.
     func conversation(for session: Record) async -> Conversation {
         if let known = conversations[session.id] { return known }
@@ -523,7 +536,7 @@ final class Library: ObservableObject {
     }
 
     func reload(_ id: String) {
-        conversations[id] = nil
+        conversations.removeValue(forKey: id)?.unfollow()
         terminalFace.remove(id)
         reloads[id, default: 0] += 1
     }

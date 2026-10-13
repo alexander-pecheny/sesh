@@ -42,6 +42,8 @@ final class Machine: Runner, Identifiable, Hashable {
     }
 
     var title: String { host?.title ?? alias ?? "the Mac" }
+    /// The Link runs streams over ssh even when its Terminals use mosh.
+    var carrier: String? { alias == nil ? nil : "ssh" }
 
     /// The Link to the Host, made again when the Host was edited since.
     var link: HostLink? {
