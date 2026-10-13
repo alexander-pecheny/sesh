@@ -381,9 +381,11 @@ final class Library: ObservableObject {
         return state.done > seen[key(session), default: state.done] ? .finished : .seen
     }
 
-    /// One mark for each of the Task's running Agents, the most pressing first.
+    /// One mark for each of the Task's running Agents, in the order of their Tabs; those without one come last.
     func marks(ofTask task: String) -> [Mark] {
-        (vault(of: task)?.children(.session, task: task).compactMap(mark(of:)) ?? []).sorted(by: >)
+        let order = tabs[task] ?? []
+        let place = { (session: Record) in (order.firstIndex(of: .session(session.id)) ?? .max, session.body.title ?? "", session.id) }
+        return (vault(of: task)?.children(.session, task: task) ?? []).sorted { place($0) < place($1) }.compactMap(mark(of:))
     }
 
     /// The open Agent session counts as seen, and so does every pane met for the first time.
