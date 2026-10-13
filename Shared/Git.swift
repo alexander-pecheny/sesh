@@ -14,6 +14,12 @@ enum Git {
         return ran.ok ? ran.out.trimmingCharacters(in: .whitespacesAndNewlines) : ""
     }
 
+    /// Whether `git status` at `path` answers and finds nothing uncommitted, submodules included.
+    static func clean(_ path: String, on runner: Runner) async -> Bool {
+        let ran = await runner.run("git -C \(quote(path)) status --porcelain")
+        return ran.ok && ran.out.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+    }
+
     /// The local branches of `repo`; none when it is not a repository yet.
     static func branches(of repo: String, on runner: Runner) async -> Set<String> {
         let ran = await runner.run("git -C \(shellPath(repo)) for-each-ref --format='%(refname:short)' refs/heads")

@@ -80,10 +80,12 @@ struct Close {
         for worktree in plan.removed {
             let runner = runner(worktree.machine)
             guard await Git.linked(worktree.path, on: runner) else { continue }
+            // git refuses any worktree with a submodule checked out unless forced, however clean.
+            let force = await Git.clean(worktree.path, on: runner) || discard
             let ran = if own(worktree), let workspace {
-                await Herdr.removeWorktree(of: workspace, force: discard, on: runner)
+                await Herdr.removeWorktree(of: workspace, force: force, on: runner)
             } else {
-                await Git.removeWorktree(worktree.path, of: worktree.repo, force: discard, on: runner)
+                await Git.removeWorktree(worktree.path, of: worktree.repo, force: force, on: runner)
             }
             if !ran.ok { failures.append(Failure(worktree: worktree, problem: ran.problem)) }
         }
