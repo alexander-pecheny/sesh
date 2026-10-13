@@ -53,9 +53,16 @@ struct MarksView: View {
     let marks: [Library.Mark]
     private static let most = 4
 
+    /// The most pressing marks when there are too many, still in their own order.
+    private var shown: [Library.Mark] {
+        guard marks.count > Self.most else { return marks }
+        let kept = marks.indices.sorted { marks[$0] > marks[$1] }.prefix(Self.most).sorted()
+        return kept.map { marks[$0] }
+    }
+
     var body: some View {
         HStack(spacing: MarkView.size / 2) {
-            ForEach(Array(marks.prefix(Self.most).enumerated()), id: \.offset) { MarkView(mark: $0.element) }
+            ForEach(Array(shown.enumerated()), id: \.offset) { MarkView(mark: $0.element) }
         }
     }
 }
