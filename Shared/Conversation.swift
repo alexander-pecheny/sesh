@@ -158,8 +158,11 @@ final class Conversation: ObservableObject {
 
     private func publish() {
         publishing = false
-        if rows != log.rows { rows = log.rows }
-        if results != log.results { results = log.results }
+        // A catch-up arrives in parts; rows already on screen take them in one go when it ends.
+        if !(log.syncing && loaded) {
+            if rows != log.rows { rows = log.rows }
+            if results != log.results { results = log.results }
+        }
         if todo != log.todo { todo = log.todo }
         if queued != log.queued { queued = log.queued }
         if permissions != log.permissions { permissions = log.permissions }
