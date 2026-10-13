@@ -120,7 +120,7 @@ final class HostLink: ObservableObject, Identifiable {
         if let problem = await up() { return Ran(status: -1, out: "", err: problem) }
         guard let handle, !Task.isCancelled else { return Ran(status: -1, out: "", err: "not connected") }
         let bridge = PipeBridge(line: line)
-        return await withTaskCancellationHandler {
+        let ran = await withTaskCancellationHandler {
             await withCheckedContinuation { ended in
                 bridge.ended = ended
                 bridge.pipe = sesh_session_pipe(handle, server, command, PipeBridge.callbacks, Unmanaged.passRetained(bridge).toOpaque())
@@ -129,6 +129,8 @@ final class HostLink: ObservableObject, Identifiable {
         } onCancel: {
             Task { @MainActor in bridge.close() }
         }
+        if ran.status == -1, ran.err.hasPrefix("the connection to the Host is gone") { drop(ran.err) }
+        return ran
     }
 
     /// Why the Link is not up, after dialling it if need be; nil once it is.
