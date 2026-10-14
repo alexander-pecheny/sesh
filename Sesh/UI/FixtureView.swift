@@ -24,7 +24,11 @@ struct FixtureView: View {
     }
 
     var body: some View {
-        NavigationStack { ConversationView(conversation: conversation, title: "\(name)-fixture", fresh: false) }
+        NavigationStack {
+            ConversationView(conversation: conversation, title: "\(name)-fixture", fresh: false, place: "pecheny/test-vs-other-harnesses on loud-reef")
+                .navigationTitle("Test against other harnesses")
+                .navigationBarTitleDisplayMode(.inline)
+        }
     }
 }
 #endif
