@@ -118,6 +118,8 @@ struct Ran {
     let out: String
     let err: String
     var ok: Bool { status == 0 }
+    /// The Host stopped answering, as it does to a Mac that sleeps.
+    var lost: Bool { status == 255 }
 
     /// herdr prints its errors as JSON on stderr; anything else is shown as it came.
     var problem: String {

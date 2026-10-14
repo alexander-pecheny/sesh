@@ -1,4 +1,5 @@
 import Foundation
+import Network
 import OSLog
 
 /// A device's way to one machine's follower (ADR 0012): every session's summary, the Session
@@ -14,6 +15,7 @@ final class FollowerLink {
 
     private unowned let machine: Runner
     private let pause: Duration
+    private let online: () -> Bool
 
     /// Where the machine's streams can be written to, one stream carries every session's
     /// summary and each watched session's items too, so opening a session costs a line to
@@ -35,10 +37,15 @@ final class FollowerLink {
         let session: String?
     }
 
-    init(_ machine: Runner, pause: Duration = .seconds(2)) {
+    init(_ machine: Runner, pause: Duration = .seconds(2), online: @escaping () -> Bool = Reachability.online) {
         self.machine = machine
         self.pause = pause
+        self.online = online
+        _ = online()
     }
+
+    /// How many drops in a row, the network up, it takes before the user hears of them.
+    nonisolated static let patience = 5
 
     /// Every session's summary, until the calling task is cancelled; `online` says whenever the
     /// follower starts or stops answering.
@@ -70,7 +77,7 @@ final class FollowerLink {
         }
         await keep({ "\(Helper.path) attach --watch \(quote(seq() > 0 ? "\(session):\(seq())" : session))" },
                    attaching: attaching, problem: problem, line: line) { ended in
-            if ended.status > 0, !ended.problem.isEmpty { problem(ended.problem) }
+            if ended.status > 0, !ended.lost, !ended.problem.isEmpty { problem(ended.problem) }
             return false
         }
     }
@@ -81,8 +88,8 @@ final class FollowerLink {
                 problem: @escaping (String) -> Void) async {
         let file = "\(Helper.path) follow --file \(shellPath(path)) --agent \(agent.rawValue)"
         await keep({ file + (cursor().map { " --since \(quote($0))" } ?? "") }, follower: false, problem: problem, line: line) { ended in
-            if ended.status == 0 { problem("This Agent session has ended.") } else if ended.status > 0 { problem(ended.problem) }
-            return ended.status >= 0
+            if ended.status == 0 { problem("This Agent session has ended.") } else if ended.status > 0, !ended.lost { problem(ended.problem) }
+            return ended.status >= 0 && !ended.lost
         }
     }
 
@@ -145,7 +152,7 @@ final class FollowerLink {
         line: { [weak self] text in self?.route(text) }) { [weak self] ended in
             self?.ask = nil
             self?.summaries?.online(false)
-            if ended.status > 0, !ended.problem.isEmpty { self?.watchers.values.forEach { $0.problem(ended.problem) } }
+            if ended.status > 0, !ended.lost, !ended.problem.isEmpty { self?.watchers.values.forEach { $0.problem(ended.problem) } }
             return false
         }
     }
@@ -168,12 +175,13 @@ final class FollowerLink {
     }
 
     /// Runs `command` again after every drop until the calling task is cancelled or `ended`
-    /// says the stream is over, waiting longer each time the machine did not answer.
+    /// says the stream is over, waiting longer each time the machine did not answer. A drop
+    /// becomes a problem only once it repeats `patience` times with the network up.
     private func keep(_ command: @escaping () -> String, follower: Bool = true,
                       opened: ((@escaping (String) -> Void) -> Void)? = nil, hello: @escaping () -> Void = {},
                       attaching: () -> Void = {}, problem: @escaping (String) -> Void, line: @escaping (String) -> Void,
                       ended: (Ran) -> Bool) async {
-        var wait = pause
+        var wait = pause, drops = 0, told = false
         while !Task.isCancelled {
             attaching()
             _ = await machine.prepare()
@@ -196,10 +204,26 @@ final class FollowerLink {
             let ran = if let opened { await machine.stream(text, opened: opened, line: heed) } else { await machine.stream(text, line: heed) }
             let lasted = ContinuousClock.now - started, said = heard ? "after output" : "before any output"
             Self.log.notice("\(self.machine.title, privacy: .public) stream ended \(said, privacy: .public) after \(lasted, privacy: .public), status \(ran.status): \(ran.err, privacy: .public)")
+            drops = ran.lost ? (heard ? 1 : drops + 1) : 0
+            if drops < Self.patience { told = false } else if !told, online() {
+                told = true
+                problem(ran.problem)
+            }
             guard !Task.isCancelled, !refused, !ended(ran) else { return }
             wait = heard ? pause : min(wait * 2, pause * 4)
             Self.log.notice("\(self.machine.title, privacy: .public) stream retries in \(wait, privacy: .public)")
             try? await Task.sleep(for: wait)
         }
     }
+}
+
+/// Whether the device has a working network, as the system last said.
+enum Reachability {
+    private static let monitor = {
+        let monitor = NWPathMonitor()
+        monitor.start(queue: DispatchQueue(label: "me.pecheny.sesh.network"))
+        return monitor
+    }()
+
+    static func online() -> Bool { monitor.currentPath.status == .satisfied }
 }
