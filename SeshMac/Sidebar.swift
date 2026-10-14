@@ -60,13 +60,15 @@ struct Sidebar: View {
         // A hidden window draws no translucent material, so a snapshot needs a solid one.
         .scrollContentBackground(UserDefaults.standard.string(forKey: "snapshot") == nil ? .automatic : .hidden)
         #endif
-        .safeAreaInset(edge: .bottom) {
+        .safeAreaInset(edge: .bottom, spacing: 0) {
             HStack {
                 Button { adding = true } label: { Label("Add Vault", systemImage: "plus") }
                     .buttonStyle(.borderless)
                 Spacer()
             }
             .padding(Metric.gap)
+            .background(.bar)
+            .overlay(alignment: .top) { Divider() }
         }
         .sheet(isPresented: $adding) { AddVault() }
         .sheet(item: $naming) { naming in
