@@ -10,8 +10,9 @@ private final class Scripted: Runner {
     private(set) var commands: [String] = []
     private(set) var streams = 0
     var talks = false
+    var online = true
     private(set) var written: [String] = []
-    private(set) lazy var follower = FollowerLink(self, pause: .milliseconds(1))
+    private(set) lazy var follower = FollowerLink(self, pause: .milliseconds(1), online: { [unowned self] in online })
 
     init(_ scripts: [(lines: [String], status: Int32)]) { self.scripts = scripts }
 
@@ -111,6 +112,20 @@ final class FollowerLinkTests: XCTestCase {
         }
         XCTAssertEqual(online, [true, false])
         XCTAssertEqual(lines, 2)
+    }
+
+    /// A Host that stops answering, as one does to a sleeping Mac, is retried quietly; a run of
+    /// drops with the network up is told once.
+    func testDropsAreToldOnlyWhenTheyRepeatWithTheNetworkUp() async {
+        for online in [true, false] {
+            let machine = Scripted([([hello], 255)] + Array(repeating: ([], 255), count: 6))
+            machine.online = online
+            var problems: [String] = []
+            await run(machine, until: 8) {
+                await machine.follower.watch("w1:p1", from: { 0 }, line: { _ in }, problem: { problems.append($0) })
+            }
+            XCTAssertEqual(problems, online ? ["it broke"] : [])
+        }
     }
 
     func testAFileFollowEndsWithItsAgentSession() async {
