@@ -1277,7 +1277,7 @@ private struct Output: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 6) {
-            Text(text.isEmpty ? "No output" : text.trimmingCharacters(in: .newlines))
+            Text(text.isEmpty ? "No output" : PathLinks.link(plain: text.trimmingCharacters(in: .newlines)))
                 .font(.system(size: 11, design: .monospaced))
                 .foregroundStyle(flavour(failed ? .red : .subtext1))
                 .textSelection(.enabled)
