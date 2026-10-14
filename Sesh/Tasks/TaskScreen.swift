@@ -172,7 +172,8 @@ private struct SessionScreen: View {
                 }
             } else if let conversation, let session = vault.records[id] {
                 ConversationView(conversation: conversation, title: session.body.title ?? "Agent session", fresh: false,
-                                 resume: conversation.pane == nil && library.ended(session) ? { await library.resume(session) } : nil)
+                                 resume: conversation.pane == nil && library.ended(session) ? { await library.resume(session) } : nil,
+                                 place: place(of: session))
                     .id(ObjectIdentifier(conversation))
             } else {
                 ProgressView().frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -190,5 +191,11 @@ private struct SessionScreen: View {
             }
         }
         .loadsConversation($conversation, of: id, in: vault, library: library)
+    }
+
+    private func place(of session: Record) -> String? {
+        guard let task = session.body.task.flatMap({ vault.records[$0] }),
+              let worktree = TabItem.session(id).worktree(of: task, in: vault) else { return nil }
+        return "\(worktree.branch) on \(TaskActions.machine(worktree.machine).title)"
     }
 }

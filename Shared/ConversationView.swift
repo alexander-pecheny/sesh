@@ -10,6 +10,8 @@ struct ConversationView: View {
     var hidden = false
     /// Starts the Agent again, for a session whose Agent has stopped.
     var resume: (() async -> Void)?
+    /// The branch and machine the Agent works on, which the phone shows under its Tabs.
+    var place: String?
     @State private var draft = ""
     @State private var notice: String?
     /// Messages on their way to the follower.
@@ -65,21 +67,15 @@ struct ConversationView: View {
         }
         // Not sideways: under macOS 26's floating sidebar the colour would tint its glass.
         .background(flavour(.base), ignoresSafeAreaEdges: .vertical)
-        .navigationTitle(title)
-        .inlineTitle()
         #if os(macOS)
+        .navigationTitle(title)
         .navigationSubtitle(stateLabel)
         .buttonStyle(.plain)
+        #else
+        // The bar is too narrow for the state beside its buttons, and keeps the Task's title.
+        .safeAreaInset(edge: .top, spacing: 0) { status }
         #endif
         .toolbar {
-            #if os(iOS)
-            ToolbarItem(placement: .principal) {
-                VStack(spacing: 0) {
-                    Text(title).font(.ui(15).weight(.semibold)).foregroundStyle(flavour(.text))
-                    Text(stateLabel).font(.ui(11)).foregroundStyle(flavour(.subtext0))
-                }
-            }
-            #endif
             if conversation.agent == .claude, resume == nil {
                 ToolbarItem(placement: .primaryAction) {
                     Button { Task { await openInClaude() } } label: { Label("Open in Claude", image: "external-link") }
@@ -175,6 +171,26 @@ struct ConversationView: View {
             return .handled
         }
     }
+
+    #if os(iOS)
+    private var status: some View {
+        let state = Text(stateLabel)
+        let place = place.map { place in
+            Label { Text(place).truncationMode(.middle) } icon: { Image.lucide("git-branch", size: Metric.small) }
+        }
+        return ViewThatFits(in: .horizontal) {
+            HStack(spacing: Metric.pad) { state; place }
+            VStack(alignment: .leading, spacing: 2) { state; place }
+        }
+        .lineLimit(1)
+        .font(.ui(Metric.small))
+        .foregroundStyle(flavour(.subtext0))
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(.horizontal, Metric.wide)
+        .padding(.vertical, Metric.tiny)
+        .background(flavour(.mantle))
+    }
+    #endif
 
     private var stateLabel: String {
         let agent = conversation.agent?.title ?? "Agent"
