@@ -156,6 +156,9 @@ impl Machine {
             if let Some(followed) = self.sessions.get_mut(key) {
                 followed.seen = now;
                 followed.follower.tick(pane, now)?;
+                if followed.follower.live.nudge(now) {
+                    hands.push((key.to_string(), json!({"op": "keys", "keys": ["enter"]})));
+                }
                 // The queue goes to the Agent once it can take a message (ADR 0015).
                 if followed.follower.state().is_some_and(|state| !matches!(state, "working" | "blocked")) {
                     if let Some((id, text)) = followed.follower.live.hand(SENT, now) {

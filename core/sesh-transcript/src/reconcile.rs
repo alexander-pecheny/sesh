@@ -20,6 +20,9 @@ const PROBE: usize = 60;
 const CORPUS: usize = 400;
 /// How long an Agent may sit idle with a message it was given and never showed (ADR 0015).
 const LOST_AFTER: Duration = Duration::from_secs(10);
+/// How long an idle Agent may sit on a message it was given before Enter is pressed again:
+/// Claude, slow to wake after a long idle, can drop the Enter that follows the paste.
+const NUDGE_AFTER: Duration = Duration::from_secs(3);
 
 /// Where a message a device sent stands until the Transcript holds it (ADR 0015).
 pub const QUEUED: &str = "queued";
@@ -157,6 +160,7 @@ struct Message {
     state: &'static str,
     /// When it last took its state.
     at: Instant,
+    nudged: bool,
 }
 
 struct Item {
@@ -371,7 +375,7 @@ impl Reconciler {
 
     /// Takes a message a device sent, or a new state for one held.
     pub fn message(&mut self, id: &str, text: &str, state: &'static str, now: Instant) {
-        let message = Message { id: id.into(), text: text.into(), words: said_words(text), state, at: now };
+        let message = Message { id: id.into(), text: text.into(), words: said_words(text), state, at: now, nudged: false };
         match self.messages.iter_mut().find(|held| held.id == id) {
             Some(held) => *held = message,
             None => self.messages.push(message),
@@ -426,6 +430,19 @@ impl Reconciler {
                 (message.state, message.at) = (LOST, now);
             }
         }
+    }
+
+    /// Whether a message given to the idle Agent still waits in its input box, so Enter should
+    /// be pressed once more; true once per message.
+    pub fn nudge(&mut self, now: Instant) -> bool {
+        let Some(since) = self.idle else { return false };
+        let mut nudge = false;
+        for message in self.messages.iter_mut().filter(|message| message.state == SENT && !message.nudged) {
+            if now.duration_since(since.max(message.at)) >= NUDGE_AFTER {
+                (message.nudged, nudge) = (true, true);
+            }
+        }
+        nudge
     }
 
     /// Settles each message the Agent showed as read but the Transcript never delivered, once
