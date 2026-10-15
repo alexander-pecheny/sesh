@@ -25,8 +25,13 @@ final class Library: ObservableObject {
 
     /// A Task from its title alone, selected at once; its branch is named in the background.
     @discardableResult
-    func newTask(_ title: String, in vault: Vault, parent: String?) -> Record {
-        let task = Tree.newTask(title, parent: parent, in: vault)
+    /// A Task given no `remote` follows its Vault's default.
+    func newTask(_ title: String, in vault: Vault, parent: String?, remote: Bool? = nil) -> Record {
+        var task = Tree.newTask(title, parent: parent, in: vault)
+        if let remote {
+            task.body.remote = remote
+            vault.write(task)
+        }
         TaskActions.nameBranch(of: task, in: vault)
         selection = task.id
         return task

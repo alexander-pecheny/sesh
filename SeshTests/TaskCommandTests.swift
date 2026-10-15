@@ -156,6 +156,11 @@ final class TaskCommandTests: XCTestCase {
         XCTAssertEqual(menu.sections[4].items.map(\.action), [.open(.document(a.id)), .open(.document(b.id))])
     }
 
+    func testClaudeStartsWithRemoteControlUnlessTheTaskSaysNo() {
+        XCTAssertTrue(Agent.claude.flags("fix").hasPrefix("--remote-control 'fix' "))
+        XCTAssertEqual(Agent.claude.flags("fix", remote: false), "--dangerously-skip-permissions")
+    }
+
     func testANewWorktreesBranchTakesTheNextFreeNumber() {
         XCTAssertEqual(Start.nextBranch(after: "me/fix", taken: ["main", "me/fix"]), "me/fix-2")
         XCTAssertEqual(Start.nextBranch(after: "me/fix", taken: ["me/fix", "me/fix-2", "me/fix-3", "me/fix-5"]), "me/fix-4")

@@ -62,14 +62,14 @@ enum Herdr {
     /// Starts `agent` in a fresh `pane` and waits until it can take a prompt. On failure the
     /// pane is closed, so no half-started Agent lingers, and the reason comes back.
     static func launch(_ agent: Agent, name wanted: String, pane: String, resuming transcript: String? = nil,
-                       config: String? = nil, on runner: Runner) async -> String? {
+                       config: String? = nil, remote: Bool = true, on runner: Runner) async -> String? {
         let name = Names.free(wanted, taken: await agentNames(on: runner))
         if agent == .claude, let config, !config.isEmpty {
             _ = await runner.run("\(command) pane run \(quote(pane)) \(quote("export CLAUDE_CONFIG_DIR=\(shellPath(config))"))")
         }
         var ran = await runner.run(
             "\(command) agent start \(quote(name)) --kind \(agent.rawValue) --pane \(quote(pane)) --timeout 60000"
-                + " -- \(agent.flags(name, resuming: transcript))")
+                + " -- \(agent.flags(name, resuming: transcript, remote: remote))")
         let notReady = !ran.ok && (ran.err + ran.out).contains("agent_not_ready")
         if ran.ok || notReady {
             // The user picked this folder and pressed Start, which answers the trust question;
