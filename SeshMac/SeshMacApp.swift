@@ -109,8 +109,8 @@ private struct DocumentWindow: View {
 
     var body: some View {
         Group {
-            if document.folder, let path = document.path {
-                FolderBrowser(vault: document.vault, root: path, machine: document.machine)
+            if document.path != nil {
+                FolderBrowser(document: document)
             } else {
                 DocumentTab(document: document)
             }

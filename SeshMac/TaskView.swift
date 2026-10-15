@@ -100,7 +100,7 @@ private struct TabButton: View {
     var body: some View {
         HStack(spacing: Metric.tiny) {
             Button { library.open(tab, in: task) } label: {
-                Label(tab.title(in: vault), systemImage: tab.icon).lineLimit(1).contentShape(.rect)
+                Label(tab.title(in: vault), systemImage: tab.icon(in: vault)).lineLimit(1).contentShape(.rect)
                     .foregroundStyle(session.map(library.ended) == true ? .secondary : .primary)
             }
             .buttonStyle(.plain)
@@ -148,8 +148,8 @@ private struct TabContent: View {
         case .session(let session): SessionTab(vault: vault, id: session).id(session)
         case .document(let document):
             let text = library.document(document, in: vault)
-            if text.folder, let path = text.path {
-                FolderBrowser(vault: vault, root: path, machine: text.machine).id(document)
+            if text.path != nil {
+                FolderBrowser(document: text).id(document)
             } else {
                 DocumentTab(document: text).id(document)
             }
