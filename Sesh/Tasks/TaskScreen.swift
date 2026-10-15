@@ -94,7 +94,7 @@ private struct TabChip: View {
 
     var body: some View {
         HStack(spacing: Metric.tiny) {
-            Image(systemName: tab.icon).imageScale(.small)
+            Image(systemName: tab.icon(in: vault)).imageScale(.small)
             Text(tab.title(in: vault)).lineLimit(1)
             if case .session(let id) = tab, let session = vault.records[id] { MarkView(mark: library.mark(of: session)) }
             if selected, tab != .journal {
@@ -137,7 +137,13 @@ private struct TabContent: View {
         switch tab {
         case .journal: JournalScreen(vault: vault, task: task)
         case .session(let session): SessionScreen(vault: vault, id: session).id(session)
-        case .document(let document): DocumentScreen(document: library.document(document, in: vault)).id(document)
+        case .document(let document):
+            let text = library.document(document, in: vault)
+            if text.path != nil {
+                FolderBrowser(document: text).id(document)
+            } else {
+                DocumentScreen(document: text).id(document)
+            }
         case .subagent(let session, let path, let title):
             if let record = vault.records[session] {
                 ConversationView(conversation: library.subagentConversation(path: path, of: record), title: title, fresh: false)

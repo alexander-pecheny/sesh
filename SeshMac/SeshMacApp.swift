@@ -93,7 +93,7 @@ private struct MarkdownWindow: View {
     }
 }
 
-/// `-document FILE` opens a file on the Mac in a Document Tab, in a Vault kept apart and never
+/// `-document FILE` opens a file, or a folder to browse, on the Mac in a Document Tab, in a Vault kept apart and never
 /// sent anywhere, so a Document's drawing can be checked with `-snapshot`.
 private struct DocumentWindow: View {
     @StateObject private var document: DocumentText
@@ -108,7 +108,14 @@ private struct DocumentWindow: View {
     }
 
     var body: some View {
-        DocumentTab(document: document).frame(width: 900, height: 700)
+        Group {
+            if document.path != nil {
+                FolderBrowser(document: document)
+            } else {
+                DocumentTab(document: document)
+            }
+        }
+        .frame(width: 900, height: 700)
     }
 }
 

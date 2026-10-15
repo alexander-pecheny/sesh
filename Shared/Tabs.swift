@@ -35,11 +35,12 @@ enum TabItem: Hashable, Identifiable, Codable {
         }
     }
 
-    var icon: String {
+    @MainActor
+    func icon(in vault: some Records) -> String {
         switch self {
         case .journal: "book"
         case .session: "bubble.left.and.text.bubble.right"
-        case .document: "doc.text"
+        case .document(let id): vault.records[id]?.body.path?.hasSuffix("/") == true ? "folder" : "doc.text"
         case .terminal: "terminal"
         case .subagent: "person.2"
         }

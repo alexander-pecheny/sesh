@@ -7,7 +7,7 @@ import cmark_gfm_extensions
 enum PathLinks {
     static let scheme = "sesh-path"
 
-    /// Paths in code spans become file links, unless there is nowhere to open them, `#213`
+    /// Paths in code spans become file and folder links, unless there is nowhere to open them, `#213`
     /// a link to that pull request when the session's repository is known, and text matching
     /// one of the Vault's rules a link of its own.
     static func link(_ markdown: String, repo: Repo? = nil, paths: Bool = true, rules: [LinkRule] = []) -> String {
@@ -32,13 +32,15 @@ enum PathLinks {
             if let known = folder, known.block != block, cmark_node_next(known.block) != block { folder = nil }
             // `Sources/App.swift:42` names the file; the line is for the reader.
             let text = String(cString: literal).replacing(/:\d+(:\d+)?$/, with: "")
-            if (text.hasPrefix("/") || text.hasPrefix("~/")) && text.hasSuffix("/") && !text.contains(" ") {
+            let rooted = text.hasPrefix("/") || text.hasPrefix("~/")
+            if rooted && text.hasSuffix("/") && !text.contains(" ") {
                 folder = (text, block)
+                spans.append((node, text))
                 continue
             }
-            guard isPath(text) else { continue }
-            let rooted = text.hasPrefix("/") || text.hasPrefix("~/")
-            spans.append((node, rooted || folder == nil ? text : folder!.path + text))
+            let path = rooted || folder == nil ? text : folder!.path + text
+            guard isPath(path) else { continue }
+            spans.append((node, path))
         }
         cmark_iter_free(walk)
         guard !spans.isEmpty || changed else { return markdown }
