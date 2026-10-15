@@ -22,14 +22,25 @@ final class DocumentText: ObservableObject {
     private var started: Int?
     var keep: (String) -> Void = { _ in }
 
+    /// A file a folder's browser shows, which no Record remembers.
+    private var loose: (path: String, machine: Machine)?
+
     init(vault: Vault, id: String) {
         self.vault = vault
         self.id = id
     }
 
-    var record: Record? { vault.records[id] }
-    var path: String? { record?.body.path }
-    var machine: Machine { TaskActions.machine(record?.body.machine) }
+    init(vault: Vault, path: String, machine: Machine) {
+        self.vault = vault
+        id = ""
+        loose = (path, machine)
+    }
+
+    var record: Record? { loose == nil ? vault.records[id] : nil }
+    var path: String? { loose?.path ?? record?.body.path }
+    var machine: Machine { loose?.machine ?? TaskActions.machine(record?.body.machine) }
+    /// A folder, which its Tab browses rather than shows.
+    var folder: Bool { path?.hasSuffix("/") == true }
     var dirty: Bool { loaded && text != (path == nil ? record?.body.text ?? "" : base ?? record?.body.text ?? "") }
     private var ext: String? { path.map { ($0 as NSString).pathExtension.lowercased() } }
     var markdown: Bool { ext.map { ["md", "markdown"].contains($0) } ?? true }
@@ -50,8 +61,8 @@ final class DocumentText: ObservableObject {
     }
 
     private func read() async {
-        guard let record else { return }
         guard let path else {
+            guard let record else { return }
             started = record.seq
             return text = record.body.text ?? ""
         }
@@ -71,15 +82,15 @@ final class DocumentText: ObservableObject {
             unreachable = nil
             remember(ran.out)
         } else {
-            text = record.body.text ?? ""
+            text = record?.body.text ?? ""
             unreachable = "Showing the last copy Sesh saw: \(machine.title) could not be read (\(ran.problem))."
         }
     }
 
     func write(force: Bool) async {
         defer { keep(dirty ? text : "") }
-        guard var record else { return }
         guard let path else {
+            guard var record else { return }
             record.body.text = text
             record.body.edited = Int64(Date().timeIntervalSince1970 * 1000)
             vault.write(record, base: started)

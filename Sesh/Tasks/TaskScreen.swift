@@ -137,7 +137,13 @@ private struct TabContent: View {
         switch tab {
         case .journal: JournalScreen(vault: vault, task: task)
         case .session(let session): SessionScreen(vault: vault, id: session).id(session)
-        case .document(let document): DocumentScreen(document: library.document(document, in: vault)).id(document)
+        case .document(let document):
+            let text = library.document(document, in: vault)
+            if text.folder, let path = text.path {
+                FolderBrowser(vault: vault, root: path, machine: text.machine).id(document)
+            } else {
+                DocumentScreen(document: text).id(document)
+            }
         case .subagent(let session, let path, let title):
             if let record = vault.records[session] {
                 ConversationView(conversation: library.subagentConversation(path: path, of: record), title: title, fresh: false)

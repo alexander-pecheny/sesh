@@ -238,14 +238,14 @@ enum TaskActions {
         return nil
     }
 
-    /// Opens a file in the Task as a Document, reusing the Tab if it is open already. A bare
+    /// Opens a file, or a folder to browse, in the Task as a Document, reusing the Tab if it is open already. A bare
     /// name is looked for among the files the Agent wrote, then in its folder; the first that
     /// exists on the machine wins.
     static func open(_ path: String, from session: Record, wrote: [String], in vault: Vault, library: Library) async {
         guard let task = session.body.task else { return }
         let folder = session.body.path ?? "~"
         var absolute = path
-        if !(path.hasPrefix("/") || path.hasPrefix("~/")) {
+        if !(path.hasPrefix("/") || path.hasPrefix("~/")) && !path.hasSuffix("/") {
             let candidates = wrote.filter { $0.hasSuffix("/" + path) } + [(folder as NSString).appendingPathComponent(path)]
             let tests = candidates.map { "[ -f \(shellPath($0)) ] && printf %s \(quote($0)) && exit" }.joined(separator: "; ")
             let found = await machine(session.body.machine).run(tests).out
@@ -254,7 +254,7 @@ enum TaskActions {
         let known = vault.children(.document, task: task)
             .first { $0.body.path == absolute && $0.body.machine == session.body.machine }
         let document = known ?? vault.create(.document, .init(
-            title: (absolute as NSString).lastPathComponent, task: task, machine: session.body.machine, path: absolute))
+            title: (absolute as NSString).lastPathComponent + (absolute.hasSuffix("/") ? "/" : ""), task: task, machine: session.body.machine, path: absolute))
         library.open(.document(document.id), in: task)
     }
 
