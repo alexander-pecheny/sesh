@@ -159,6 +159,8 @@ final class TaskCommandTests: XCTestCase {
     func testANewWorktreesBranchTakesTheNextFreeNumber() {
         XCTAssertEqual(Start.nextBranch(after: "me/fix", taken: ["main", "me/fix"]), "me/fix-2")
         XCTAssertEqual(Start.nextBranch(after: "me/fix", taken: ["me/fix", "me/fix-2", "me/fix-3", "me/fix-5"]), "me/fix-4")
+        XCTAssertEqual(Names.folder("pecheny/test-vs-other-harnesses-3"), "pecheny-test-vs-other-harnesses-3",
+                       "a long branch keeps its number in its Worktree's folder")
     }
 
     func testTheHeaderNamesTheWorktreeOfTheTabShown() {

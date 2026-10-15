@@ -26,7 +26,7 @@ enum Start {
     /// Workspace of its own; its pane goes in the Task's Workspace instead.
     static func worktree(_ branch: String, of repo: String, after main: String, on runner: Runner) async -> Result<Place, Herdr.Failure> {
         let home = (await runner.run("printf %s \"$HOME\"")).out
-        let folder = "\(home)/.herdr/worktrees/\((repo as NSString).lastPathComponent)/\(Names.slug(branch))"
+        let folder = "\(home)/.herdr/worktrees/\((repo as NSString).lastPathComponent)/\(Names.folder(branch))"
         let base = base(after: main, in: await Git.branches(of: repo, on: runner))
         let ran = await Git.addWorktree(folder, branch: branch, from: base, of: repo, on: runner)
         return ran.ok ? .success(Place(folder: folder, branch: branch)) : .failure(Herdr.Failure(ran.problem))
