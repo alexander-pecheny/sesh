@@ -222,6 +222,13 @@ enum Names {
         return String(slug.prefix(32))
     }
 
+    /// The folder herdr gives a Worktree of `branch`: unlike a slug, it keeps the whole name, so
+    /// `fix-2` and `fix-3` never share one.
+    static func folder(_ branch: String) -> String {
+        let folder = branch.lowercased().split { !($0.isASCII && ($0.isLetter || $0.isNumber)) }.joined(separator: "-")
+        return folder.isEmpty ? "worktree" : folder
+    }
+
     /// `name`, or `name-2`, `name-3` and so on when another Agent already goes by it.
     static func free(_ name: String, taken: Set<String>) -> String {
         var free = name, n = 1
