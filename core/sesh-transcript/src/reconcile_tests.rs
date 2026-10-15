@@ -234,6 +234,17 @@ fn an_entry_lands_after_the_final_rows_below_a_message_left_unmatched() {
 }
 
 #[test]
+fn an_idle_agent_still_holding_a_message_gets_one_more_enter() {
+    let now = Instant::now();
+    let mut live = Reconciler::default();
+    live.message("sent.1", "hello", SENT, now);
+    live.idle(true, now);
+    assert!(!live.nudge(now + Duration::from_secs(1)));
+    assert!(live.nudge(now + NUDGE_AFTER));
+    assert!(!live.nudge(now + NUDGE_AFTER * 2), "Enter is pressed again only once");
+}
+
+#[test]
 fn a_message_claude_read_but_the_transcript_never_gave_settles_once_idle() {
     let now = Instant::now();
     let mut live = Reconciler::default();
