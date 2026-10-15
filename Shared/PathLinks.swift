@@ -10,7 +10,13 @@ enum PathLinks {
     /// Paths in code spans become file and folder links, unless there is nowhere to open them, `#213`
     /// a link to that pull request when the session's repository is known, and text matching
     /// one of the Vault's rules a link of its own.
-    static func link(_ markdown: String, repo: Repo? = nil, paths: Bool = true, rules: [LinkRule] = []) -> String {
+    static func link(_ written: String, repo: Repo? = nil, paths: Bool = true, rules: [LinkRule] = []) -> String {
+        // cmark would rewrite a formula's underscores and stars as it renders the Markdown back.
+        let (markdown, formulas) = MathText.extract(written)
+        return MathText.restore(linked(markdown, repo: repo, paths: paths, rules: rules), formulas)
+    }
+
+    private static func linked(_ markdown: String, repo: Repo?, paths: Bool, rules: [LinkRule]) -> String {
         let numbers = repo != nil && markdown.contains("#")
         guard paths && markdown.contains("`") || numbers || !rules.isEmpty, let root = Cmark.parse(markdown) else { return markdown }
         defer { cmark_node_free(root) }

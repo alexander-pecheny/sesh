@@ -688,7 +688,7 @@ private struct UserText: View {
         #if os(macOS)
         Prose(text: text)
         #else
-        Text(LocalizedStringKey(text))
+        if MathText.extract(text).formulas.isEmpty { Text(LocalizedStringKey(text)) } else { Prose(text: text) }
         #endif
     }
 }

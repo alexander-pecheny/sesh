@@ -19,12 +19,17 @@ struct Renderer {
     var width: CGFloat?
     private var body: PlatformFont { .systemFont(ofSize: Metric.body) }
     private var mono: PlatformFont { .monospacedSystemFont(ofSize: Metric.note, weight: .regular) }
+    /// The formulas the Markdown held, whose placeholders the text carries.
+    var formulas: [MathText.Formula] = []
 
     func render(_ markdown: String) -> NSAttributedString {
         let out = NSMutableAttributedString()
-        guard let root = Cmark.parse(markdown) else { return NSAttributedString(string: markdown) }
+        let (text, formulas) = MathText.extract(markdown)
+        guard let root = Cmark.parse(text) else { return NSAttributedString(string: markdown) }
         defer { cmark_node_free(root) }
-        blocks(of: root, into: out, depth: 0)
+        var renderer = self
+        renderer.formulas = formulas
+        renderer.blocks(of: root, into: out, depth: 0)
         while out.string.hasSuffix("\n") { out.deleteCharacters(in: NSRange(location: out.length - 1, length: 1)) }
         return out
     }
@@ -64,8 +69,9 @@ struct Renderer {
         let indent = CGFloat(depth) * Metric.wide
         switch kind(node) {
         case "paragraph":
-            out.append(inlines(node, attributes(font: body, style: paragraph(indent: indent))))
-            out.append(NSAttributedString(string: "\n", attributes: attributes(font: body, style: paragraph(indent: indent))))
+            let style = alone(node) ? centred(paragraph(indent: indent)) : paragraph(indent: indent)
+            out.append(inlines(node, attributes(font: body, style: style)))
+            out.append(NSAttributedString(string: "\n", attributes: attributes(font: body, style: style)))
         case "heading":
             let level = Int(cmark_node_get_heading_level(node))
             let size = [Metric.body + 7, Metric.body + 4, Metric.body + 2][min(level, 3) - 1]
@@ -230,7 +236,7 @@ struct Renderer {
         return children(table).enumerated().map { row, cells in children(cells).map { cell($0, header: row == 0) }.map { ($0.text, $0.word) } }
     }
 
-    private func plain(_ node: UnsafeMutablePointer<cmark_node>) -> String {
+    fileprivate func plain(_ node: UnsafeMutablePointer<cmark_node>) -> String {
         if let literal = cmark_node_get_literal(node) { return String(cString: literal) }
         return children(node).map { kind($0) == "softbreak" ? " " : plain($0) }.joined()
     }
@@ -240,7 +246,7 @@ struct Renderer {
         for child in children(node) {
             var style = base
             switch kind(child) {
-            case "text": out.append(NSAttributedString(string: plain(child), attributes: style))
+            case "text": out.append(math(plain(child), style))
             // Agents write one line per thought and mean it as a line, as chat apps show it.
             case "softbreak": out.append(NSAttributedString(string: "\u{2028}", attributes: style))
             case "linebreak": out.append(NSAttributedString(string: "\u{2028}", attributes: style))
@@ -261,6 +267,50 @@ struct Renderer {
                 out.append(inlines(child, style, chip: chip))
             case "image": out.append(NSAttributedString(string: plain(child), attributes: style))
             default: out.append(NSAttributedString(string: plain(child), attributes: style))
+            }
+        }
+        return out
+    }
+}
+
+extension Renderer {
+    /// Whether the paragraph is one displayed formula, which stands centred on its own.
+    fileprivate func alone(_ node: UnsafeMutablePointer<cmark_node>) -> Bool {
+        let pieces = MathText.pieces(plain(node).trimmingCharacters(in: .whitespacesAndNewlines))
+        guard !formulas.isEmpty, pieces.count == 1, case .formula(let index) = pieces[0] else { return false }
+        return formulas.indices.contains(index) && formulas[index].display
+    }
+
+    fileprivate func centred(_ style: NSParagraphStyle) -> NSParagraphStyle {
+        let centred = (style.mutableCopy() as? NSMutableParagraphStyle) ?? NSMutableParagraphStyle()
+        centred.alignment = .center
+        return centred
+    }
+
+    /// Text with its formulas drawn in, sitting on the line's baseline; one SwiftMath cannot
+    /// read stays as it was written.
+    fileprivate func math(_ text: String, _ style: [NSAttributedString.Key: Any]) -> NSAttributedString {
+        guard !formulas.isEmpty, text.contains(MathText.open) else { return NSAttributedString(string: text, attributes: style) }
+        let out = NSMutableAttributedString()
+        let colour = style[.foregroundColor] as? PlatformColor ?? PlatformColor(flavour(.text))
+        for piece in MathText.pieces(text) {
+            switch piece {
+            case .text(let text):
+                out.append(NSAttributedString(string: text, attributes: style))
+            case .formula(let index) where formulas.indices.contains(index):
+                let formula = formulas[index]
+                guard let drawn = MathImage.draw(formula.latex, display: formula.display, size: Metric.body, colour: colour) else {
+                    out.append(NSAttributedString(string: formula.source, attributes: style))
+                    continue
+                }
+                let attachment = NSTextAttachment()
+                attachment.image = drawn.image
+                attachment.bounds = CGRect(origin: CGPoint(x: 0, y: -drawn.descent), size: drawn.image.size)
+                let image = NSMutableAttributedString(attachment: attachment)
+                image.addAttributes(style, range: NSRange(location: 0, length: image.length))
+                out.append(image)
+            case .formula:
+                break
             }
         }
         return out
