@@ -26,6 +26,9 @@ packages:
   Highlightr:
     url: https://github.com/raspu/Highlightr
     exactVersion: 2.3.0
+  SwiftMath:
+    url: https://github.com/mgriebling/SwiftMath
+    exactVersion: 1.7.3
 
 targets:
   Sesh:
@@ -54,6 +57,7 @@ targets:
       - framework: Frameworks/SeshCore.xcframework
         embed: false
       - package: Highlightr
+      - package: SwiftMath
       - package: MarkdownUI
       - package: cmark
         product: cmark-gfm
@@ -106,6 +110,7 @@ targets:
       - sdk: QuartzCore.framework
       - sdk: IOSurface.framework
       - package: Highlightr
+      - package: SwiftMath
       - package: MarkdownUI
       - package: cmark
         product: cmark-gfm
@@ -153,6 +158,7 @@ targets:
       - path: Shared/Tabs.swift
       - path: Shared/Start.swift
       - path: Shared/CodeEdit.swift
+      - path: Shared/MathText.swift
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: me.pecheny.sesh.tests

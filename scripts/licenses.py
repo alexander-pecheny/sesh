@@ -19,6 +19,8 @@ BUNDLED = [
     ("MarkdownUI", "2.4.1", "MIT", ["Resources/LICENSE-markdownui.txt"]),
     ("NetworkImage", "6.0.1", "MIT", ["Resources/LICENSE-networkimage.txt"]),
     ("swift-cmark (cmark-gfm)", "0.9.0", "BSD-2-Clause", ["Resources/LICENSE-cmark-gfm.txt"]),
+    ("SwiftMath", "1.7.3", "MIT", ["Resources/LICENSE-swiftmath.txt"]),
+    ("Latin Modern Math font", "", "GUST Font License", ["Resources/LICENSE-latin-modern-math.txt"]),
 ]
 
 

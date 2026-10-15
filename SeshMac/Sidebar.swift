@@ -251,6 +251,7 @@ struct NameSheet: View {
     @EnvironmentObject private var library: Library
     let naming: Sidebar.Naming
     @State private var name = ""
+    @State private var remote = true
 
     var body: some View {
         Form {
@@ -259,6 +260,7 @@ struct NameSheet: View {
                 .labelsHidden()
                 .multilineTextAlignment(.leading)
                 .onSubmit(save)
+            if case .task = naming.goal { Toggle("Claude remote control", isOn: $remote) }
         }
         .padding()
         .frame(width: 380)
@@ -266,7 +268,10 @@ struct NameSheet: View {
             ToolbarItem(placement: .cancellationAction) { Button("Cancel") { dismiss() } }
             ToolbarItem(placement: .confirmationAction) { Button("Save", action: save).disabled(trimmed.isEmpty) }
         }
-        .onAppear { if case .rename(let record) = naming.goal { name = record.body.title ?? "" } }
+        .onAppear {
+            if case .rename(let record) = naming.goal { name = record.body.title ?? "" }
+            remote = naming.vault.settings.body.remote ?? true
+        }
     }
 
     private var prompt: String {
@@ -284,7 +289,7 @@ struct NameSheet: View {
         let vault = naming.vault
         switch naming.goal {
         case .task:
-            library.newTask(trimmed, in: vault, parent: naming.parent)
+            library.newTask(trimmed, in: vault, parent: naming.parent, remote: remote)
         case .folder:
             _ = vault.create(.folder, .init(title: trimmed, parent: naming.parent, position: Tree.next(in: naming.parent, of: vault)))
         case .rename(let record):

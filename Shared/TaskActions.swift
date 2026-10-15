@@ -26,6 +26,11 @@ enum TaskActions {
         UserDefaults.standard.set(all, forKey: "claudeConfig")
     }
 
+    /// Whether the Task's Claude sessions start with remote control.
+    static func remote(of task: Record, in vault: Vault) -> Bool {
+        task.body.remote ?? vault.settings.body.remote ?? true
+    }
+
     /// The branch a title suggests, under the user's name as herdr's own branches are.
     static func branch(for title: String, user: String) -> String {
         let slug = Names.slug(title)
@@ -81,7 +86,8 @@ enum TaskActions {
         let session = Start.session(agent, for: task.id, on: machine.alias, at: place, repo: repo, in: vault)
         made(session)
         let name = Names.slug("\(current.body.title ?? "task")-\(agent.rawValue)")
-        if let problem = await Herdr.launch(agent, name: name, pane: place.pane ?? "", config: claudeConfig(vault, on: machine), on: machine) {
+        if let problem = await Herdr.launch(agent, name: name, pane: place.pane ?? "", config: claudeConfig(vault, on: machine),
+                                               remote: remote(of: current, in: vault), on: machine) {
             vault.delete(vault.records[session.id] ?? session)
             return .failure(Herdr.Failure(problem))
         }
@@ -235,7 +241,8 @@ enum TaskActions {
         }
         let name = Names.slug("\(task.body.title ?? "task")-\(agent.rawValue)")
         if let problem = await Herdr.launch(
-            agent, name: name, pane: pane, resuming: transcript, config: claudeConfig(vault, on: machine), on: machine) { return problem }
+            agent, name: name, pane: pane, resuming: transcript, config: claudeConfig(vault, on: machine),
+            remote: remote(of: task, in: vault), on: machine) { return problem }
         var record = vault.records[session.id] ?? session
         record.body.pane = pane
         vault.write(record)

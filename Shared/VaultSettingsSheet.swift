@@ -6,6 +6,7 @@ struct VaultSettingsSheet: View {
     @Environment(\.colorScheme) private var colorScheme
     @ObservedObject var vault: Vault
     @State private var links: [LinkRule] = []
+    @State private var remote = true
 
     private var flavour: Catppuccin.Flavour { colorScheme == .dark ? .mocha : .latte }
     private var kept: [LinkRule] { links.filter { !$0.pattern.isEmpty && !$0.url.isEmpty } }
@@ -28,6 +29,11 @@ struct VaultSettingsSheet: View {
     }
 
     @ViewBuilder private var sections: some View {
+        Section {
+            Toggle("Claude remote control", isOn: $remote)
+        } footer: {
+            Text("Claude sessions of new Tasks can be reached from the Claude app. A new Task can still choose otherwise.")
+        }
         Section {
             ForEach($links) { $rule in
                 VStack(alignment: .leading) {
@@ -56,11 +62,15 @@ struct VaultSettingsSheet: View {
         }
     }
 
-    private func load() { links = vault.settings.body.links ?? [] }
+    private func load() {
+        links = vault.settings.body.links ?? []
+        remote = vault.settings.body.remote ?? true
+    }
 
     private func save() {
         var settings = vault.settings
         settings.body.links = kept
+        settings.body.remote = remote
         vault.write(settings)
         dismiss()
     }
