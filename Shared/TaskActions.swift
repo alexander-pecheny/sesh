@@ -223,6 +223,10 @@ enum TaskActions {
         var pane = ""
         if let left = session.body.pane, case .found(let found) = await Herdr.look(for: left, on: machine), found.agent == nil {
             pane = left
+            // A shell from the user's own herdr, taken over with its panes, still names that
+            // herdr's socket, where Claude's hooks would report its questions to no one.
+            let socket = "export HERDR_SOCKET_PATH=\"$HOME/.config/herdr/sessions/sesh/herdr.sock\" HERDR_SESSION=sesh"
+            _ = await machine.run("\(Herdr.command) pane run \(quote(pane)) \(quote(socket))")
         } else {
             switch await self.pane(for: task, on: machine, label: agent.title, folder: session.body.path) {
             case .failure(let failure): return failure.message
