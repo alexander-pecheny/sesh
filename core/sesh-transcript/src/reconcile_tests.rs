@@ -174,6 +174,27 @@ fn a_restarted_follower_keeps_its_rows_apart_from_the_last_ones() {
 }
 
 #[test]
+fn an_open_question_stays_below_the_words_claude_wrote_before_it() {
+    let dir = std::env::temp_dir().join(format!("sesh-question-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let log = Log::open(&dir.join("sessions.db")).unwrap();
+    let now = Instant::now();
+    let question = Entry { id: "q1".into(), ..said("question", "Tea?") };
+    let text = |id: &str| Entry { id: id.into(), ..said("text", &format!("Questions before I start, {id}:")) };
+    let mut writer = Writer::new("p1", &log).unwrap();
+    let mut live = Reconciler::default();
+    live.see(reply(text("t1").text.as_deref().unwrap()), now);
+    let shown = Event::Live(live.shown(now));
+    let rewrite = Event::Entry { entry: text("t1"), replaces: live.deliver(&text("t1"), now) };
+    let landed = Event::Entry { entry: text("t2"), replaces: None };
+    let ask = || Event::Entry { entry: question.clone(), replaces: None };
+    writer.apply(&log, &[shown, ask(), rewrite, ask(), landed], None).unwrap();
+    let rows: Vec<String> = log.last("p1", usize::MAX).unwrap().iter().map(|row| row["entry"]["id"].as_str().unwrap().into()).collect();
+    std::fs::remove_dir_all(&dir).unwrap();
+    assert_eq!(rows, ["t1", "t2", "q1"]);
+}
+
+#[test]
 fn a_message_sent_after_a_dropped_turn_takes_the_prompt_that_carries_both() {
     let dir = std::env::temp_dir().join(format!("sesh-dropped-{}", std::process::id()));
     std::fs::create_dir_all(&dir).unwrap();
