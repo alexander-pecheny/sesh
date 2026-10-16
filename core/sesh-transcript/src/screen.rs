@@ -477,7 +477,8 @@ fn prose(rows: &[Row], width: usize, margin: usize) -> (String, String) {
     for row in rows {
         let text = row.text();
         let indent = row.indent();
-        let item = list_marker(text.trim_start());
+        // Claude draws a heading such as `## 2. Setup` in bold, and a list's numbers never.
+        let item = list_marker(text.trim_start()).filter(|_| !row.skip(indent).first_style().is_some_and(|style| style.bold));
         let wrapped = previous.is_some_and(|previous| wraps(previous, &text, width, margin));
         match (&item, lines.last_mut()) {
             (None, Some((_, _, spans))) if wrapped => {

@@ -130,6 +130,12 @@ fn a_link_wrapped_across_rows_keeps_one_space() {
 }
 
 #[test]
+fn a_numbered_heading_is_not_a_list_item() {
+    let rows = rows("\x1b[38;2;255;255;255m⏺ \x1b[0m\x1b[1m2. Setup\x1b[0m\n\n  1. Install it.");
+    assert_eq!(markdown(&rows, 119).0, "**2. Setup**\n\n1. Install it.");
+}
+
+#[test]
 fn a_menu_no_hook_reported_is_read_off_the_screen() {
     let screen = "⏺ Bash(rm -rf build)\n\n────────────────────────────────\n Bash command\n\n   rm -rf build\n   Remove the build folder\n\n This command was flagged for review.\n Do you want to proceed?\n ❯ 1. Yes\n   2. No, and tell Claude what to do differently (esc)\n\n Esc to cancel · Tab to amend\n";
     let menu = Menu::read(screen).unwrap();
