@@ -157,7 +157,6 @@ struct NewTaskSheet: View {
     @ObservedObject var vault: Vault
     let parent: String?
     @State private var title = ""
-    @State private var remote = true
     @FocusState private var focused: Bool
 
     private var trimmed: String { title.trimmingCharacters(in: .whitespacesAndNewlines) }
@@ -168,17 +167,13 @@ struct NewTaskSheet: View {
                 .focused($focused)
                 .submitLabel(.done)
                 .onSubmit(create)
-            Toggle("Claude remote control", isOn: $remote)
         }
-        .onAppear {
-            focused = true
-            remote = vault.settings.body.remote ?? true
-        }
+        .onAppear { focused = true }
     }
 
     private func create() {
         guard !trimmed.isEmpty else { return }
         dismiss()
-        library.newTask(trimmed, in: vault, parent: parent, remote: remote)
+        library.newTask(trimmed, in: vault, parent: parent)
     }
 }

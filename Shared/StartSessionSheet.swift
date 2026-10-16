@@ -14,6 +14,7 @@ struct StartSessionSheet: View {
     @State private var choice = Self.other
     @State private var typed = ""
     @State private var config = ""
+    @State private var remote = true
     @State private var parallel = false
     @State private var newBranch = ""
     /// What the new Worktree branches from, as the repository's branches say.
@@ -77,6 +78,7 @@ struct StartSessionSheet: View {
                 }
                 if agent == .claude {
                     TextField("Claude config folder", text: $config, prompt: Text("~/.claude"))
+                    Toggle("Remote control", isOn: $remote)
                 }
             } footer: {
                 if choice == Self.other { Text("A folder that does not exist yet becomes a new repository.") }
@@ -101,6 +103,7 @@ struct StartSessionSheet: View {
         }
         .onAppear {
             alias = TaskActions.lastMachine(for: vault.records[task.id] ?? task, in: vault, library: library)?.alias
+            remote = vault.settings.body.remote ?? true
             choose()
         }
         .task(id: alias) {
@@ -141,7 +144,7 @@ struct StartSessionSheet: View {
         guard ready, let machine else { return }
         if agent == .claude { TaskActions.setClaudeConfig(config.trimmingCharacters(in: .whitespaces), vault, on: machine) }
         library.start(agent, for: vault.records[task.id] ?? task, on: machine, repo: repo,
-                      branch: fresh, problem: problem)
+                      branch: fresh, remote: remote, problem: problem)
         dismiss()
     }
 }
