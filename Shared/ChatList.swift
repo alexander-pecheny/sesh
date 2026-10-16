@@ -109,9 +109,13 @@ struct ChatList: NSViewRepresentable {
             items = new
         }
 
+        /// A view-based table animates a row's new height, which the end it is held at chases.
         private func quietly(_ change: () -> Void) {
             adjusting = true
+            NSAnimationContext.beginGrouping()
+            NSAnimationContext.current.duration = 0
             change()
+            NSAnimationContext.endGrouping()
             adjusting = false
         }
 
