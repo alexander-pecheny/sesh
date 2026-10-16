@@ -38,6 +38,15 @@ enum Git {
         await runner.run("git -C \(quote(repo)) worktree add -b \(quote(branch)) \(quote(path))" + (base.map { " " + quote($0) } ?? ""))
     }
 
+    /// Brings the branch `repo` has checked out up to its upstream, as `git pull --ff-only` would,
+    /// so a new Worktree starts from the latest main and the checkout shows what was merged.
+    /// git refuses whatever would touch local work; that, or no network, leaves it as it was.
+    static func update(_ repo: String, on runner: Runner) async {
+        let quiet = "GIT_TERMINAL_PROMPT=0 GIT_SSH_COMMAND='ssh -o BatchMode=yes -o ConnectTimeout=10'"
+        _ = await runner.run("cd \(shellPath(repo)) && git rev-parse -q --verify '@{u}' >/dev/null"
+            + " && \(quiet) git fetch -q && git merge -q --ff-only '@{u}'")
+    }
+
     /// Removes the linked worktree at `path` of `repo`, keeping its branch.
     static func removeWorktree(_ path: String, of repo: String, force: Bool, on runner: Runner) async -> Ran {
         await runner.run("git -C \(shellPath(repo)) worktree remove \(quote(path))\(force ? " --force" : "")")

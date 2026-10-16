@@ -102,6 +102,11 @@ struct Close {
         if !plan.removed.contains(where: own), let workspace {
             await Herdr.closeWorkspace(workspace, on: runner(task.body.machine))
         }
+        // A Task closes once its work is merged, which the main checkout should then show.
+        var updated = Set<String>()
+        for worktree in plan.removed where updated.insert("\(worktree.machine ?? "")|\(worktree.repo)").inserted {
+            await Git.update(worktree.repo, on: runner(worktree.machine))
+        }
         return failures
     }
 }
