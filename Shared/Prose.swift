@@ -37,8 +37,12 @@ struct Prose: NSViewRepresentable {
         let width = tables ? coordinator.width : nil
         let key = "\(colorScheme)\(width ?? 0)\(text)"
         guard coordinator.shown != key else { return }
+        let grown = !coordinator.text.isEmpty && text.count > coordinator.text.count && text.hasPrefix(coordinator.text)
+        let old = view.string
         coordinator.shown = key
+        coordinator.text = text
         view.textStorage?.setAttributedString(Renderer(flavour: flavour, width: width).render(text))
+        if grown { coordinator.fade(in: view, after: old) }
         (view as? LinkTextView)?.tables = tables
         view.linkTextAttributes = [.foregroundColor: NSColor(flavour(.blue)), .cursor: NSCursor.pointingHand]
     }
@@ -74,8 +78,41 @@ struct Prose: NSViewRepresentable {
 
     final class Coordinator: NSObject, NSTextViewDelegate {
         var shown = ""
+        var text = ""
         var width: CGFloat?
         var openURL: OpenURLAction?
+        private var fading: Timer?
+        private static let fade = 0.3
+        private static let frame = 1.0 / 60
+
+        /// Brings in what streamed after `old` from clear to its own colours.
+        func fade(in view: NSTextView, after old: String) {
+            fading?.invalidate()
+            guard let layout = view.layoutManager, let storage = view.textStorage else { return }
+            layout.removeTemporaryAttribute(.foregroundColor, forCharacterRange: NSRange(location: 0, length: storage.length))
+            let kept = zip(old.utf16, view.string.utf16).prefix { $0 == $1 }.count
+            let range = NSRange(location: kept, length: storage.length - kept)
+            let colours = storage.attributedSubstring(from: range)
+            let start = Date()
+            let step = { [weak layout] in
+                guard let layout, NSMaxRange(range) <= layout.textStorage?.length ?? 0 else { return }
+                let done = min(1, Date().timeIntervalSince(start) / Self.fade)
+                colours.enumerateAttribute(.foregroundColor, in: NSRange(location: 0, length: colours.length)) { colour, part, _ in
+                    let colour = (colour as? NSColor ?? .textColor).withAlphaComponent(done)
+                    layout.addTemporaryAttribute(.foregroundColor, value: colour, forCharacterRange: NSRange(location: kept + part.location, length: part.length))
+                }
+            }
+            step()
+            fading = Timer.scheduledTimer(withTimeInterval: Self.frame, repeats: true) { [weak self, weak layout] timer in
+                MainActor.assumeIsolated {
+                    step()
+                    guard Date().timeIntervalSince(start) >= Self.fade else { return }
+                    timer.invalidate()
+                    layout?.removeTemporaryAttribute(.foregroundColor, forCharacterRange: range)
+                    self?.fading = nil
+                }
+            }
+        }
 
         func textView(_ view: NSTextView, clickedOnLink link: Any, at index: Int) -> Bool {
             guard let url = (link as? URL) ?? (link as? String).flatMap(URL.init(string:)) else { return false }
