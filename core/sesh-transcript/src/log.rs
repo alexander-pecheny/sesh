@@ -204,7 +204,8 @@ impl Log {
                     return self.drop_item(session, &id);
                 }
                 self.put_item(session, &id, None, true, Some(&entry), &body)?;
-                self.settle(session, &id, body["at"].as_str().unwrap_or_default())
+                self.settle(session, &id, body["at"].as_str().unwrap_or_default())?;
+                self.above_question(session, &id, &body)
             }
             Change::Taken { id, entry, body, waiting } => {
                 let mut later = self.items("WHERE session = ?1 AND gone = 0 AND ord >= ?2 ORDER BY ord DESC", params![session, self.ord_of(session, &id)?])?;
@@ -235,9 +236,22 @@ impl Log {
                 for row in self.items("WHERE session = ?1 AND gone = 0 AND ord >= ?2 ORDER BY ord DESC", params![session, place])? {
                     self.move_item(session, row["id"].as_str().unwrap_or_default(), row["ord"].as_i64().unwrap_or_default() + 1)?;
                 }
-                self.put_item(session, &id, Some(place), true, entry.as_deref(), &body)
+                self.put_item(session, &id, Some(place), true, entry.as_deref(), &body)?;
+                self.above_question(session, &id, &body)
             }
         }
+    }
+
+    /// Moves Claude's words above the question right before them: its hook reports the
+    /// question before the Transcript holds what Claude wrote ahead of it.
+    fn above_question(&self, session: &str, id: &str, body: &Value) -> Result<()> {
+        let Some(ord) = self.ord_of(session, id)?.filter(|_| matches!(body["kind"].as_str(), Some("text" | "thinking"))) else {
+            return Ok(());
+        };
+        let before = self.items("WHERE session = ?1 AND gone = 0 AND final = 1 AND ord < ?2 ORDER BY ord DESC LIMIT 1", params![session, ord])?;
+        let Some(question) = before.first().filter(|row| row["entry"]["kind"] == "question") else { return Ok(()) };
+        self.move_item(session, question["id"].as_str().unwrap_or_default(), ord)?;
+        self.move_item(session, id, question["ord"].as_i64().unwrap_or_default())
     }
 
     /// Moves a final row written `at` back above the final rows written after it, as a
