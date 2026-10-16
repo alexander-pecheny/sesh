@@ -126,6 +126,7 @@ enum TaskActions {
         let born = await machine.run(
             "[ -n \"$(command ls -A \(folder) 2>/dev/null)\" ] || { mkdir -p \(folder) && command git -C \(folder) init -q; }; "
                 + "command git -C \(folder) rev-parse --verify -q HEAD").ok
+        if born { await Git.update(repo, on: machine) }
         let made = born
             ? await Herdr.worktree(repo, branch: branch, label: title, on: machine)
             : await Herdr.workspace(repo, label: title, on: machine)
