@@ -32,7 +32,7 @@ struct VaultSettingsSheet: View {
         Section {
             Toggle("Claude remote control", isOn: $remote)
         } footer: {
-            Text("Claude sessions of new Tasks can be reached from the Claude app. A new Task can still choose otherwise.")
+            Text("New Claude sessions can be reached from the Claude app. Each new session can still choose otherwise.")
         }
         Section {
             ForEach($links) { $rule in

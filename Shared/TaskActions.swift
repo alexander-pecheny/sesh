@@ -26,9 +26,9 @@ enum TaskActions {
         UserDefaults.standard.set(all, forKey: "claudeConfig")
     }
 
-    /// Whether the Task's Claude sessions start with remote control.
-    static func remote(of task: Record, in vault: Vault) -> Bool {
-        task.body.remote ?? vault.settings.body.remote ?? true
+    /// Whether a Claude session starts with remote control: its own choice, else its Vault's.
+    static func remote(of session: Record, in vault: Vault) -> Bool {
+        session.body.remote ?? vault.settings.body.remote ?? true
     }
 
     /// The branch a title suggests, under the user's name as herdr's own branches are.
@@ -60,7 +60,7 @@ enum TaskActions {
     /// The session is made, and `made` told, once its pane is; an Agent that then fails to start
     /// takes its session with it.
     static func startSession(_ agent: Agent, for task: Record, on machine: Machine, repo given: String?, branch: String? = nil,
-                             in vault: Vault, made: (Record) -> Void) async -> Result<Record, Herdr.Failure> {
+                             remote: Bool? = nil, in vault: Vault, made: (Record) -> Void) async -> Result<Record, Herdr.Failure> {
         if let problem = await machine.prepare() { return .failure(Herdr.Failure(problem)) }
         var place = Start.Place(), repo = given
         let home = given == nil ? "" : (await machine.run("printf %s \"$HOME\"")).out
@@ -83,11 +83,11 @@ enum TaskActions {
             case .success(let value): (place.pane, place.folder) = (value.0.pane, value.1)
             }
         }
-        let session = Start.session(agent, for: task.id, on: machine.alias, at: place, repo: repo, in: vault)
+        let session = Start.session(agent, for: task.id, on: machine.alias, at: place, repo: repo, remote: remote, in: vault)
         made(session)
         let name = Names.slug("\(current.body.title ?? "task")-\(agent.rawValue)")
         if let problem = await Herdr.launch(agent, name: name, pane: place.pane ?? "", config: claudeConfig(vault, on: machine),
-                                               remote: remote(of: current, in: vault), on: machine) {
+                                               remote: Self.remote(of: session, in: vault), on: machine) {
             vault.delete(vault.records[session.id] ?? session)
             return .failure(Herdr.Failure(problem))
         }
@@ -242,7 +242,7 @@ enum TaskActions {
         let name = Names.slug("\(task.body.title ?? "task")-\(agent.rawValue)")
         if let problem = await Herdr.launch(
             agent, name: name, pane: pane, resuming: transcript, config: claudeConfig(vault, on: machine),
-            remote: remote(of: task, in: vault), on: machine) { return problem }
+            remote: remote(of: session, in: vault), on: machine) { return problem }
         var record = vault.records[session.id] ?? session
         record.body.pane = pane
         vault.write(record)

@@ -38,7 +38,7 @@ struct Record: Codable, Identifiable, Equatable {
         /// A Vault's settings: what in an Agent's messages links where.
         var links: [LinkRule]?
         /// Whether Claude starts with remote control, for the Claude app to reach: a Vault's
-        /// default in its settings, or a Task's own choice; nil is yes.
+        /// default in its settings, or a Claude session's own choice; nil is yes.
         var remote: Bool?
     }
 
