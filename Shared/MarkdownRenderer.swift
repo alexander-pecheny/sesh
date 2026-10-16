@@ -251,9 +251,13 @@ struct Renderer {
             case "softbreak": out.append(NSAttributedString(string: "\u{2028}", attributes: style))
             case "linebreak": out.append(NSAttributedString(string: "\u{2028}", attributes: style))
             case "code":
-                style[.font] = mono
                 style[.backgroundColor] = PlatformColor(flavour(chip))
+                style[ChipLayout.key] = PlatformColor(flavour(chip == .mantle ? .surface0 : .surface1))
+                let pad = NSAttributedString(string: ChipLayout.pad, attributes: style)
+                style[.font] = mono
+                out.append(pad)
                 out.append(NSAttributedString(string: plain(child), attributes: style))
+                out.append(pad)
             case "emph", "strong", "strikethrough":
                 let font = style[.font] as? PlatformFont ?? body
                 if kind(child) == "strikethrough" {

@@ -20,6 +20,7 @@ struct Prose: NSViewRepresentable {
         view.textContainerInset = .zero
         view.textContainer?.lineFragmentPadding = 0
         view.textContainer?.widthTracksTextView = true
+        view.textContainer?.replaceLayoutManager(ChipLayout())
         view.delegate = context.coordinator
         return view
     }
@@ -135,7 +136,7 @@ private final class LinkTextView: NSTextView {
     override func writeSelection(to board: NSPasteboard, types: [NSPasteboard.PasteboardType]) -> Bool {
         guard super.writeSelection(to: board, types: types) else { return false }
         if let text = board.string(forType: .string) {
-            board.setString(text.replacingOccurrences(of: "\u{2028}", with: "\n"), forType: .string)
+            board.setString(text.replacingOccurrences(of: "\u{2028}", with: "\n").replacingOccurrences(of: ChipLayout.pad, with: ""), forType: .string)
         }
         return true
     }
@@ -182,7 +183,12 @@ struct Prose: UIViewRepresentable {
     let text: String
 
     func makeUIView(context: Context) -> UITextView {
-        let view = UITextView()
+        let layout = ChipLayout()
+        context.coordinator.storage.addLayoutManager(layout)
+        let container = NSTextContainer(size: .zero)
+        container.widthTracksTextView = true
+        layout.addTextContainer(container)
+        let view = CopyTextView(frame: .zero, textContainer: container)
         view.isEditable = false
         view.isSelectable = true
         view.isScrollEnabled = false
@@ -223,6 +229,8 @@ struct Prose: UIViewRepresentable {
     func makeCoordinator() -> Coordinator { Coordinator() }
 
     final class Coordinator: NSObject, UITextViewDelegate {
+        /// The text view's storage, which its layout does not keep.
+        let storage = NSTextStorage()
         var shown = ""
         var openURL: OpenURLAction?
 
@@ -230,6 +238,14 @@ struct Prose: UIViewRepresentable {
             guard case .link(let url) = textItem.content, let openURL else { return defaultAction }
             return UIAction { _ in openURL(url) }
         }
+    }
+}
+
+/// A text view whose copy leaves out the padding around inline code.
+private final class CopyTextView: UITextView {
+    override func copy(_ sender: Any?) {
+        super.copy(sender)
+        if let text = UIPasteboard.general.string { UIPasteboard.general.string = text.replacingOccurrences(of: ChipLayout.pad, with: "") }
     }
 }
 
