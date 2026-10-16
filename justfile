@@ -67,6 +67,13 @@ e2e: build
 device:
     ./scripts/install-device.sh
 
+# Debug Mac app playing FILE as a reply streaming in, over and over, with no Host.
+stream file="scripts/stream-sample.md":
+    xcodegen generate --quiet
+    xcodebuild -project Sesh.xcodeproj -scheme SeshMac -configuration Debug \
+        -destination 'platform=macOS,arch=arm64' -derivedDataPath build/mac build | grep -E "error:|BUILD"
+    open -n "build/mac/Build/Products/Debug/Sesh Dev.app" --args -stream "$(realpath {{file}})"
+
 # Build Release and install it over /Applications/Sesh.app, quitting and reopening a running one.
 mac:
     ./scripts/install-mac.sh
