@@ -76,11 +76,19 @@ struct ChatList: NSViewRepresentable {
             NotificationCenter.default.addObserver(self, selector: #selector(resized), name: NSTableView.columnDidResizeNotification, object: table)
             NotificationCenter.default.addObserver(self, selector: #selector(dragging), name: NSScrollView.willStartLiveScrollNotification, object: scroll)
             NotificationCenter.default.addObserver(self, selector: #selector(dropped), name: NSScrollView.didEndLiveScrollNotification, object: scroll)
-            (scroll as? Scroll)?.wheeled = { [weak self] in self?.wheeled = true }
+            (scroll as? Scroll)?.wheeled = { [weak self] in
+                self?.gliding.stop()
+                self?.wheeled = true
+            }
             parent?.scroll.attach(self)
         }
 
-        @objc private func dragging() { live = true }
+        private lazy var gliding = Glide(offset: { [weak self] in self?.scrollView?.contentView.bounds.minY ?? 0 }) { [weak self] in self?.move(to: $0) }
+
+        @objc private func dragging() {
+            gliding.stop()
+            live = true
+        }
         @objc private func dropped() { live = false }
 
         private var width: CGFloat { max(1, table?.tableColumns.first?.width ?? scrollView?.contentSize.width ?? 1) }
@@ -144,7 +152,7 @@ struct ChatList: NSViewRepresentable {
         // MARK: ChatSurface
 
         var size: CGSize { CGSize(width: width, height: scrollView?.contentView.bounds.height ?? 0) }
-        var offset: CGFloat { scrollView?.contentView.bounds.minY ?? 0 }
+        var offset: CGFloat { gliding.target ?? scrollView?.contentView.bounds.minY ?? 0 }
         var start: CGFloat { -(scrollView?.contentInsets.top ?? 0) }
 
         var end: CGFloat {
@@ -160,6 +168,13 @@ struct ChatList: NSViewRepresentable {
         func top(of row: Int) -> CGFloat { table?.rect(ofRow: row).minY ?? 0 }
 
         func scroll(to offset: CGFloat) {
+            gliding.stop()
+            move(to: offset)
+        }
+
+        func glide(to offset: CGFloat) { gliding.to(offset) }
+
+        private func move(to offset: CGFloat) {
             guard let scrollView else { return }
             quietly { scrollView.contentView.scroll(to: NSPoint(x: 0, y: offset)) }
             scrollView.reflectScrolledClipView(scrollView.contentView)
@@ -344,6 +359,8 @@ struct ChatList: UIViewRepresentable {
             adjusting = false
         }
 
+        func scrollViewWillBeginDragging(_ scrollView: UIScrollView) { gliding.stop() }
+
         func scrollViewDidScroll(_ scrollView: UIScrollView) {
             guard !adjusting else { return }
             keeper?.scrolled(byReader: scrollView.isTracking || scrollView.isDecelerating || toTop)
@@ -359,7 +376,7 @@ struct ChatList: UIViewRepresentable {
         // MARK: ChatSurface
 
         var size: CGSize { table?.bounds.size ?? .zero }
-        var offset: CGFloat { table?.contentOffset.y ?? 0 }
+        var offset: CGFloat { gliding.target ?? table?.contentOffset.y ?? 0 }
         var start: CGFloat { -(table?.adjustedContentInset.top ?? 0) }
 
         var end: CGFloat {
@@ -376,7 +393,16 @@ struct ChatList: UIViewRepresentable {
 
         func top(of row: Int) -> CGFloat { (table?.rectForRow(at: IndexPath(row: row, section: 0)).minY ?? 0) + start }
 
+        private lazy var gliding = Glide(offset: { [weak self] in self?.table?.contentOffset.y ?? 0 }) { [weak self] in self?.move(to: $0) }
+
         func scroll(to offset: CGFloat) {
+            gliding.stop()
+            move(to: offset)
+        }
+
+        func glide(to offset: CGFloat) { gliding.to(offset) }
+
+        private func move(to offset: CGFloat) {
             quietly { table?.contentOffset = CGPoint(x: 0, y: offset) }
         }
 

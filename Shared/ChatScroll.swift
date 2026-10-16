@@ -16,7 +16,56 @@ protocol ChatSurface: AnyObject {
     var visible: Range<Int> { get }
     func top(of row: Int) -> CGFloat
     func scroll(to offset: CGFloat)
+    /// Eases to the offset over a few frames, as new text at the end moves the view.
+    func glide(to offset: CGFloat)
     func show(_ shown: Bool)
+}
+
+extension ChatSurface {
+    func glide(to offset: CGFloat) { scroll(to: offset) }
+}
+
+/// Moves a list towards a target a share of the way each frame, so a paragraph added at the
+/// end slides into view; a new target mid-way carries on from where the list is.
+@MainActor
+final class Glide {
+    /// Where the list is headed, which it counts as its offset until it gets there.
+    private(set) var target: CGFloat?
+    private var timer: Timer?
+    private let offset: () -> CGFloat
+    private let move: (CGFloat) -> Void
+    private static let frame = 1.0 / 60
+    private static let share: CGFloat = 0.1
+
+    init(offset: @escaping () -> CGFloat, move: @escaping (CGFloat) -> Void) {
+        self.offset = offset
+        self.move = move
+    }
+
+    func to(_ offset: CGFloat) {
+        target = offset
+        guard timer == nil else { return }
+        timer = Timer.scheduledTimer(withTimeInterval: Self.frame, repeats: true) { [weak self] _ in
+            MainActor.assumeIsolated { self?.step() }
+        }
+    }
+
+    func stop() {
+        timer?.invalidate()
+        timer = nil
+        target = nil
+    }
+
+    private func step() {
+        guard let target else { return stop() }
+        let gap = target - offset()
+        // At least a point a frame, or rounding to the screen's pixels would stall the last one.
+        guard abs(gap) > 1 else {
+            move(target)
+            return stop()
+        }
+        move(offset() + (gap < 0 ? -1 : 1) * max(abs(gap) * Self.share, 1))
+    }
 }
 
 /// Where the reader is in a Conversation's list and the rules that keep them there, for both
@@ -89,7 +138,7 @@ final class ChatScroll: ObservableObject {
             phase = .anchored
             place((reveal, 0))
         } else if following && !holding {
-            toEnd()
+            toEnd(smoothly: shown)
         } else if let anchor {
             place(anchor)
         }
@@ -105,11 +154,11 @@ final class ChatScroll: ObservableObject {
     }
 
     /// A row took a height of its own, as a card opening does.
-    func grew(_ apply: () -> Void) { keep(nil, apply) }
+    func grew(_ apply: () -> Void) { keep(nil, smoothly: shown, apply) }
 
     /// The list moved. Rows measured late also move it, so only the reader leaves the end.
     func scrolled(byReader reader: Bool) {
-        if following, !reader { return toEnd() }
+        if following, !reader { return toEnd(smoothly: shown) }
         report()
     }
 
@@ -158,10 +207,10 @@ final class ChatScroll: ObservableObject {
         report()
     }
 
-    private func keep(_ kept: Anchor?, _ apply: () -> Void) {
+    private func keep(_ kept: Anchor?, smoothly: Bool = false, _ apply: () -> Void) {
         let anchor = kept ?? (following ? nil : topRow())
         apply()
-        if following { toEnd() } else if let anchor { place(anchor) }
+        if following { toEnd(smoothly: smoothly) } else if let anchor { place(anchor) }
     }
 
     /// The first row in view and how far its top sits below the view's. The spinner above the
@@ -176,14 +225,15 @@ final class ChatScroll: ObservableObject {
         go(surface.top(of: row) - anchor.offset)
     }
 
-    private func toEnd() {
+    private func toEnd(smoothly: Bool = false) {
         guard let surface else { return }
-        go(surface.end)
+        go(surface.end, smoothly: smoothly)
     }
 
-    private func go(_ offset: CGFloat) {
+    private func go(_ offset: CGFloat, smoothly: Bool = false) {
         guard let surface else { return }
-        surface.scroll(to: min(max(offset, surface.start), max(surface.start, surface.end)))
+        let offset = min(max(offset, surface.start), max(surface.start, surface.end))
+        if smoothly { surface.glide(to: offset) } else { surface.scroll(to: offset) }
     }
 
     /// Takes where the reader is from the list; near the top, asks for the page before, again
