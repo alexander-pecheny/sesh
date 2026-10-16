@@ -204,9 +204,15 @@ struct Prose: UIViewRepresentable {
         context.coordinator.openURL = openURL
         let flavour: Catppuccin.Flavour = colorScheme == .dark ? .mocha : .latte
         let key = "\(colorScheme)\(text)"
-        guard context.coordinator.shown != key else { return }
-        context.coordinator.shown = key
+        let coordinator = context.coordinator
+        guard coordinator.shown != key else { return }
+        let grown = !coordinator.text.isEmpty && text.count > coordinator.text.count && text.hasPrefix(coordinator.text)
+        let old = view.textStorage.string
+        coordinator.shown = key
+        coordinator.text = text
+        coordinator.fading?.invalidate()
         view.attributedText = Renderer(flavour: flavour).render(text)
+        if grown { coordinator.fade(in: view.textStorage, after: old) }
         view.linkTextAttributes = [.foregroundColor: UIColor(flavour(.blue))]
     }
 
@@ -232,7 +238,39 @@ struct Prose: UIViewRepresentable {
         /// The text view's storage, which its layout does not keep.
         let storage = NSTextStorage()
         var shown = ""
+        var text = ""
         var openURL: OpenURLAction?
+        var fading: Timer?
+        private static let fade = 0.3
+        private static let frame = 1.0 / 60
+
+        /// Brings in what streamed after `old` from clear to its own colours. UIKit's layout has
+        /// no temporary attributes, as the Mac's does, so the colours are set on the text itself.
+        func fade(in storage: NSTextStorage, after old: String) {
+            let kept = zip(old.utf16, storage.string.utf16).prefix { $0 == $1 }.count
+            let range = NSRange(location: kept, length: storage.length - kept)
+            let colours = storage.attributedSubstring(from: range)
+            let start = Date()
+            let step = { [weak storage] in
+                guard let storage, NSMaxRange(range) <= storage.length else { return }
+                let done = min(1, Date().timeIntervalSince(start) / Self.fade)
+                storage.beginEditing()
+                colours.enumerateAttribute(.foregroundColor, in: NSRange(location: 0, length: colours.length)) { colour, part, _ in
+                    let colour = colour as? UIColor ?? .label
+                    storage.addAttribute(.foregroundColor, value: colour.withAlphaComponent(colour.cgColor.alpha * done), range: NSRange(location: kept + part.location, length: part.length))
+                }
+                storage.endEditing()
+            }
+            step()
+            fading = Timer.scheduledTimer(withTimeInterval: Self.frame, repeats: true) { [weak self] timer in
+                MainActor.assumeIsolated {
+                    step()
+                    guard Date().timeIntervalSince(start) >= Self.fade else { return }
+                    timer.invalidate()
+                    self?.fading = nil
+                }
+            }
+        }
 
         func textView(_ textView: UITextView, primaryActionFor textItem: UITextItem, defaultAction: UIAction) -> UIAction? {
             guard case .link(let url) = textItem.content, let openURL else { return defaultAction }

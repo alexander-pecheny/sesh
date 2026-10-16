@@ -74,6 +74,12 @@ stream file="scripts/stream-sample.md":
         -destination 'platform=macOS,arch=arm64' -derivedDataPath build/mac build | grep -E "error:|BUILD"
     open -n "build/mac/Build/Products/Debug/Sesh Dev.app" --args -stream "$(realpath {{file}})"
 
+# The same on the simulator.
+stream-phone file="scripts/stream-sample.md": build
+    xcrun simctl install {{udid}} {{derived}}/Build/Products/Debug-iphonesimulator/Sesh.app
+    xcrun simctl terminate {{udid}} {{bundle_id}} || true
+    xcrun simctl launch {{udid}} {{bundle_id}} -stream "$(realpath {{file}})"
+
 # Build Release and install it over /Applications/Sesh.app, quitting and reopening a running one.
 mac:
     ./scripts/install-mac.sh
