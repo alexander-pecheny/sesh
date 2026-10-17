@@ -95,6 +95,21 @@ enum MathText {
         return (out, formulas)
     }
 
+    /// The formula in the subset SwiftMath 1.7.3 reads: it rejects the whole formula over a
+    /// `\Bigl`, and silently drops ё, which lies outside the Cyrillic range it knows.
+    static func forSwiftMath(_ latex: String) -> String {
+        latex
+            .replacing(#/\\(?:big|Big|bigg|Bigg)([lrm]?)(?![A-Za-z])/#) { match in
+                switch match.1 {
+                case "l": "\\left"
+                case "r": "\\right"
+                default: ""
+                }
+            }
+            .replacingOccurrences(of: "ё", with: "е")
+            .replacingOccurrences(of: "Ё", with: "Е")
+    }
+
     /// Text with placeholders put back as the formulas were written.
     static func restore(_ text: String, _ formulas: [Formula]) -> String {
         guard !formulas.isEmpty else { return text }
