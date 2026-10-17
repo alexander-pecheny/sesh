@@ -270,7 +270,11 @@ struct ConversationView: View {
         // change as it closes; the jump is made again once it has.
         .onChange(of: composing) { if !composing, conversation.scroll.atBottom { conversation.scroll.jump() } }
         .cover(isPresented: $composing) {
+            #if os(iOS)
+            Composer(text: $draft, canSend: canSend, uploads: conversation.runner?.uploads) { Task { await send() } }
+            #else
             Composer(text: $draft, canSend: canSend) { Task { await send() } }
+            #endif
         }
     }
 
@@ -754,8 +758,12 @@ private struct Composer: View {
     @Environment(\.colorScheme) private var colorScheme
     @Binding var text: String
     let canSend: Bool
+    #if os(iOS)
+    let uploads: HostLink?
+    #endif
     let send: () -> Void
     @StateObject private var field = PlainField()
+    @State private var picking = false
 
     private var flavour: Catppuccin.Flavour { colorScheme == .dark ? .mocha : .latte }
 
@@ -771,6 +779,11 @@ private struct Composer: View {
                 .inlineTitle()
                 .toolbar {
                     ToolbarItem(placement: .cancellationAction) { Button("Done") { dismiss() } }
+                    #if os(iOS)
+                    if let uploads {
+                        ToolbarItem(placement: .primaryAction) { UploadButton(link: uploads) { picking = true } }
+                    }
+                    #endif
                     ToolbarItem(placement: .confirmationAction) {
                         Button("Send") {
                             send()
@@ -780,6 +793,15 @@ private struct Composer: View {
                     }
                 }
                 .onAppear { field.focus() }
+                #if os(iOS)
+                .sheet(isPresented: $picking) {
+                    PhotoPicker { results in
+                        picking = false
+                        uploads?.upload(results) { field.insertPaths($0) }
+                    }
+                    .ignoresSafeArea()
+                }
+                #endif
         }
         .tint(flavour(.mauve))
     }
