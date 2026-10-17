@@ -6,6 +6,7 @@ struct DocumentScreen: View {
     @EnvironmentObject private var library: Library
     @ObservedObject var document: DocumentText
     @State private var editing = false
+    @State private var viewing = false
     @StateObject private var field = PlainField()
 
     private var flavour: Catppuccin.Flavour { colorScheme == .dark ? .mocha : .latte }
@@ -27,6 +28,14 @@ struct DocumentScreen: View {
                 PlainText(field: field, text: $document.text, font: .monospacedSystemFont(ofSize: Metric.label, weight: .regular))
                     .padding(Metric.gap)
                     .onAppear { DispatchQueue.main.async { field.focus() } }
+            } else if let image = document.image {
+                Image(platform: image).resizable().scaledToFit()
+                    .frame(maxWidth: image.size.width, maxHeight: image.size.height)
+                    .padding(Metric.wide)
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+                    .onTapGesture { viewing = true }
+                    .accessibilityAddTraits(.isButton)
+                    .fullScreenCover(isPresented: $viewing) { ImageViewer(image: image) }
             } else if document.markdown {
                 ScrollView {
                     Markdown(text: document.text)
@@ -67,7 +76,7 @@ struct DocumentScreen: View {
             Spacer()
             if document.saving { ProgressView().controlSize(.small) }
             if document.dirty { Text("Edited").font(.ui(Metric.small)).foregroundStyle(flavour(.subtext0)) }
-            if !document.code {
+            if !document.code, !document.picture {
                 Picker("Mode", selection: $editing) {
                     Text("Read").tag(false)
                     Text("Edit").tag(true)
