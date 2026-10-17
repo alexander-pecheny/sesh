@@ -785,8 +785,8 @@ private struct Composer: View {
     }
 }
 
-/// An image from a message, whole, with pinch to zoom.
-private struct ImageViewer: View {
+/// An image from a message or a Document, whole, with pinch to zoom.
+struct ImageViewer: View {
     @Environment(\.dismiss) private var dismiss
     let image: PlatformImage
     @State private var scale = 1.0
