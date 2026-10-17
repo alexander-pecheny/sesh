@@ -18,4 +18,10 @@ final class MathTextTests: XCTestCase {
         XCTAssertFalse(protected.contains("_"))
         XCTAssertEqual(MathText.restore(protected, found), text)
     }
+
+    func testFormulasAreRewrittenIntoWhatSwiftMathReads() {
+        XCTAssertEqual(MathText.forSwiftMath("\\Bigl(1 - \\bigl\\{x\\bigr\\}\\Bigr)"), "\\left(1 - \\left\\{x\\right\\}\\right)")
+        XCTAssertEqual(MathText.forSwiftMath("\\Big| x \\Bigm| \\bigodot"), "| x | \\bigodot")
+        XCTAssertEqual(MathText.forSwiftMath("\\text{возьмёт Ёлку}"), "\\text{возьмет Елку}")
+    }
 }

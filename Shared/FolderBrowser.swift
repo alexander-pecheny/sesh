@@ -4,6 +4,7 @@ import SwiftUI
 /// list, and the file picked shown beside it to read or edit, or on a phone in place of the list.
 struct FolderBrowser: View {
     @Environment(\.colorScheme) private var colorScheme
+    let document: DocumentText
     let vault: Vault
     let root: String
     let machine: Machine
@@ -16,11 +17,16 @@ struct FolderBrowser: View {
     @State private var files: [String: DocumentText] = [:]
 
     init(document: DocumentText) {
+        self.document = document
         vault = document.vault
         machine = document.machine
         let path = document.path ?? "/"
         root = document.folder ? path : (path as NSString).deletingLastPathComponent + "/"
-        if !document.folder {
+        if let browsed = document.browsed {
+            _folder = State(initialValue: browsed.folder)
+            _picked = State(initialValue: browsed.picked)
+            _files = State(initialValue: browsed.files)
+        } else if !document.folder {
             _picked = State(initialValue: path)
             _files = State(initialValue: [path: document])
         }
@@ -53,7 +59,8 @@ struct FolderBrowser: View {
             #endif
         }
         .background(flavour(.base))
-        .task { await open(root) }
+        .task { await open(folder ?? root) }
+        .onDisappear { document.browsed = (folder ?? root, picked, files) }
     }
 
     private var list: some View {

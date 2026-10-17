@@ -13,6 +13,7 @@ enum MathImage {
     static func draw(_ latex: String, display: Bool, size: CGFloat, colour: PlatformColor) -> (image: PlatformImage, descent: CGFloat)? {
         let key = "\(display) \(size) \(colour) \(latex)"
         if let known = drawn[key] { return known }
+        let latex = MathText.forSwiftMath(latex)
         let mode: MTMathUILabelMode = display ? .display : .text
         // The label lays the formula out, which tells the depth below the baseline that the
         // image alone does not.
