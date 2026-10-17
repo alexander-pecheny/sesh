@@ -265,8 +265,9 @@ enum TaskActions {
         }
         let known = vault.children(.document, task: task)
             .first { $0.body.path == absolute && $0.body.machine == session.body.machine }
+        let name = (absolute as NSString).lastPathComponent
         let document = known ?? vault.create(.document, .init(
-            title: (absolute as NSString).lastPathComponent + (absolute.hasSuffix("/") ? "/" : ""), task: task, machine: session.body.machine, path: absolute))
+            title: name + (absolute.hasSuffix("/") && name != "/" ? "/" : ""), task: task, machine: session.body.machine, path: absolute))
         library.open(.document(document.id), in: task)
     }
 

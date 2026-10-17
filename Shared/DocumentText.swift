@@ -24,6 +24,8 @@ final class DocumentText: ObservableObject {
 
     /// A file a folder's browser shows, which no Record remembers.
     private var loose: (path: String, machine: Machine)?
+    /// Where its browser was left, which outlives the browser when the user switches Tabs.
+    var browsed: (folder: String, picked: String?, files: [String: DocumentText])?
 
     init(vault: Vault, id: String) {
         self.vault = vault
