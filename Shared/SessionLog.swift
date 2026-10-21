@@ -263,7 +263,7 @@ struct SessionLog {
             state = line.state ?? state
             status = line.status ?? ""
             agent = line.agent ?? agent
-            transcript = line.transcript ?? transcript
+            transcript = line.transcript.flatMap { $0.isEmpty ? nil : $0 } ?? transcript
             background = line.background ?? []
             permissions = line.permissions ?? []
         case "opened":

@@ -14,6 +14,9 @@ struct FolderBrowser: View {
     @State private var problem: String?
     /// The file or folder being brought to the Mac's Downloads.
     @State private var downloading: String?
+    @State private var received = 0
+    /// The file's size; a folder is packed as it travels, so its size is not known ahead.
+    @State private var expected: Int?
     #if os(iOS)
     /// A downloaded file waiting in the share sheet, to save to Files or send on.
     @State private var shared: URL?
@@ -80,9 +83,22 @@ struct FolderBrowser: View {
                 .lineLimit(1).truncationMode(.head)
                 .padding(.horizontal, Metric.pad)
                 .padding(.vertical, Metric.gap)
+                .contextMenu {
+                    let here = folder ?? root
+                    if here != "/" {
+                        Button("Download as .tar.gz", systemImage: "arrow.down.circle") { Task { await download(here) } }
+                    }
+                    Button("Copy Path", systemImage: "doc.on.doc") { Pasteboard.copy(here) }
+                }
             if let downloading {
-                Label("Downloading \(downloading)…", systemImage: "arrow.down.circle")
-                    .font(.ui(Metric.small)).foregroundStyle(flavour(.subtext0)).padding(.horizontal, Metric.pad)
+                VStack(alignment: .leading, spacing: Metric.gap) {
+                    Label("Downloading \(downloading)…", systemImage: "arrow.down.circle")
+                    if let expected, expected > 0 {
+                        ProgressView(value: Double(min(received, expected)), total: Double(expected))
+                    }
+                    Text(expected.map { "\(Self.size(received)) of \(Self.size($0))" } ?? "\(Self.size(received)) so far").monospacedDigit()
+                }
+                .font(.ui(Metric.small)).foregroundStyle(flavour(.subtext0)).padding(.horizontal, Metric.pad)
             }
             if let problem {
                 Text(problem).font(.ui(Metric.small)).foregroundStyle(flavour(.red)).padding(.horizontal, Metric.pad)
@@ -160,9 +176,25 @@ struct FolderBrowser: View {
         let item = (packed ? String(path.dropLast()) : path) as NSString
         let name = item.lastPathComponent + (packed ? ".tar.gz" : "")
         downloading = name
+        received = 0
+        expected = nil
         defer { downloading = nil }
-        let tar = "tar -czf - -C \(shellPath(item.deletingLastPathComponent)) \(quote("./" + item.lastPathComponent)) | base64 | tr -d '\\n'"
-        guard let data = packed ? Data(base64Encoded: await machine.run(tar).out) : await machine.read(path), !packed || !data.isEmpty else {
+        let tar = "tar -czf - -C \(shellPath(item.deletingLastPathComponent)) \(quote("./" + item.lastPathComponent))"
+        // The size comes first, then the bytes as base64 in lines that each decode alone.
+        let send = packed ? "echo && \(tar)" : "wc -c < \(shellPath(path)) && cat \(shellPath(path))"
+        var data = Data()
+        var sized = false
+        var broken = false
+        let ran = await machine.fetch("set -o pipefail; \(send) | base64 | tr -d '\\n' | fold -w 65536") { line in
+            guard sized else {
+                sized = true
+                return expected = Int(line.trimmingCharacters(in: .whitespaces))
+            }
+            guard let chunk = Data(base64Encoded: line) else { return broken = true }
+            data.append(chunk)
+            received = data.count
+        }
+        guard ran.ok, !broken, packed ? !data.isEmpty : data.count == expected else {
             return problem = "\(name) could not be read from \(machine.title)."
         }
         do {
@@ -185,6 +217,10 @@ struct FolderBrowser: View {
         } catch {
             problem = "\(name) could not be saved: \(error.localizedDescription)"
         }
+    }
+
+    private static func size(_ bytes: Int) -> String {
+        Int64(bytes).formatted(.byteCount(style: .file))
     }
 
     static func parent(of folder: String) -> String {
