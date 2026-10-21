@@ -128,7 +128,9 @@ final class Library: ObservableObject {
 
     /// The live pane while its machine has it; otherwise the Vault's copy of the last Transcript.
     func conversation(for session: Record) async -> Conversation {
-        if let known = conversations[session.id] { return known }
+        // An Agent that died while its Tab was hidden left its pane's Conversation cached.
+        if let known = conversations[session.id], known.pane == nil || !ended(session) { return known }
+        conversations.removeValue(forKey: session.id)?.unfollow()
         let machine = TaskActions.machine(session.body.machine)
         let agent = session.body.agent.flatMap(Agent.init)
         let cache = Self.cache(of: session.id)
