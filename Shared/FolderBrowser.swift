@@ -24,6 +24,9 @@ struct FolderBrowser: View {
     @State private var picked: String?
     /// Each file opened, kept so that unsaved edits survive picking another.
     @State private var files: [String: DocumentText] = [:]
+    #if os(macOS)
+    @AppStorage("folderListWidth") private var listWidth = 260.0
+    #endif
 
     init(document: DocumentText) {
         self.document = document
@@ -46,9 +49,9 @@ struct FolderBrowser: View {
     var body: some View {
         Group {
             #if os(macOS)
-            HStack(spacing: 0) {
-                list.frame(width: 260)
-                Divider()
+            HSplitView {
+                list.frame(minWidth: 160, idealWidth: listWidth, maxWidth: 720)
+                    .onGeometryChange(for: Double.self) { $0.size.width } action: { listWidth = $0 }
                 detail.frame(maxWidth: .infinity, maxHeight: .infinity)
             }
             #else
@@ -130,7 +133,8 @@ struct FolderBrowser: View {
 
     private func row(_ name: String, icon: String, selected: Bool, action: @escaping () -> Void) -> some View {
         Button(action: action) {
-            Label(name, systemImage: icon).lineLimit(1).frame(maxWidth: .infinity, alignment: .leading).contentShape(.rect)
+            Label { TruncatedName(name: name) } icon: { Image(systemName: icon) }
+                .frame(maxWidth: .infinity, alignment: .leading).contentShape(.rect)
         }
         .buttonStyle(.plain)
         .font(.ui(Metric.label))
@@ -226,6 +230,23 @@ struct FolderBrowser: View {
     static func parent(of folder: String) -> String {
         let up = (String(folder.dropLast()) as NSString).deletingLastPathComponent
         return up.hasSuffix("/") ? up : up + "/"
+    }
+}
+
+/// A name on one line that shows itself whole on hover, once it no longer fits.
+private struct TruncatedName: View {
+    let name: String
+    @State private var shown: CGFloat = 0
+    @State private var whole: CGFloat = 0
+
+    var body: some View {
+        Text(name).lineLimit(1)
+            .onGeometryChange(for: CGFloat.self) { $0.size.width } action: { shown = $0 }
+            .background(alignment: .leading) {
+                Text(name).fixedSize().hidden()
+                    .onGeometryChange(for: CGFloat.self) { $0.size.width } action: { whole = $0 }
+            }
+            .help(whole > shown + 1 ? name : "")
     }
 }
 
