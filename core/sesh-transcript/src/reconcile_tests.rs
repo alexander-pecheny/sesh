@@ -302,3 +302,16 @@ fn a_rewritten_message_goes_back_above_the_rows_written_after_it() {
     std::fs::remove_dir_all(&dir).unwrap();
     assert_eq!(rows, ["t1", "sent.1", "t2", "t3"]);
 }
+
+#[test]
+fn a_transcript_found_after_the_hello_reaches_the_session_summary() {
+    let dir = std::env::temp_dir().join(format!("sesh-found-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let log = Log::open(&dir.join("sessions.db")).unwrap();
+    let mut writer = Writer::new("p1", &log).unwrap();
+    let hello = Event::Hello { agent: crate::Agent::Claude, transcript: String::new() };
+    writer.apply(&log, &[hello, Event::Cursor("0:".into()), Event::Cursor("120:/p/s.jsonl".into())], None).unwrap();
+    let summary = log.session("p1").unwrap().unwrap();
+    std::fs::remove_dir_all(&dir).unwrap();
+    assert_eq!(summary["transcript"], "/p/s.jsonl");
+}

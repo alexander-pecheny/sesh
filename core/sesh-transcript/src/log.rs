@@ -420,7 +420,13 @@ impl Writer {
             }
             Event::State(state) => self.summary["state"] = state.clone().into(),
             Event::Background(tasks) => self.summary["background"] = tasks.clone(),
-            Event::Cursor(cursor) => self.summary["cursor"] = cursor.clone().into(),
+            Event::Cursor(cursor) => {
+                self.summary["cursor"] = cursor.clone().into();
+                // A follower that started before Claude wrote its Transcript said hello without one.
+                if let Some((_, path)) = cursor.split_once(':').filter(|(_, path)| !path.is_empty()) {
+                    self.summary["transcript"] = path.into();
+                }
+            }
             Event::Permission(line) => {
                 let mut list: Vec<Value> = self.summary["permissions"].as_array().cloned().unwrap_or_default();
                 list.retain(|open| open["id"] != line["id"]);
