@@ -7,7 +7,7 @@ struct AddMenu<Label: View>: View {
     let task: Record
     @ViewBuilder let label: (_ opening: Bool) -> Label
     @State private var problem: String?
-    @State private var agent: Agent?
+    @State private var start: StartSessionSheet.Shown?
     @State private var opening = false
 
     var body: some View {
@@ -25,8 +25,8 @@ struct AddMenu<Label: View>: View {
                 }
             }
         } label: { label(opening) }
-        .sheet(item: $agent) { agent in
-            StartSessionSheet(vault: vault, task: task, agent: agent) { problem = $0 }
+        .sheet(item: $start) { shown in
+            StartSessionSheet(vault: vault, task: task, shown: shown) { start = $0 }
         }
         .alert("Sesh could not start it", isPresented: Binding(get: { problem != nil }, set: { if !$0 { problem = nil } })) {
             Button("OK", role: .cancel) {}
@@ -39,7 +39,7 @@ struct AddMenu<Label: View>: View {
 
     private func perform(_ action: NewTabMenu.Action, _ machines: [Machine]) {
         switch action {
-        case .agent(let agent): self.agent = agent
+        case .agent(let agent): start = .init(agent: agent)
         case .terminal(let index):
             opening = true
             Task {

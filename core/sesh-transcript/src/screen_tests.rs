@@ -143,3 +143,13 @@ fn a_menu_no_hook_reported_is_read_off_the_screen() {
     assert_eq!(menu.options, vec![("1".into(), "Yes".into()), ("2".into(), "No, and tell Claude what to do differently (esc)".into())]);
     assert_eq!(Menu::read("────────────────\n❯ \n────────────────\n"), None);
 }
+
+#[test]
+fn a_menu_with_no_numbers_is_picked_by_moving_the_pointer() {
+    let screen = "\n────────────────────────────────\n Accessing workspace:\n\n /tmp/new\n\n Security guide\n\n ❯ No, exit\n   Yes, I trust this folder\n\n Enter to confirm · Esc to cancel\n";
+    let menu = Menu::read(screen).unwrap();
+    assert_eq!(menu.title, "Accessing workspace:\n/tmp/new\nSecurity guide");
+    assert_eq!(menu.options, vec![("enter".into(), "No, exit".into()), ("down enter".into(), "Yes, I trust this folder".into())]);
+    let moved = screen.replace(" ❯ No, exit\n   Yes", "   No, exit\n ❯ Yes");
+    assert_eq!(Menu::read(&moved).unwrap().options[0].0, "up enter");
+}

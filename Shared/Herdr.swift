@@ -85,7 +85,9 @@ enum Herdr {
                     if !(await runner.run("\(command) pane read \(quote(pane)) --source visible")).out.contains(menu.prompt) { break }
                 }
             }
-            if answered || notReady {
+            // A menu Sesh does not know waits for the user, who answers it in the Conversation.
+            if notReady && !answered { return nil }
+            if answered {
                 ran = await runner.run("\(command) agent wait \(quote(pane)) --until idle --until done --timeout 30000")
             }
         }

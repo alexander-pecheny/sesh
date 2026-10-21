@@ -384,7 +384,7 @@ final class Conversation: ObservableObject {
     /// Picks a choice in a menu read off the Agent's screen.
     func choose(_ choice: SessionLog.Permission.Choice) async {
         guard let pane else { return }
-        problem = await follower?.keys([choice.key], to: pane)
+        problem = await follower?.keys(choice.key.split(separator: " ").map(String.init), to: pane)
     }
 
     /// Hands the queue to the Agent at once; Claude takes a message mid-turn, or while it

@@ -47,6 +47,14 @@ enum Git {
             + " && \(quiet) git fetch -q && git merge -q --ff-only '@{u}'")
     }
 
+    /// Starts git's file monitor in `folder` when the user's config wants one. Started by a
+    /// prompt's `git status` instead, it stays in the pane's process group, and herdr then takes
+    /// the shell for busy and will not start an Agent there.
+    static func watch(_ folder: String, on runner: Runner) async {
+        let git = "git -C \(shellPath(folder))"
+        _ = await runner.run("[ \"$(\(git) config --type=bool core.fsmonitor)\" != true ] || \(git) fsmonitor--daemon start")
+    }
+
     /// Removes the linked worktree at `path` of `repo`, keeping its branch.
     static func removeWorktree(_ path: String, of repo: String, force: Bool, on runner: Runner) async -> Ran {
         await runner.run("git -C \(shellPath(repo)) worktree remove \(quote(path))\(force ? " --force" : "")")

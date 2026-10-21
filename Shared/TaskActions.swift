@@ -78,6 +78,7 @@ enum TaskActions {
         }
         let current = vault.records[task.id] ?? task
         if place.pane == nil {
+            if let folder = place.folder { await Git.watch(folder, on: machine) }
             switch await pane(for: current, on: machine, label: agent.title, folder: place.folder) {
             case .failure(let failure): return .failure(failure)
             case .success(let value): (place.pane, place.folder) = (value.0.pane, value.1)
@@ -126,7 +127,7 @@ enum TaskActions {
         let born = await machine.run(
             "[ -n \"$(command ls -A \(folder) 2>/dev/null)\" ] || { mkdir -p \(folder) && command git -C \(folder) init -q; }; "
                 + "command git -C \(folder) rev-parse --verify -q HEAD").ok
-        if born { await Git.update(repo, on: machine) }
+        if born { await Git.update(repo, on: machine) } else { await Git.watch(repo, on: machine) }
         let made = born
             ? await Herdr.worktree(repo, branch: branch, label: title, on: machine)
             : await Herdr.workspace(repo, label: title, on: machine)

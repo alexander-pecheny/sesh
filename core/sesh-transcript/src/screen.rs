@@ -269,7 +269,7 @@ impl View {
 }
 
 /// A menu in the prompt box's place that no hook reported, such as a check that asks even with
-/// permissions skipped: what it asks, and its choices by the number that picks each.
+/// permissions skipped: what it asks, and its choices by the keys that pick each.
 #[derive(Clone, Debug, PartialEq)]
 pub struct Menu {
     pub title: String,
@@ -280,18 +280,38 @@ impl Menu {
     pub fn read(screen: &str) -> Option<Menu> {
         let texts: Vec<&str> = screen.lines().collect();
         let start = (texts.len().saturating_sub(MENU)..texts.len()).find(|&i| rule(texts[i]))?;
+        let texts: Vec<&str> = texts[start + 1..].iter().map(|text| text.trim()).collect();
         let mut title = Vec::new();
         let mut options = Vec::new();
-        for text in &texts[start + 1..] {
-            let text = text.trim();
+        for text in &texts {
             if let Some(option) = numbered(text) {
                 options.push(option);
             } else if options.is_empty() && !text.is_empty() && !rule(text) {
-                title.push(text);
+                title.push(*text);
             }
+        }
+        if options.len() < 2 {
+            (title, options) = pointed(&texts)?;
         }
         (options.len() >= 2).then(|| Menu { title: title.join("\n"), options })
     }
+}
+
+/// A menu with no numbers, such as "❯ No, exit" over "Yes, I trust this folder": the lines
+/// around the pointer, each picked by moving the pointer to it.
+fn pointed<'a>(texts: &[&'a str]) -> Option<(Vec<&'a str>, Vec<(String, String)>)> {
+    let pointer = texts.iter().position(|text| text.starts_with('❯'))?;
+    let edge = |text: &&str| text.is_empty() || rule(text);
+    let first = texts[..pointer].iter().rposition(edge).map_or(0, |i| i + 1);
+    let last = texts[pointer..].iter().position(edge).map_or(texts.len(), |i| pointer + i);
+    let options = (first..last)
+        .map(|i| {
+            let moves = if i < pointer { "up " } else { "down " }.repeat(i.abs_diff(pointer));
+            (format!("{moves}enter"), texts[i].trim_start_matches('❯').trim().to_string())
+        })
+        .collect();
+    let title = texts[..first].iter().copied().filter(|text| !edge(text)).collect();
+    Some((title, options))
 }
 
 /// "❯ 1. Yes" or "2. No": the number, and the words after it.
