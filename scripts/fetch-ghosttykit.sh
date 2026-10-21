@@ -1,10 +1,10 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-SHA="${GHOSTTY_SHA:-bc9be90a21997a4e5f06bf15ae2ec0f937c2dc42}"
+SHA="${GHOSTTY_SHA:-ef4f1570d62117ebc51e3b0f07ad4f34032267b6}"
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 OUT="$ROOT/Frameworks/GhosttyKit.xcframework"
-URL="https://github.com/manaflow-ai/ghostty/releases/download/xcframework-$SHA/GhosttyKit.xcframework.tar.gz"
+URL="https://github.com/manaflow-ai/ghostty/releases/download/xcframework-$SHA-crashsubdir-cmux-crash-sentry-off-noi18n-v2/GhosttyKit.xcframework.tar.gz"
 CACHE="$HOME/.cache/cmux/ghosttykit/$SHA/GhosttyKit.xcframework"
 
 expected="$(awk -v sha="$SHA" '$1 == sha { print $2; exit }' "$ROOT/scripts/ghosttykit.sha256")"

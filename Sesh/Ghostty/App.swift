@@ -30,10 +30,11 @@ extension Ghostty {
                     DispatchQueue.main.async { app.tick() }
                 },
                 action_cb: { app, target, action in App.perform(app, target, action) },
-                read_clipboard_cb: { _, _, _ in },
+                read_clipboard_cb: { _, _, _ in false },
                 confirm_read_clipboard_cb: { _, _, _, _ in },
                 write_clipboard_cb: { _, _, contents, count, _ in App.writeClipboard(contents, count) },
-                close_surface_cb: { _, _ in })
+                close_surface_cb: { _, _ in },
+                tmux_control_cb: nil)
 
             guard let app = ghostty_app_new(&runtime, config) else {
                 logger.critical("ghostty_app_new failed")

@@ -23,10 +23,10 @@ is the spec for the implementing agents. Decisions here were settled with the ow
   crypto, `#![forbid(unsafe_code)]` outside `mosh-sys`. Read its `AGENTS.md`,
   `CONTEXT.md` and `docs/adr/` before touching it.
 - libghostty: the cmux fork `github.com/manaflow-ai/ghostty`. A local checkout is at
-  `~/cmux/ghostty` (commit `bc9be90a21997a4e5f06bf15ae2ec0f937c2dc42`). Prebuilt
+  `~/cmux/ghostty` (commit `ef4f1570d62117ebc51e3b0f07ad4f34032267b6`). Prebuilt
   `GhosttyKit.xcframework` with `ios-arm64`, `ios-arm64-simulator` and macOS slices is
   published per commit at
-  `https://github.com/manaflow-ai/ghostty/releases/download/xcframework-<sha>/GhosttyKit.xcframework.tar.gz`;
+  `https://github.com/manaflow-ai/ghostty/releases/download/xcframework-<sha>-crashsubdir-cmux-crash-sentry-off-noi18n-v2/GhosttyKit.xcframework.tar.gz`;
   see `~/cmux/scripts/download-prebuilt-ghosttykit.sh` and
   `~/cmux/scripts/ghosttykit-checksums.txt` for the pattern and the checksum for that
   commit. A copy of the built framework is in `~/.cache/cmux/ghosttykit/<sha>/`.
