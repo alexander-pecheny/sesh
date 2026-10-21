@@ -71,8 +71,10 @@ struct DocumentScreen: View {
 
     private var bar: some View {
         HStack(spacing: Metric.gap) {
-            Text(path ?? "In the Vault").font(.ui(Metric.small)).foregroundStyle(flavour(.subtext0))
-                .lineLimit(1).truncationMode(.head)
+            Group {
+                if let path { CopyablePath(path: path) } else { Text("In the Vault") }
+            }
+            .font(.ui(Metric.small)).foregroundStyle(flavour(.subtext0))
             Spacer()
             if document.saving { ProgressView().controlSize(.small) }
             if document.dirty { Text("Edited").font(.ui(Metric.small)).foregroundStyle(flavour(.subtext0)) }

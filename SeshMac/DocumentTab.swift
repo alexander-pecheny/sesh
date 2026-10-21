@@ -72,7 +72,10 @@ struct DocumentTab: View {
 
     private var bar: some View {
         HStack(spacing: Metric.gap) {
-            Text(path ?? "In the Vault").font(.caption).foregroundStyle(.secondary).lineLimit(1).truncationMode(.head)
+            Group {
+                if let path { CopyablePath(path: path) } else { Text("In the Vault") }
+            }
+            .font(.caption).foregroundStyle(.secondary)
             Spacer()
             if document.saving { ProgressView().controlSize(.small) }
             if document.dirty { Text("Edited").font(.caption).foregroundStyle(.secondary) }

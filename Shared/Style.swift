@@ -85,6 +85,21 @@ enum Metric {
     }()
 }
 
+/// A file's path that copies itself when clicked, and says so for a moment.
+struct CopyablePath: View {
+    let path: String
+    @State private var copied = false
+
+    var body: some View {
+        Button { Pasteboard.copy(path); copied = true } label: {
+            Text(copied ? "Copied \(path)" : path).lineLimit(1).truncationMode(.head)
+        }
+        .buttonStyle(.plain)
+        .help("Copy the path")
+        .task(id: copied) { if copied { try? await Task.sleep(for: .seconds(2)); copied = false } }
+    }
+}
+
 enum Pasteboard {
     static func copy(_ text: String) {
         #if os(macOS)
