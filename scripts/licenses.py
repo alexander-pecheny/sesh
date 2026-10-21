@@ -12,7 +12,7 @@ PACKAGES = [("sesh-core", "aarch64-apple-ios"), ("sesh-transcript", "x86_64-unkn
 FALLBACK = ROOT / "Resources/LICENSE-Apache-2.0.txt"
 
 BUNDLED = [
-    ("libghostty", "cmux fork bc9be90", "MIT", ["Resources/LICENSE-ghostty.txt"]),
+    ("libghostty", "cmux fork ef4f157", "MIT", ["Resources/LICENSE-ghostty.txt"]),
     ("JetBrainsMono Nerd Font", "2.304", "OFL-1.1", ["Resources/Fonts/OFL.txt"]),
     ("Lucide icons", "", "ISC", ["Resources/LICENSE-lucide.txt"]),
     ("Catppuccin palettes", "", "MIT", ["Resources/LICENSE-catppuccin.txt"]),

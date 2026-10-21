@@ -51,7 +51,7 @@ itself, and it is GPL-3.0 with public source, which is the path Sesh is on.
 
 | Component | Licence | Where |
 | --- | --- | --- |
-| libghostty, from the [cmux fork](https://github.com/manaflow-ai/ghostty) at `bc9be90` | MIT, Mitchell Hashimoto and Ghostty contributors | `Frameworks/GhosttyKit.xcframework` |
+| libghostty, from the [cmux fork](https://github.com/manaflow-ai/ghostty) at `ef4f157` | MIT, Mitchell Hashimoto and Ghostty contributors | `Frameworks/GhosttyKit.xcframework` |
 | [rmosh](https://code.pecheny.me/pecheny/rmosh), 8 crates | GPL-3.0-or-later, with upstream's App Store waiver | `vendor/rmosh`, see above |
 | [russh](https://crates.io/crates/russh) and 220-odd other Rust crates | permissive, see below | `Frameworks/SeshCore.xcframework` |
 | JetBrainsMono Nerd Font | SIL Open Font License 1.1 | `Resources/Fonts`, licence in `OFL.txt` |

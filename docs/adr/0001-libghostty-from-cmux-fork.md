@@ -4,11 +4,11 @@ iOS cannot fork a child process, and upstream libghostty (v1.3.1, September 2026
 has only the Exec termio backend, which does. The cmux fork
 (github.com/manaflow-ai/ghostty) adds `GHOSTTY_SURFACE_IO_MANUAL`: the embedder pushes
 terminal output in and receives keystrokes through a write callback. We build
-GhosttyKit.xcframework from that fork, pinned by commit, with `zig build` and one patch
-to its libxev dependency: libxev's kqueue backend only registered its wake-up machport
-on macOS, so on iOS ghostty's renderer and I/O threads slept forever and the prebuilt
-frameworks the fork publishes render nothing. `patches/libxev-ios-async.patch` extends
-the check to all Darwin targets.
+GhosttyKit.xcframework from that fork, pinned by commit, with `zig build`. Until the
+fork's commit `ef4f157` (October 2026) we also patched its libxev dependency: libxev's
+kqueue backend only registered its wake-up machport on macOS, so on iOS ghostty's
+renderer and I/O threads slept forever. The libxev that commit pins carries the same fix,
+so the patch is gone.
 
 ## Considered options
 

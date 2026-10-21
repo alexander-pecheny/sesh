@@ -54,10 +54,8 @@ patches them.
 ## Targets
 
 - `just ghosttykit` builds the pinned `GhosttyKit.xcframework` from the cmux fork with
-  `patches/libxev-ios-async.patch`, which restores libxev's cross-thread wakeup on iOS;
-  without it libghostty's renderer and I/O threads never wake.
-  `just ghosttykit-prebuilt` fetches the published build and verifies it against
-  `scripts/ghosttykit.sha256`, but that one hangs on iOS.
+  Zig 0.16. `just ghosttykit-prebuilt` fetches the published build instead and verifies
+  it against `scripts/ghosttykit.sha256`.
 - `just core` builds the Rust crate for device and simulator and wraps it as
   `Frameworks/SeshCore.xcframework`; `cbindgen` writes `Sesh/sesh.h`, which Swift reaches
   through `Sesh/Sesh-Bridging-Header.h` rather than a module map, because GhosttyKit's

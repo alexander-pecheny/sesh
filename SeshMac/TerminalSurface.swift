@@ -25,10 +25,11 @@ extension Ghostty {
                 wakeup_cb: { _ in DispatchQueue.main.async { MainActor.assumeIsolated { MacApp.shared.tick() } } },
                 action_cb: { app, target, action in MacApp.perform(app, target, action) },
                 read_clipboard_cb: { userdata, _, state in
-                    guard let userdata else { return }
+                    guard let userdata else { return false }
                     let view = Unmanaged<TerminalSurface>.fromOpaque(userdata).takeUnretainedValue()
                     let text = NSPasteboard.general.string(forType: .string) ?? ""
                     DispatchQueue.main.async { MainActor.assumeIsolated { view.paste(text, state) } }
+                    return true
                 },
                 confirm_read_clipboard_cb: { _, _, _, _ in },
                 write_clipboard_cb: { _, _, contents, count, _ in
@@ -45,7 +46,8 @@ extension Ghostty {
                     guard let userdata else { return }
                     let view = Unmanaged<TerminalSurface>.fromOpaque(userdata).takeUnretainedValue()
                     DispatchQueue.main.async { MainActor.assumeIsolated { view.onClose?() } }
-                })
+                },
+                tmux_control_cb: nil)
             app = ghostty_app_new(&runtime, config)
         }
 

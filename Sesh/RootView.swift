@@ -16,6 +16,8 @@ struct RootView: View {
             #if DEBUG
             if let fixture = UserDefaults.standard.string(forKey: "fixture") {
                 FixtureView(name: fixture)
+            } else if UserDefaults.standard.bool(forKey: "terminal") {
+                TerminalFixture()
             } else if let file = UserDefaults.standard.string(forKey: "stream") {
                 StreamDemo(file: file)
             } else {
