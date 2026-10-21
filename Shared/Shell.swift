@@ -143,6 +143,9 @@ protocol Runner: AnyObject {
     /// Runs `command` until it exits or the calling task is cancelled, handing each line of
     /// its stdout to `line` as it arrives.
     func stream(_ command: String, line: @escaping (String) -> Void) async -> Ran
+    /// As `stream`, but over ssh even where mosh carries streams: a mosh pipe sends only so
+    /// much ahead of its acknowledgements, which slows a download to a crawl.
+    func fetch(_ command: String, line: @escaping (String) -> Void) async -> Ran
     /// Whether a stream can be written to, which the phone's can only over a mosh pipe.
     var talks: Bool { get }
     /// As `stream`, handing `opened` a way to write lines to the command's stdin once it runs.
@@ -172,6 +175,7 @@ extension Runner {
     func stream(_ command: String, opened: @escaping (@escaping (String) -> Void) -> Void, line: @escaping (String) -> Void) async -> Ran {
         await stream(command, line: line)
     }
+    func fetch(_ command: String, line: @escaping (String) -> Void) async -> Ran { await stream(command, line: line) }
     func upload(_ data: Data, ext: String) async -> String? { nil }
     func claudeLink(for pane: String) async -> URL? { nil }
 

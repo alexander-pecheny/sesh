@@ -73,6 +73,11 @@ final class Machine: Runner, Identifiable, Hashable {
         return await link.pipe(command, server: server, opened: nil, line: line)
     }
 
+    func fetch(_ command: String, line: @escaping (String) -> Void) async -> Ran {
+        guard let link else { return unreachable }
+        return await link.stream(command, line: line)
+    }
+
     func stream(_ command: String, opened: @escaping (@escaping (String) -> Void) -> Void, line: @escaping (String) -> Void) async -> Ran {
         guard let link else { return unreachable }
         guard let server = Helper.moshServer else { return await link.stream(command, line: line) }

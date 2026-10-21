@@ -85,6 +85,10 @@ final class Machine: Runner, Identifiable, Hashable {
         await stream(command, line: Optional(line))
     }
 
+    func fetch(_ command: String, line: @escaping (String) -> Void) async -> Ran {
+        await stream(command, line: line, mosh: false)
+    }
+
     func stream(_ command: String, opened: @escaping (@escaping (String) -> Void) -> Void, line: @escaping (String) -> Void) async -> Ran {
         await stream(command, line: line, opened: opened)
     }
@@ -119,8 +123,8 @@ final class Machine: Runner, Identifiable, Hashable {
     /// its gateway, still answers locally but refuses every session. It is stopped, so the next
     /// command dials afresh, and a command it kept from running is run once more.
     private func stream(_ command: String, line: ((String) -> Void)?, input: Data? = nil,
-                        opened: ((@escaping (String) -> Void) -> Void)? = nil) async -> Ran {
-        let (ran, started) = await launch(command, line: line, input: input, opened: opened)
+                        opened: ((@escaping (String) -> Void) -> Void)? = nil, mosh: Bool = true) async -> Ran {
+        let (ran, started) = await launch(command, line: line, input: input, opened: opened, mosh: mosh)
         guard let alias, ran.err.contains("Session open refused by peer") else { return ran }
         FollowerLink.log.notice("\(alias, privacy: .public) refused a session on its shared connection, which is stopped")
         let stop = Process()
@@ -133,14 +137,14 @@ final class Machine: Runner, Identifiable, Hashable {
             do { try stop.run() } catch { done.resume() }
         }
         guard !started, !Task.isCancelled else { return ran }
-        return await launch(command, line: line, input: input, opened: opened).ran
+        return await launch(command, line: line, input: input, opened: opened, mosh: mosh).ran
     }
 
     /// The command's result, and whether it started at all.
     private func launch(_ command: String, line: ((String) -> Void)?, input: Data?,
-                        opened: ((@escaping (String) -> Void) -> Void)?) async -> (ran: Ran, started: Bool) {
+                        opened: ((@escaping (String) -> Void) -> Void)?, mosh: Bool) async -> (ran: Ran, started: Bool) {
         // The tether reads stdin itself, so a stream that is written to goes without one.
-        let process = process(line == nil || opened != nil ? command : Self.tethered(command), piped: line != nil)
+        let process = process(line == nil || opened != nil ? command : Self.tethered(command), piped: line != nil && mosh)
         let out = Pipe(), err = Pipe()
         process.standardOutput = out
         process.standardError = err
