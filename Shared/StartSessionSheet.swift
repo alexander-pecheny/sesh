@@ -4,12 +4,27 @@ import SwiftUI
 /// repository gets the Task's Worktree on first use, on the branch named for the Task, or a new
 /// Worktree of its own for a session working in parallel.
 struct StartSessionSheet: View {
+    /// The sheet for `agent`: a fresh one, or one shown again as it was filled in when its start failed.
+    struct Shown: Identifiable {
+        let id = UUID()
+        let agent: Agent
+        var draft: Draft?
+        var problem: String?
+    }
+
+    struct Draft {
+        var alias: String?
+        var choice, typed, config: String
+        var remote, parallel: Bool
+        var newBranch: String
+    }
+
     @Environment(\.dismiss) private var dismiss
     @EnvironmentObject private var library: Library
     @ObservedObject var vault: Vault
     let task: Record
-    let agent: Agent
-    let problem: (String) -> Void
+    let shown: Shown
+    let failed: (Shown) -> Void
     @State private var alias: String?
     @State private var choice = Self.other
     @State private var typed = ""
@@ -25,6 +40,7 @@ struct StartSessionSheet: View {
     private static let other = "\u{0}other"
     private static let none = "\u{0}none"
 
+    private var agent: Agent { shown.agent }
     private var machines: [Machine] { TaskActions.machines(for: task, in: vault) }
     private var recents: [String] { TaskActions.recentRepos(for: vault.records[task.id] ?? task, on: alias, home: home, in: vault, library: library) }
     private var path: String { typed.trimmingCharacters(in: .whitespacesAndNewlines) }
@@ -58,6 +74,11 @@ struct StartSessionSheet: View {
 
     private var form: some View {
         Form {
+            if let problem = shown.problem {
+                Section("Sesh could not start it") {
+                    Text(problem).font(.callout.monospaced()).foregroundStyle(.secondary).textSelection(.enabled)
+                }
+            }
             if machines.count > 1 {
                 Picker("Machine", selection: $alias) {
                     ForEach(machines) { Text($0.title).tag($0.alias) }
@@ -102,6 +123,11 @@ struct StartSessionSheet: View {
             }
         }
         .onAppear {
+            if let draft = shown.draft {
+                (alias, choice, typed, config) = (draft.alias, draft.choice, draft.typed, draft.config)
+                (remote, parallel, newBranch) = (draft.remote, draft.parallel, draft.newBranch)
+                return
+            }
             alias = TaskActions.lastMachine(for: vault.records[task.id] ?? task, in: vault, library: library)?.alias
             remote = vault.settings.body.remote ?? true
             choose()
@@ -126,6 +152,7 @@ struct StartSessionSheet: View {
     private var machine: Machine? { machines.first { $0.alias == alias } ?? machines.first }
 
     private func choose() {
+        if let draft = shown.draft, draft.alias == alias { return }
         config = machine.flatMap { TaskActions.claudeConfig(vault, on: $0) } ?? ""
         choice = recents.first ?? Self.other
         focused = choice == Self.other
@@ -143,8 +170,10 @@ struct StartSessionSheet: View {
     private func start() {
         guard ready, let machine else { return }
         if agent == .claude { TaskActions.setClaudeConfig(config.trimmingCharacters(in: .whitespaces), vault, on: machine) }
-        library.start(agent, for: vault.records[task.id] ?? task, on: machine, repo: repo,
-                      branch: fresh, remote: remote, problem: problem)
+        let draft = Draft(alias: alias, choice: choice, typed: typed, config: config, remote: remote, parallel: parallel, newBranch: newBranch)
+        library.start(agent, for: vault.records[task.id] ?? task, on: machine, repo: repo, branch: fresh, remote: remote) { [shown, failed] in
+            failed(Shown(agent: shown.agent, draft: draft, problem: $0))
+        }
         dismiss()
     }
 }

@@ -1555,7 +1555,8 @@ private struct PermissionCard: View {
                 ForEach(options, id: \.self) { choice in
                     Button { Task { await pick(choice) } } label: {
                         HStack {
-                            Text("\(choice.key). \(choice.label)").frame(maxWidth: .infinity, alignment: .leading)
+                            Text(choice.key.allSatisfy(\.isNumber) ? "\(choice.key). \(choice.label)" : choice.label)
+                                .frame(maxWidth: .infinity, alignment: .leading)
                             hint(choice.key.count == 1 ? "⌥⌘" + choice.key : nil)
                         }
                     }
