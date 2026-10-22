@@ -25,7 +25,9 @@ run: build
     xcrun simctl install {{udid}} {{derived}}/Build/Products/Debug-iphonesimulator/Sesh.app
     xcrun simctl launch {{udid}} {{bundle_id}}
 
+# A new worktree starts without vendor/rmosh, which the core links.
 core:
+    git submodule update --init --recursive
     ./scripts/build-core.sh
 
 # sesh-transcript for each Host platform, into build/helpers.
