@@ -7,11 +7,12 @@ status: accepted
 ADR 0008 left the Transcripts only on the Vault's Host, so a Host that lost its disk took
 every Conversation with it, and the records' copies on the devices could not refill it.
 
-Each Mac and phone now also keeps every Transcript its Vault's Host changed in the last seven
-days. A Transcript only grows, so the device fetches just the bytes past its own copy's
-length, on the same 30-second round that copies Transcripts into the Vault. A copy that has
-not grown for seven days is deleted, judged by the device's own clock rather than the Host's
-list, so an empty Host cannot wipe the copies. Older Transcripts are archived by hand.
+Each Mac and phone now also keeps the Transcripts its Vault's Host changed in the last seven
+days, newest first, up to 500 MB per Vault, as Telegram caps its cache by age and by size. A
+Transcript only grows, so the device fetches just the bytes past its own copy's length, on the
+same 30-second round that copies Transcripts into the Vault. Each copy carries the Host's time
+for the file, and the device deletes copies by those times alone, never by the Host's list, so
+an empty Host cannot wipe them. Older Transcripts are archived by hand.
 
 A Host whose latest change is older than the one a device has seen has lost its database. The
 device then queues every record the Host lacks, appends its Transcripts to the Host's shorter
