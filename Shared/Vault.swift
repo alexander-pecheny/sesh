@@ -22,7 +22,8 @@ final class Vault: ObservableObject, Identifiable, Records {
     }
 
     private struct Saved: Codable {
-        var seq = 0
+        /// Not `seq`, so a copy saved while acknowledge could skip records fetches them all again.
+        var since: Int?
         var records: [String: Record] = [:]
         var queue: [Change] = []
     }
@@ -69,14 +70,14 @@ final class Vault: ObservableObject, Identifiable, Records {
 
     private func load() {
         guard let data = try? Data(contentsOf: file), let saved = try? JSONDecoder().decode(Saved.self, from: data) else { return }
-        seq = saved.seq
+        seq = saved.since ?? 0
         records = saved.records
         queue = saved.queue
         pending = queue.count
     }
 
     private func save() {
-        let saved = Saved(seq: seq, records: records, queue: queue)
+        let saved = Saved(since: seq, records: records, queue: queue)
         try? FileManager.default.createDirectory(at: file.deletingLastPathComponent(), withIntermediateDirectories: true)
         try? JSONEncoder().encode(saved).write(to: file, options: .atomic)
     }
@@ -181,14 +182,15 @@ final class Vault: ObservableObject, Identifiable, Records {
     }
 
     /// A record the Host wrote for us. An edit still queued for it now builds on its new seq,
-    /// or the Host would take it for a clash with our own earlier write.
+    /// or the Host would take it for a clash with our own earlier write. Only `follow` moves
+    /// `seq`, or a push from a copy that lags would skip every record it had not yet seen.
     private func acknowledge(_ text: String) {
         guard let line = try? JSONDecoder().decode(Line.self, from: Data(text.utf8)), line.t == "record",
-              let id = line.id, let lineSeq = line.seq, let index = queue.firstIndex(where: { $0.id == id })
-        else { return apply(text) }
-        let change = queue[index]
-        queue[index] = Change(id: id, kind: change.kind, body: change.body, base: lineSeq, deleted: change.deleted)
+              let id = line.id, let lineSeq = line.seq else { return }
+        if let index = queue.firstIndex(where: { $0.id == id }) {
+            let change = queue[index]
+            queue[index] = Change(id: id, kind: change.kind, body: change.body, base: lineSeq, deleted: change.deleted)
+        }
         records[id]?.seq = lineSeq
-        seq = max(seq, lineSeq)
     }
 }
