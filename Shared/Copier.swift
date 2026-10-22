@@ -27,6 +27,7 @@ final class Copier {
     private func copyAll() async {
         guard let vault, vault.online else { return }
         await copy(vault.all(.session))
+        await vault.mirror.update()
     }
 
     /// Brings these sessions' copies up to date now, as closing a Task does before it stops them.
