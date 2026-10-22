@@ -62,7 +62,8 @@ patches them.
   module map claims every header in the shared `include/` directory. `just core-test` runs
   the crate's tests. Both xcframeworks are gitignored.
 - `just gen` regenerates the Xcode project from `project.yml`, the only place project
-  settings are edited. `just build` builds for the simulator, `just run` installs and
+  settings are edited, after building both xcframeworks and the licence list, so it is all a
+  new worktree needs. `just build` builds for the simulator, `just run` installs and
   launches it there.
 - `just sshd` starts an unprivileged sshd on 127.0.0.1:2222 with a throwaway host key and
   test key under `.local/`, and `just sshd-stop` stops it; that is what the simulator
