@@ -89,7 +89,7 @@ impl super::Parse for Parser {
         let mut line = Vec::new();
         while reader.read_until(b'\n', &mut line)? > 0 {
             let text = std::str::from_utf8(&line).unwrap_or_default();
-            if ["run_in_background", "task-notification", "async_launched", "backgroundTaskId", "TaskStop"].iter().any(|word| text.contains(word)) {
+            if ["run_in_background", "task-notification", "async_launched", "backgroundTaskId", "TaskStop", "Monitor"].iter().any(|word| text.contains(word)) {
                 if let Ok(value) = serde_json::from_str::<Value>(text) {
                     scan.read(&value, &mut ids, &mut out);
                     out.clear();
@@ -227,8 +227,9 @@ impl Parser {
                         self.background.retain(|work| work.call != call);
                     }
                 }
-                // Claude writes the flag as a string; older versions wrote a boolean.
-                if input["run_in_background"] == true || input["run_in_background"] == "true" {
+                // Claude writes the flag as a string; older versions wrote a boolean. A Monitor
+                // always watches in the background.
+                if name == "Monitor" || input["run_in_background"] == true || input["run_in_background"] == "true" {
                     let label = ["description", "command", "prompt"]
                         .iter()
                         .find_map(|key| input[*key].as_str())
@@ -278,7 +279,9 @@ impl Parser {
             Some(text[start..end].trim().to_string())
         };
         let call = tag("tool-use-id").or_else(|| self.started.get(&tag("task-id")?).cloned());
-        let (Some(call), Some(status)) = (call, tag("status")) else {
+        // A Monitor that expires says so only in its event.
+        let expired = tag("event").is_some_and(|event| event.starts_with("[Monitor expired"));
+        let (Some(call), Some(status)) = (call, tag("status").or(expired.then(|| "expired".into()))) else {
             return;
         };
         if status != "running" {
@@ -330,7 +333,7 @@ impl Parser {
             return;
         }
         // Claude may run an Agent in the background unasked; only its result says so.
-        if let Some(task) = result["agentId"].as_str().or(result["backgroundTaskId"].as_str()) {
+        if let Some(task) = result["agentId"].as_str().or(result["backgroundTaskId"].as_str()).or(result["taskId"].as_str()) {
             self.started.insert(task.to_string(), call.to_string());
         }
         if result["status"] == "async_launched" && !self.background.iter().any(|work| work.call == call) {

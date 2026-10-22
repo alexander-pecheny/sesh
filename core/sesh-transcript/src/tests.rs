@@ -614,6 +614,24 @@ fn a_command_ends_when_claude_stops_it() {
 }
 
 #[test]
+fn a_monitor_runs_in_the_background_until_its_stream_ends_or_it_expires() {
+    let at = "2026-10-22T13:05:00.000Z";
+    let watch = json!({"type":"assistant","timestamp":at,"message":{"content":[{"type":"tool_use","id":"toolu_m","name":"Monitor",
+        "input":{"description":"Fine-tune progress","timeout_ms":1200000,"command":"tail -f log"}}]}});
+    let watching = json!({"type":"user","timestamp":at,"message":{"role":"user","content":[{"type":"tool_result","tool_use_id":"toolu_m",
+        "content":"Monitor started (task bm1)."}]},"toolUseResult":{"taskId":"bm1","timeoutMs":1200000,"persistent":false}});
+    let notice = |body: &str| json!({"type":"user","timestamp":at,"origin":{"kind":"task-notification"},"message":{"role":"user",
+        "content":format!("<task-notification>\n<task-id>bm1</task-id>\n{body}\n</task-notification>")}});
+    let event = notice("<summary>Monitor event</summary>\n<event>epoch 3</event>");
+    let ended = notice("<tool-use-id>toolu_m</tool-use-id>\n<status>completed</status>\n<event>done</event>");
+    let expired = notice("<event>[Monitor expired after 20m with no events delivered.]</event>");
+    let running = parse(Agent::Claude, &[watch.clone(), watching.clone(), event]);
+    assert_eq!(running.background().iter().map(|work| work.label.as_str()).collect::<Vec<_>>(), ["Fine-tune progress"]);
+    assert!(parse(Agent::Claude, &[watch.clone(), watching.clone(), ended]).background().is_empty());
+    assert!(parse(Agent::Claude, &[watch, watching, expired]).background().is_empty());
+}
+
+#[test]
 fn claude_turn_is_over_after_end_turn_until_the_user_speaks() {
     let at = "2026-10-05T14:54:42.186Z";
     let reply = |reason: &str| json!({"type":"assistant","timestamp":at,"message":{"stop_reason":reason,"content":[{"type":"text","text":"ok"}]}});
