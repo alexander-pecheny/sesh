@@ -49,6 +49,7 @@ final class Vault: ObservableObject, Identifiable, Records {
     private var flushing = false
     private var following: Task<Void, Never>?
     private(set) lazy var copier = Copier(vault: self)
+    private(set) lazy var mirror = Mirror(vault: self, folder: file.deletingPathExtension().appending(path: "transcripts"))
 
     nonisolated var id: String { place.name }
     var name: String { place.name }
@@ -134,6 +135,7 @@ final class Vault: ObservableObject, Identifiable, Records {
         guard made.ok else { return problem = made.problem }
         problem = nil
         online = true
+        if let head = try? JSONDecoder().decode(Line.self, from: Data(made.out.utf8)).seq, head < seq { await restore() }
         await flush()
         let ended = await machine.stream("\(Helper.path) vault follow \(folder) --since \(seq)") { [weak self] in
             self?.apply($0)
@@ -154,6 +156,23 @@ final class Vault: ObservableObject, Identifiable, Records {
         case "head": if let head = line.seq { seq = max(seq, head); save() }
         default: break
         }
+    }
+
+    /// The Host is older than this copy, as after its disk was erased: it gets back every record
+    /// it lacks and the recent Transcripts, and this copy reads it all again.
+    private func restore() async {
+        var have: Set<String> = []
+        let pulled = await machine.fetch("\(Helper.path) vault pull \(folder)") { text in
+            if let id = try? JSONDecoder().decode(Line.self, from: Data(text.utf8)).id { have.insert(id) }
+        }
+        guard pulled.ok else { return }
+        for record in records.values where !have.contains(record.id) && !queue.contains(where: { $0.id == record.id }) {
+            queue.append(Change(id: record.id, kind: record.kind, body: record.body, base: 0, deleted: record.deleted))
+        }
+        seq = 0
+        pending = queue.count
+        save()
+        await mirror.giveBack()
     }
 
     /// Sends the queue as a file, since one Document can outgrow a command line, until it is empty.
