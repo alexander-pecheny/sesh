@@ -134,7 +134,9 @@ struct NewTabMenu {
     let sections: [Section]
 
     init(task: String, machines: [String], in vault: some Records, ended: (Record) -> Bool) {
-        let new = Agent.allCases.map { Item(title: "New \($0.title) session…", action: .agent($0)) }
+        // A Scratchpad session starts at once, so its item opens no sheet.
+        let asks = vault.records[task]?.scratchpad != true
+        let new = Agent.allCases.map { Item(title: "New \($0.title) session\(asks ? "…" : "")", action: .agent($0)) }
             + machines.enumerated().map { Item(title: machines.count > 1 ? "New Terminal on \($1)" : "New Terminal", action: .terminal($0)) }
         let sessions = vault.children(.session, task: task).sorted { ($0.body.position ?? 0) < ($1.body.position ?? 0) }
         let reopen = { (title: String, records: [Record]) in

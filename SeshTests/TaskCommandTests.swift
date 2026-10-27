@@ -76,6 +76,16 @@ final class TaskCommandTests: XCTestCase {
         XCTAssertEqual(Tree.archived(in: vault).map(\.body.title), ["y", "z"])
     }
 
+    func testTheScratchpadStaysOutOfTheTreeAndStartsSessionsWithoutASheet() {
+        _ = make(.task, "a")
+        let scratchpad = Record(id: "scratchpad-test", kind: .task, body: .init(title: "Scratchpad", kind: "scratchpad"))
+        vault.write(scratchpad)
+        XCTAssertEqual(Tree.open(in: vault).map(\.body.title), ["a"])
+        XCTAssertEqual(Tree.children(of: nil, in: vault).map(\.body.title), ["a"])
+        let menu = NewTabMenu(task: scratchpad.id, machines: ["vps"], in: vault) { _ in false }
+        XCTAssertEqual(menu.sections[0].items.first?.title, "New Claude session")
+    }
+
     func testATabMovesToEveryOpenTaskButItsOwn() {
         let own = make(.task, "Own")
         _ = make(.task, "Other")

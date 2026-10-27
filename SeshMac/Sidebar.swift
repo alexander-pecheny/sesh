@@ -79,7 +79,7 @@ struct Sidebar: View {
         .environment(\.closeTask) { closing = Closing(vault: $0, task: $1) }
         .onDeleteCommand {
             guard let id = library.selection, let vault = library.vault(of: id), let task = vault.records[id],
-                  task.kind == .task, task.body.archived != true else { return }
+                  task.kind == .task, task.body.archived != true, !task.scratchpad else { return }
             closing = Closing(vault: vault, task: task)
         }
         .onReceive(NotificationCenter.default.publisher(for: .newTask)) { _ in
@@ -110,6 +110,9 @@ private struct VaultSection: View {
         // The sidebar's own fold shows its chevron only on hover; this one always shows.
         Section {
             if open {
+                if let scratchpad = vault.records[vault.scratchpad] {
+                    TaskRow(vault: vault, task: scratchpad, naming: $naming).tag(scratchpad.id)
+                }
                 Children(vault: vault, parent: nil, naming: $naming)
                 ArchiveGroup(vault: vault, naming: $naming)
                 if let alias = vault.place.alias {
@@ -217,6 +220,7 @@ private struct TaskRow: View {
 
     var body: some View {
         HStack(spacing: Metric.gap) {
+            if task.scratchpad { Image(systemName: "square.and.pencil").foregroundStyle(.secondary) }
             Text(task.body.title ?? "Untitled").lineLimit(2)
             Spacer(minLength: 0)
             MarksView(marks: library.marks(ofTask: task.id))
@@ -227,22 +231,24 @@ private struct TaskRow: View {
             .dropDestination(for: String.self) { ids, _ in
                 ids.map { library.receive($0, into: task.id) }.contains(true)
             }
-            .contextMenu {
-                Button("Rename") { naming = .init(goal: .rename(task), vault: vault, parent: nil) }
-                if let branch = task.body.branch { Button("Copy Branch Name") { Pasteboard.copy(branch) } }
-                if let path = task.body.path {
-                    Button("Copy Worktree Path") { Pasteboard.copy(path) }
-                    if task.body.machine == nil {
-                        Button("Show Worktree in Finder") { NSWorkspace.shared.activateFileViewerSelecting([URL(filePath: path)]) }
-                    }
-                }
-                Divider()
-                if task.body.archived == true {
-                    Button("Reopen") { Tree.reopen(task, in: vault) }
-                } else {
-                    Button("Close Task…") { closeTask(vault, task) }
-                }
+            .contextMenu { if !task.scratchpad { menu } }
+    }
+
+    @ViewBuilder private var menu: some View {
+        Button("Rename") { naming = .init(goal: .rename(task), vault: vault, parent: nil) }
+        if let branch = task.body.branch { Button("Copy Branch Name") { Pasteboard.copy(branch) } }
+        if let path = task.body.path {
+            Button("Copy Worktree Path") { Pasteboard.copy(path) }
+            if task.body.machine == nil {
+                Button("Show Worktree in Finder") { NSWorkspace.shared.activateFileViewerSelecting([URL(filePath: path)]) }
             }
+        }
+        Divider()
+        if task.body.archived == true {
+            Button("Reopen") { Tree.reopen(task, in: vault) }
+        } else {
+            Button("Close Task…") { closeTask(vault, task) }
+        }
     }
 }
 
