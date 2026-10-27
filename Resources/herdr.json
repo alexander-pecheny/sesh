@@ -1,10 +1,10 @@
 {
-  "version": "e115b7ae030a",
-  "url": "https://github.com/alexander-pecheny/sesh/releases/download/herdr-sesh-e115b7ae030a/",
+  "version": "f0d853e743ba",
+  "url": "https://github.com/alexander-pecheny/sesh/releases/download/herdr-sesh-f0d853e743ba/",
   "sha256": {
-    "darwin-arm64": "e6fea6a8a38ed2bb58667c5ecb1c411bb847d26ca862e34686d2869ec2355935",
-    "darwin-x86_64": "cef3d2a139ac8d1783733b49e0797b43915ffaba60bf75987c1f076ff0b89c7b",
-    "linux-aarch64": "70153181b1ee52a93e16c225d74d02e23d8d1941beff3d6ca2b951f1d97d4f14",
-    "linux-x86_64": "49d1e8c0cce249a63445a43118a7183c30c48a7e6df0640911dbd2b3829cb0ca"
+    "darwin-arm64": "74821ae733bbea11a072f0f48d11b8f45b3e50a17d0c0c95623119921c67146f",
+    "darwin-x86_64": "59ee5109d8dbb884967ef5ded99fbf2e45a27dbadb3c3624fc0688e3ea8afe94",
+    "linux-aarch64": "440f2a9e5e939782d35034bbe774bae9a8091534f7636f67775faf0b42544590",
+    "linux-x86_64": "5e1c5f25c6b98637eb32a3d113389ccd5e2136aa19446fb67805e5bddd3b8d7f"
   }
 }
