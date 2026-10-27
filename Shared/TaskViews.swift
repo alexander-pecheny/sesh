@@ -39,6 +39,8 @@ struct AddMenu<Label: View>: View {
 
     private func perform(_ action: NewTabMenu.Action, _ machines: [Machine]) {
         switch action {
+        case .agent(let agent) where task.scratchpad:
+            library.start(agent, for: task, on: machines[0]) { problem = $0 }
         case .agent(let agent): start = .init(agent: agent)
         case .terminal(let index):
             opening = true

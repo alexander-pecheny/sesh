@@ -47,6 +47,9 @@ struct Record: Codable, Identifiable, Equatable {
     var body: Body
     var seq: Int = 0
     var deleted = false
+
+    /// The Vault's one Scratchpad, a Task for quick Agent sessions and Terminals outside every other.
+    var scratchpad: Bool { kind == .task && body.kind == "scratchpad" }
 }
 
 /// Text matching `pattern` in an Agent's message links to `url`, where `$0` is the match

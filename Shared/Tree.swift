@@ -15,7 +15,7 @@ enum Tree {
 
     /// Every Task not closed, by title, as the menus that pick one list them.
     static func open(in vault: some Records) -> [Record] {
-        byTitle(vault.all(.task).filter { $0.body.archived != true })
+        byTitle(vault.all(.task).filter { $0.body.archived != true && !$0.scratchpad })
     }
 
     static func archived(in vault: some Records) -> [Record] {

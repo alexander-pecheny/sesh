@@ -120,6 +120,13 @@ Every Task belongs to one Vault. A Task usually has a main Worktree, where its n
 start; a Task without one starts them in the home folder.
 _Avoid_: project, ticket, note
 
+**Scratchpad**:
+A Task every Vault has from the start, for quick one-off work, shown above its folders and
+Tasks. It is never renamed, moved or closed. A new Agent session there starts at once, with
+no questions, in a fresh folder under ~/.sesh/scratch on the Vault's Host, taking remote control from the
+Vault's settings; a new Terminal starts in the home folder.
+_Avoid_: inbox, sandbox, quick task
+
 **Worktree**:
 A git worktree a Task works in, on a Vault Host or on the Mac, usually on its own
 branch. A Task has one main Worktree, where its new Tabs start by default, and may have

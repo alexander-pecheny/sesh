@@ -63,6 +63,11 @@ enum TaskActions {
                              remote: Bool? = nil, in vault: Vault, made: (Record) -> Void) async -> Result<Record, Herdr.Failure> {
         if let problem = await machine.prepare() { return .failure(Herdr.Failure(problem)) }
         var place = Start.Place(), repo = given
+        if task.scratchpad {
+            let made = await machine.run("mkdir -p ~/.sesh/scratch && mktemp -d ~/.sesh/scratch/XXXXXX")
+            guard made.ok else { return .failure(Herdr.Failure(made.problem)) }
+            place.folder = made.out.trimmingCharacters(in: .whitespacesAndNewlines)
+        }
         let home = given == nil ? "" : (await machine.run("printf %s \"$HOME\"")).out
         if let given, given.hasPrefix("~/") { repo = home + given.dropFirst(1) }
         if let repo {

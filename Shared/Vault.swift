@@ -62,7 +62,11 @@ final class Vault: ObservableObject, Identifiable, Records {
         #endif
         machine = .named(place.alias)
         load()
+        // Every device writes the same record, so the Host keeps one whichever arrives first.
+        if records[scratchpad] == nil { write(Record(id: scratchpad, kind: .task, body: .init(title: "Scratchpad", kind: "scratchpad"))) }
     }
+
+    var scratchpad: String { "scratchpad-" + place.name }
 
     private var file: URL {
         let support = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]

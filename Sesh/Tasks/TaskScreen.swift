@@ -58,7 +58,7 @@ struct TaskScreen: View {
         .confirmsClosing(library)
         .navigationBarTitleDisplayMode(.inline)
         .toolbar {
-            if let task = vault.records[id] {
+            if let task = vault.records[id], !task.scratchpad {
                 ToolbarItem(placement: .topBarTrailing) {
                     Menu {
                         if let worktree = current.worktree(of: task, in: vault) {

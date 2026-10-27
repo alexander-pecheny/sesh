@@ -89,6 +89,7 @@ private struct VaultSection: View {
     var body: some View {
         Section {
             if open {
+                if let scratchpad = vault.records[vault.scratchpad] { TaskRow(vault: vault, task: scratchpad, sheet: $sheet) }
                 Children(vault: vault, parent: nil, sheet: $sheet)
                 ArchiveGroup(vault: vault, sheet: $sheet)
                 if let alias = vault.place.alias {
@@ -207,28 +208,33 @@ private struct TaskRow: View {
     var body: some View {
         NavigationLink(value: task.id) { label }
             .contextMenu {
-                Button("Rename") { sheet = .rename(vault, task) }
-                if task.body.archived != true {
-                    Menu("Move to") { MoveTargets(vault: vault, moving: task) }
-                }
-                Divider()
-                if task.body.archived == true {
-                    Button("Reopen") { Tree.reopen(task, in: vault) }
-                } else {
-                    Button("Close Task…", role: .destructive) { sheet = .close(vault, task) }
-                }
+                if !task.scratchpad { menu }
             }
             .swipeActions {
                 if task.body.archived == true {
                     Button("Reopen") { Tree.reopen(task, in: vault) }
-                } else {
+                } else if !task.scratchpad {
                     Button("Close") { sheet = .close(vault, task) }.tint(flavour(.peach))
                 }
             }
     }
 
+    @ViewBuilder private var menu: some View {
+        Button("Rename") { sheet = .rename(vault, task) }
+        if task.body.archived != true {
+            Menu("Move to") { MoveTargets(vault: vault, moving: task) }
+        }
+        Divider()
+        if task.body.archived == true {
+            Button("Reopen") { Tree.reopen(task, in: vault) }
+        } else {
+            Button("Close Task…", role: .destructive) { sheet = .close(vault, task) }
+        }
+    }
+
     private var label: some View {
         HStack(spacing: Metric.gap) {
+            if task.scratchpad { Image.lucide("file-pen").foregroundStyle(flavour(.mauve)) }
             VStack(alignment: .leading, spacing: 2) {
                 Text(task.body.title ?? "Untitled").font(.ui(Metric.title)).foregroundStyle(flavour(.text)).lineLimit(2)
                 if task.body.path != nil, let branch = task.body.branch {
