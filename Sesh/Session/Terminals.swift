@@ -22,9 +22,10 @@ extension Library {
         case .gone: return .failure(Herdr.Failure("The pane is gone from \(machine.title)."))
         case .unreachable(let problem): return .failure(Herdr.Failure("Sesh could not reach \(machine.title): \(problem)"))
         }
+        let server = await machine.prepare() == nil ? Helper.moshServer : nil
         if let known = terminals.sessions[key] { return .success(known) }
         let session = SeshSession(host: host, store: Store.shared, app: app,
-                                  command: Herdr.attach(terminal))
+                                  command: Herdr.attach(terminal), server: server)
         terminals.sessions[key] = session
         return .success(session)
     }

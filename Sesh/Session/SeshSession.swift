@@ -46,6 +46,8 @@ final class SeshSession: ObservableObject, Identifiable {
     let host: Host
     /// What runs on the Host: a Terminal Tab's attach to its herdr pane.
     let command: String
+    /// The mosh-server Sesh put on the Host, which the Host's own PATH need not have.
+    let server: String?
     let input = InputState()
     let terminal: Ghostty.TerminalView
 
@@ -54,9 +56,10 @@ final class SeshSession: ObservableObject, Identifiable {
     private var bridge = Bridge()
     private var finished: (([String], String?) -> Void)?
 
-    init(host: Host, store: Store, app: ghostty_app_t, command: String) {
+    init(host: Host, store: Store, app: ghostty_app_t, command: String, server: String?) {
         self.host = host
         self.command = command
+        self.server = server
         self.store = store
         terminal = Ghostty.TerminalView(app: app, input: input, fontSize: store.fontSize)
         savePassword = Keychain.read("password.\(host.id)") != nil
@@ -134,7 +137,7 @@ final class SeshSession: ObservableObject, Identifiable {
             var config = sesh_mosh_config_t(
                 host: address, port: UInt16(host.port), user: user, password: password,
                 key_pem: pem, key_passphrase: passphrase, known_hosts_path: knownHosts,
-                remote_command: command, extra_flags: strings.make(host.moshFlags),
+                remote_command: command, extra_flags: strings.make((server.map { "--server=\($0) " } ?? "") + host.moshFlags),
                 cols: cols, rows: rows)
             handle = sesh_mosh_connect(&config, Bridge.callbacks, userdata)
         case .ssh:
