@@ -34,8 +34,6 @@
 
 ## Phases 4 and 5
 
-- `ghostty_surface_free_text` is declared in `ghostty.h` with two parameters but exported
-  with one. The bridging header aliases the real symbol as `sesh_ghostty_free_text`.
 - `ghostty_surface_mouse_pos` takes points, not pixels: pass the view coordinate
   untouched, never multiplied by the content scale.
 - There is no font-size entry point. `ghostty_surface_binding_action(surface,

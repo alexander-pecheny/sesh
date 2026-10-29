@@ -380,7 +380,7 @@ extension Ghostty {
             guard let surface, ghostty_surface_has_selection(surface) else { return nil }
             var text = ghostty_text_s()
             guard ghostty_surface_read_selection(surface, &text) else { return nil }
-            defer { withUnsafeMutablePointer(to: &text) { sesh_ghostty_free_text($0) } }
+            defer { ghostty_surface_free_text(surface, &text) }
             guard let bytes = text.text else { return nil }
             return (String(cString: bytes), CGPoint(x: text.tl_px_x, y: text.tl_px_y))
         }
