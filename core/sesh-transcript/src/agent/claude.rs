@@ -39,6 +39,8 @@ pub(super) struct Parser {
     /// The call that started each piece of background work, by the task id that some of its
     /// notifications and TaskStop name instead.
     started: HashMap<String, String>,
+    /// What to call each command still in the foreground, in case it is moved to the background.
+    commands: HashMap<String, String>,
     /// Whether Claude's last reply ended its turn, so what herdr calls working is only Claude
     /// waiting on its background work.
     turn_over: bool,
@@ -89,7 +91,7 @@ impl super::Parse for Parser {
         let mut line = Vec::new();
         while reader.read_until(b'\n', &mut line)? > 0 {
             let text = std::str::from_utf8(&line).unwrap_or_default();
-            if ["run_in_background", "task-notification", "async_launched", "backgroundTaskId", "TaskStop", "Monitor"].iter().any(|word| text.contains(word)) {
+            if ["run_in_background", "task-notification", "async_launched", "backgroundTaskId", "TaskStop", "Monitor", "\"name\":\"Bash\""].iter().any(|word| text.contains(word)) {
                 if let Ok(value) = serde_json::from_str::<Value>(text) {
                     scan.read(&value, &mut ids, &mut out);
                     out.clear();
@@ -229,16 +231,19 @@ impl Parser {
                 }
                 // Claude writes the flag as a string; older versions wrote a boolean. A Monitor
                 // always watches in the background.
+                let label = ["description", "command", "prompt"]
+                    .iter()
+                    .find_map(|key| input[*key].as_str())
+                    .unwrap_or(name);
+                let label = label.lines().next().unwrap_or_default().to_string();
                 if name == "Monitor" || input["run_in_background"] == true || input["run_in_background"] == "true" {
-                    let label = ["description", "command", "prompt"]
-                        .iter()
-                        .find_map(|key| input[*key].as_str())
-                        .unwrap_or(name);
                     self.background.push(Background {
                         call: call.to_string(),
-                        label: label.lines().next().unwrap_or_default().to_string(),
+                        label,
                         agent: crate::tool_kind(name) == "task",
                     });
+                } else if name == "Bash" {
+                    self.commands.insert(call.to_string(), label);
                 }
                 out.push(match name {
                     "AskUserQuestion" => {
@@ -329,6 +334,11 @@ impl Parser {
             return;
         };
         let result = &line["toolUseResult"];
+        // A command moved to the background after it started says so only in its result.
+        let command = self.commands.remove(call);
+        if let Some(label) = command.filter(|_| result["backgroundTaskId"].is_string()) {
+            self.background.push(Background { call: call.to_string(), label, agent: false });
+        }
         if self.hidden_results.contains(call) || todo_result(result) {
             return;
         }

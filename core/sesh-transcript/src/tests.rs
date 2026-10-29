@@ -588,6 +588,28 @@ fn an_agent_claude_sent_to_the_background_unasked_counts_until_its_notification(
 }
 
 #[test]
+fn a_command_moved_to_the_background_after_it_started_counts_until_its_notification() {
+    let at = "2026-10-28T12:02:00.000Z";
+    let start = json!({"type":"assistant","timestamp":at,"message":{"content":[{"type":"tool_use","id":"toolu_u","name":"Bash",
+        "input":{"command":"just test","description":"Run the full suite"}}]}});
+    let moved = json!({"type":"user","timestamp":at,"message":{"role":"user","content":[{"type":"tool_result","tool_use_id":"toolu_u",
+        "content":"Command was manually backgrounded by user with ID: bbuljs53a."}]},
+        "toolUseResult":{"backgroundTaskId":"bbuljs53a","backgroundedByUser":true}});
+    let notified = json!({"type":"user","timestamp":at,"origin":{"kind":"task-notification"},"message":{"role":"user",
+        "content":"<task-notification>\n<task-id>bbuljs53a</task-id>\n<status>completed</status>\n</task-notification>"}});
+    let shell = [Background { call: "toolu_u".into(), label: "Run the full suite".into(), agent: false }];
+    assert_eq!(parse(Agent::Claude, &[start.clone(), moved.clone()]).background(), shell);
+    assert!(parse(Agent::Claude, &[start.clone(), moved.clone(), notified]).background().is_empty());
+    let dir = std::env::temp_dir().join(format!("sesh-moved-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    std::fs::write(dir.join("t.jsonl"), format!("{start}\n{moved}\n")).unwrap();
+    let mut scanned = Transcript::new(Agent::Claude, dir.join("t.jsonl"));
+    scanned.scan_background().unwrap();
+    std::fs::remove_dir_all(&dir).unwrap();
+    assert_eq!(scanned.background(), shell);
+}
+
+#[test]
 fn an_agent_ends_on_a_notification_that_names_only_its_agent_id() {
     let at = "2026-10-07T11:56:45.159Z";
     let launch = json!({"type":"assistant","timestamp":at,"message":{"content":[{"type":"tool_use","id":"toolu_f","name":"Agent",
