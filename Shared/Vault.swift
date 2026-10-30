@@ -125,6 +125,14 @@ final class Vault: ObservableObject, Identifiable, Records {
         following = nil
     }
 
+    /// Stops following the Host and deletes this device's copy; the Host keeps the Vault.
+    func forget() {
+        stop()
+        copier.stop()
+        try? FileManager.default.removeItem(at: file)
+        try? FileManager.default.removeItem(at: file.deletingPathExtension())
+    }
+
     /// Connects again now, rather than at the next try, when offline.
     func retry() {
         guard !online else { return }

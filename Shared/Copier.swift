@@ -14,6 +14,11 @@ final class Copier {
 
     init(vault: Vault) { self.vault = vault }
 
+    func stop() {
+        task?.cancel()
+        task = nil
+    }
+
     func start() {
         guard task == nil else { return }
         task = Task { [weak self] in
