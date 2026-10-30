@@ -67,7 +67,7 @@ final class HelperInstaller {
             let noted = await run(Herdr.importer + "\nprintf '%s\\n' \(quote(version)) > ~/.sesh/bin/herdr-sesh.version")
             guard noted.ok else { return "Sesh could not install herdr-sesh on \(title): \(noted.problem)" }
         }
-        let woke = await run(Herdr.wake(upgrade: !herdr.isEmpty && herdr != Helper.herdrVersion))
+        let woke = await run(Herdr.wake(upgrade: !herdr.isEmpty && herdr != Helper.herdrVersion) + "\n" + Herdr.integrations)
         return woke.ok ? nil : "Sesh could not start its herdr server on \(title): \(woke.problem). If herdr's own server there"
             + " could not be moved into it, `herdr server stop` ends that server's Agents and lets Sesh start afresh."
     }

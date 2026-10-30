@@ -17,6 +17,18 @@ enum Herdr {
         chmod 755 ~/.sesh/bin/herdr-sesh-import
         """
 
+    /// Installs herdr's hooks for each Agent configured on the machine that lacks them. Without
+    /// them herdr never learns a Claude or Codex session id, and the helper cannot find its Transcript.
+    nonisolated static let integrations = """
+        hooks=$(\(command) integration status 2>/dev/null)
+        for agent in claude codex pi; do
+            if [ -d ~/.$agent ] && printf '%s\\n' "$hooks" | grep -q "^$agent: not installed"; then
+                \(command) integration install $agent >/dev/null 2>&1
+            fi
+        done
+        true
+        """
+
     /// Shell lines that start Sesh's herdr server where it is down, or fail saying why they
     /// could not. Where it has never run, the user's own herdr server becomes it, panes and
     /// all, so Agents started before herdr-sesh carry on; `upgrade` hands a running one over to
