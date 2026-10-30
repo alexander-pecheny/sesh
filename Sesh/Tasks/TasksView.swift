@@ -77,6 +77,7 @@ private struct VaultSection: View {
     @ObservedObject var vault: Vault
     @Binding var sheet: TaskSheet?
     @AppStorage private var open: Bool
+    @State private var removing = false
 
     init(vault: Vault, sheet: Binding<TaskSheet?>) {
         self.vault = vault
@@ -120,6 +121,7 @@ private struct VaultSection: View {
                     Button("New Folder") { sheet = .folder(vault, parent: nil) }
                     Divider()
                     Button("Vault Settings") { sheet = .settings(vault) }
+                    Button("Remove from This Phone", role: .destructive) { removing = true }
                 } label: { Image.lucide("plus", size: Metric.title) }
                     .accessibilityLabel("Add to \(vault.name)")
             }
@@ -130,6 +132,11 @@ private struct VaultSection: View {
             }
         }
         .listRowBackground(flavour(.mantle))
+        .confirmationDialog("Remove \(vault.name) from this phone?", isPresented: $removing) {
+            Button("Remove Vault", role: .destructive) { library.remove(vault) }
+        } message: {
+            Text("The Vault stays on its Host and on the Mac. Add it again to open it from another Host.")
+        }
     }
 }
 

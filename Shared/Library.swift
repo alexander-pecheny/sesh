@@ -218,6 +218,12 @@ final class Library: ObservableObject {
         UserDefaults.standard.set(try? JSONEncoder().encode(vaults.map(\.place)), forKey: Self.key)
     }
 
+    func remove(_ vault: Vault) {
+        vault.forget()
+        vaults.removeAll { $0 === vault }
+        UserDefaults.standard.set(try? JSONEncoder().encode(vaults.map(\.place)), forKey: Self.key)
+    }
+
     func vault(of task: String) -> Vault? { vaults.first { $0.records[task] != nil } }
 
     // MARK: Unfiled
