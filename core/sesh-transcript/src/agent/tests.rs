@@ -76,6 +76,21 @@ fn a_session_id_finds_claudes_and_codexs_transcripts_but_never_pis() {
 }
 
 #[test]
+fn a_claude_herdr_never_heard_from_is_found_by_its_folder_alone() {
+    let scratch = Scratch::new("running");
+    let transcript = scratch.write("projects/-home-u-walrus/abc.jsonl", &[]);
+    scratch.write("projects/-home-u-seal/def.jsonl", &[]);
+    let pid = std::process::id();
+    scratch.write("sessions/1.json", &[json!({"pid": pid, "sessionId": "abc", "cwd": "/home/u/walrus"})]);
+    scratch.write("sessions/2.json", &[json!({"pid": pid, "sessionId": "def", "cwd": "/home/u/seal"})]);
+    let pane = |cwd: &str| json!({"pane_id": "w1:p1", "agent": "claude", "agent_session": null, "cwd": cwd});
+    assert_eq!(running_claude(&scratch.0, &pane("/home/u/walrus")), Some(transcript));
+    assert_eq!(running_claude(&scratch.0, &pane("/home/u/otter")), None);
+    scratch.write("sessions/3.json", &[json!({"pid": pid, "sessionId": "ghi", "cwd": "/home/u/walrus"})]);
+    assert_eq!(running_claude(&scratch.0, &pane("/home/u/walrus")), None);
+}
+
+#[test]
 fn each_agent_reads_its_own_transcript_as_a_message_and_a_reply() {
     let scratch = Scratch::new("parse");
     for agent in ALL {

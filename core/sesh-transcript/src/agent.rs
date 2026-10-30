@@ -136,10 +136,37 @@ pub fn transcript_path(pane: &Value) -> Option<String> {
     // A herdr that names no session gets no guess: the newest Transcript in the pane's
     // folder is as often an older session's as the one running.
     if session["kind"] != "id" {
-        return None;
+        let config = Agent::Claude.folder()?.parent()?.to_path_buf();
+        return (Agent::of(pane) == Some(Agent::Claude)).then(|| running_claude(&config, pane)).flatten()
+            .map(|path| path.to_string_lossy().into_owned());
     }
     let agent = Agent::named(session["agent"].as_str()?)?;
     Some(agent.locate(session["value"].as_str()?)?.to_string_lossy().into_owned())
+}
+
+/// The Transcript of a Claude that started before herdr's hook was installed, from the record
+/// Claude keeps of each running session: the one started in the pane's folder, or, of several,
+/// the one whose process runs in the pane.
+fn running_claude(config: &Path, pane: &Value) -> Option<PathBuf> {
+    let folders = [pane["foreground_cwd"].as_str(), pane["cwd"].as_str()];
+    let proc = Path::new("/proc");
+    let running: Vec<Value> = std::fs::read_dir(config.join("sessions"))
+        .ok()?
+        .flatten()
+        .filter_map(|entry| serde_json::from_slice(&std::fs::read(entry.path()).ok()?).ok())
+        .filter(|session: &Value| session["cwd"].as_str().is_some_and(|cwd| folders.contains(&Some(cwd))))
+        .filter(|session| !proc.exists() || session["pid"].as_u64().is_some_and(|pid| proc.join(pid.to_string()).exists()))
+        .collect();
+    let marker = format!("HERDR_PANE_ID={}", pane["pane_id"].as_str()?);
+    let in_pane = |session: &&Value| {
+        let pid = session["pid"].as_u64().unwrap_or_default();
+        std::fs::read(proc.join(format!("{pid}/environ"))).is_ok_and(|env| env.split(|byte| *byte == 0).any(|var| var == marker.as_bytes()))
+    };
+    let session = running.iter().find(in_pane).or(match running.as_slice() {
+        [one] => Some(one),
+        _ => None,
+    })?;
+    Agent::Claude.find(&config.join("projects"), session["sessionId"].as_str()?)
 }
 
 fn find_file(dir: &Path, depth: usize, matches: &dyn Fn(&str) -> bool) -> Option<PathBuf> {

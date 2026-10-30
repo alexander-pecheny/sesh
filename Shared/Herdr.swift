@@ -77,6 +77,8 @@ enum Herdr {
                        config: String? = nil, remote: Bool = true, on runner: Runner) async -> String? {
         let name = Names.free(wanted, taken: await agentNames(on: runner))
         if agent == .claude, let config, !config.isEmpty {
+            let dir = shellPath(config)
+            _ = await runner.run("[ -e \(dir)/hooks/herdr-agent-state.sh ] || CLAUDE_CONFIG_DIR=\(dir) \(command) integration install claude")
             _ = await runner.run("\(command) pane run \(quote(pane)) \(quote("export CLAUDE_CONFIG_DIR=\(shellPath(config))"))")
         }
         var ran = await runner.run(
