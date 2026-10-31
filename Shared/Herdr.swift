@@ -117,6 +117,8 @@ enum Herdr {
         let pane: String
         var path: String?
         var branch: String?
+        /// herdr already had a Workspace on this worktree, whose pane may hold an Agent.
+        var reused = false
     }
 
     private struct Response: Decodable {
@@ -130,6 +132,7 @@ enum Herdr {
             let workspace: Workspace?
             let root_pane: Pane?
             let worktree: Worktree?
+            let already_open: Bool?
         }
         let result: Result
     }
@@ -141,7 +144,7 @@ enum Herdr {
         else { return .failure(Failure("herdr said something Sesh cannot read")) }
         return .success(Opened(
             workspace: result.workspace?.workspace_id ?? "", pane: pane,
-            path: result.worktree?.path, branch: result.worktree?.branch))
+            path: result.worktree?.path, branch: result.worktree?.branch, reused: result.already_open == true))
     }
 
     struct Failure: Error {
@@ -149,10 +152,17 @@ enum Herdr {
         init(_ message: String) { self.message = message }
     }
 
-    /// A new branch of `repo` in its own worktree, as a herdr Workspace labelled `label`.
+    /// `branch` of `repo` in its own worktree, as a herdr Workspace labelled `label`: the worktree
+    /// the branch already has, or else a new one.
     static func worktree(_ repo: String, branch: String, label: String, on runner: Runner) async -> Result<Opened, Failure> {
-        opened(await runner.run(
-            "\(command) worktree create --cwd \(quote(repo)) --branch \(quote(branch)) --label \(quote(label)) --no-focus"))
+        let args = "--cwd \(quote(repo)) --branch \(quote(branch)) --label \(quote(label)) --no-focus"
+        guard case .success(let found) = opened(await runner.run("\(command) worktree open \(args)")) else {
+            return opened(await runner.run("\(command) worktree create \(args)"))
+        }
+        guard found.reused, let path = found.path else { return .success(found) }
+        return await tab(in: found.workspace, folder: path, label: label, on: runner).map {
+            Opened(workspace: found.workspace, pane: $0.pane, path: path, branch: found.branch)
+        }
     }
 
     static func workspace(_ folder: String, label: String, on runner: Runner) async -> Result<Opened, Failure> {
