@@ -52,8 +52,26 @@ final class Machine: Runner, Identifiable, Hashable {
         "{ \(command)\n} & child=$!; { cat >/dev/null; kill $child 2>/dev/null; } >/dev/null 2>&1 & wait $child"
     }
 
-    private func process(_ command: String, piped: Bool = false) -> Process {
+    /// The login shell's environment as `export` lines, read once, so PATH has what the user
+    /// installed without a login shell for every command: on a Host whose rc files start several
+    /// tools, those kept a core busy.
+    private var environment: Task<String?, Never>?
+
+    private func loginExports() async -> String? {
+        if environment == nil {
+            environment = Task {
+                let ran = await launch("env -0", line: nil, input: nil, opened: nil, mosh: false, exports: nil).ran
+                if !ran.ok { environment = nil }
+                return ran.ok ? exports(fromEnv: ran.out) : nil
+            }
+        }
+        return await environment?.value
+    }
+
+    private func process(_ command: String, piped: Bool, exports: String?) -> Process {
         let process = Process()
+        let marked = "echo \(Self.mark); " + command
+        let shell = exports.map { "exec \"$SHELL\" -c \(quote($0 + marked))" } ?? "exec \"$SHELL\" -lic \(quote(marked))"
         if let alias, piped, let server = Helper.moshServer {
             // A stream outlives sleep and roaming over its own mosh pipe, which the shared ssh
             // connection only starts; a dead TCP link took a minute to notice.
@@ -61,19 +79,17 @@ final class Machine: Runner, Identifiable, Hashable {
             process.executableURL = Bundle.main.bundleURL.appending(path: "Contents/MacOS/mosh")
             process.arguments = [
                 "--pipe", "--experimental-remote-ip=remote", "--server=\(server)", "--ssh=\(ssh)", alias, "--",
-                "sh", "-c", "exec \"$SHELL\" -lic \(quote("echo \(Self.mark); " + command))",
+                "sh", "-c", shell,
             ]
         } else if let alias {
             process.executableURL = URL(filePath: "/usr/bin/ssh")
             process.arguments = [
                 "-o", "BatchMode=yes", "-o", "ControlMaster=auto", "-o", "ControlPath=\(Self.controlPath)",
-                "-o", "ControlPersist=600", "-o", "ServerAliveInterval=15", alias,
-                // A login shell, as the phone's Link uses, so PATH has what the user installed.
-                "exec \"$SHELL\" -lic \(quote("echo \(Self.mark); " + command))",
+                "-o", "ControlPersist=600", "-o", "ServerAliveInterval=15", alias, shell,
             ]
         } else {
             process.executableURL = URL(filePath: "/bin/zsh")
-            process.arguments = ["-lic", "echo \(Self.mark); " + command]
+            process.arguments = exports.map { ["-c", $0 + marked] } ?? ["-lic", marked]
         }
         process.standardInput = FileHandle.nullDevice
         return process
@@ -124,7 +140,8 @@ final class Machine: Runner, Identifiable, Hashable {
     /// command dials afresh, and a command it kept from running is run once more.
     private func stream(_ command: String, line: ((String) -> Void)?, input: Data? = nil,
                         opened: ((@escaping (String) -> Void) -> Void)? = nil, mosh: Bool = true) async -> Ran {
-        let (ran, started) = await launch(command, line: line, input: input, opened: opened, mosh: mosh)
+        let exports = await loginExports()
+        let (ran, started) = await launch(command, line: line, input: input, opened: opened, mosh: mosh, exports: exports)
         guard let alias, ran.err.contains("Session open refused by peer") else { return ran }
         FollowerLink.log.notice("\(alias, privacy: .public) refused a session on its shared connection, which is stopped")
         let stop = Process()
@@ -137,14 +154,14 @@ final class Machine: Runner, Identifiable, Hashable {
             do { try stop.run() } catch { done.resume() }
         }
         guard !started, !Task.isCancelled else { return ran }
-        return await launch(command, line: line, input: input, opened: opened, mosh: mosh).ran
+        return await launch(command, line: line, input: input, opened: opened, mosh: mosh, exports: exports).ran
     }
 
     /// The command's result, and whether it started at all.
     private func launch(_ command: String, line: ((String) -> Void)?, input: Data?,
-                        opened: ((@escaping (String) -> Void) -> Void)?, mosh: Bool) async -> (ran: Ran, started: Bool) {
+                        opened: ((@escaping (String) -> Void) -> Void)?, mosh: Bool, exports: String?) async -> (ran: Ran, started: Bool) {
         // The tether reads stdin itself, so a stream that is written to goes without one.
-        let process = process(line == nil || opened != nil ? command : Self.tethered(command), piped: line != nil && mosh)
+        let process = process(line == nil || opened != nil ? command : Self.tethered(command), piped: line != nil && mosh, exports: exports)
         let out = Pipe(), err = Pipe()
         process.standardOutput = out
         process.standardError = err

@@ -212,6 +212,21 @@ func shellPath(_ path: String) -> String {
 
 func quote(_ text: String) -> String { "'" + text.replacingOccurrences(of: "'", with: "'\\''") + "'" }
 
+/// What `env -0` printed, as `export` lines that give a plain shell the same environment, or
+/// nil when it lacks a PATH to run anything by.
+func exports(fromEnv env: String) -> String? {
+    // Variables the shell sets for itself, which it refuses or ignores when given.
+    let own: Set = ["_", "PWD", "OLDPWD", "SHLVL", "SHELLOPTS", "BASHOPTS", "BASHPID", "PPID", "UID", "EUID"]
+    let exports = env.split(separator: "\0").compactMap { pair -> String? in
+        guard let equals = pair.firstIndex(of: "=") else { return nil }
+        let name = String(pair[..<equals])
+        let valid = !name.isEmpty && name.allSatisfy { $0 == "_" || ($0.isASCII && ($0.isLetter || $0.isNumber)) }
+        guard valid, !own.contains(name) else { return nil }
+        return "export \(name)=\(quote(String(pair[pair.index(after: equals)...]))); "
+    }.joined()
+    return exports.contains("export PATH=") ? exports : nil
+}
+
 enum Names {
     /// A name herdr accepts as an agent name and git as a branch.
     static func slug(_ text: String) -> String {
