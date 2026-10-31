@@ -28,7 +28,8 @@ extension Library {
         let attach = Herdr.attach(terminal)
         let command: String
         if let alias = machine.alias {
-            let remote = quote("exec \"$SHELL\" -lic \(quote(attach))")
+            // herdr-sesh lives at a fixed path, so the attach needs no login shell, which on a busy Host costs seconds.
+            let remote = quote(attach)
             // mosh carries one screen per session, so each Terminal has its own; it starts its
             // server through the Host's one shared ssh connection, so no new one opens.
             let ssh = "ssh -o ControlMaster=auto -o ControlPath=\(Machine.controlPath) -o ControlPersist=600"

@@ -65,6 +65,7 @@ async fn drive(config: Config, context: Context) -> Result<(), String> {
     };
     events.state(State::Connecting, "");
     let handle = Arc::new(dialer.connect(&events, &answers).await?);
+    let shell = Shell::read(&handle).await;
     events.state(State::Connected, "");
 
     let mut uploads = Pending::default();
@@ -72,7 +73,7 @@ async fn drive(config: Config, context: Context) -> Result<(), String> {
     loop {
         match commands.recv().await {
             Some(Command::Run(id, command)) => {
-                let (handle, events) = (handle.clone(), events.clone());
+                let (handle, events, command) = (handle.clone(), events.clone(), shell.wrap(&command));
                 tokio::spawn(async move {
                     let ran = run(&handle, &command).await.unwrap_or_else(failed);
                     events.ran(id, &ran);
@@ -82,7 +83,7 @@ async fn drive(config: Config, context: Context) -> Result<(), String> {
                 let (cancel, cancelled) = oneshot::channel();
                 streams.retain(|_, stream| !stream.is_closed());
                 streams.insert(id, cancel);
-                let (handle, events) = (handle.clone(), events.clone());
+                let (handle, events, command) = (handle.clone(), events.clone(), shell.wrap(&command));
                 tokio::spawn(async move {
                     let ran = exec(&handle, &command, |bytes| events.chunk(id, bytes), cancelled)
                         .await
@@ -120,6 +121,46 @@ async fn drive(config: Config, context: Context) -> Result<(), String> {
     Ok(())
 }
 
+/// How a command reaches the Host's shell. Each one used to start the login shell afresh, rc
+/// files and all, which on a busy Host costs seconds; its environment is read once instead,
+/// and each command runs in a plain `$SHELL -c` with it.
+enum Shell {
+    Login,
+    Plain(String),
+}
+
+/// Variables the shell sets for itself, which it refuses or ignores when given.
+const OWN: &[&str] = &["_", "PWD", "OLDPWD", "SHLVL", "SHELLOPTS", "BASHOPTS", "BASHPID", "PPID", "UID", "EUID"];
+
+impl Shell {
+    async fn read<H: client::Handler>(handle: &client::Handle<H>) -> Self {
+        let read = run(handle, &in_login_shell(&format!("echo {MARK}; env -0"))).await;
+        match read {
+            Ok(Ran { status: 0, stdout, .. }) => Self::from_env(&stdout),
+            _ => Self::Login,
+        }
+    }
+
+    /// The shell that gives each command the environment `env -0` printed.
+    fn from_env(env: &str) -> Self {
+        let exports: String = env
+            .split('\0')
+            .filter_map(|pair| pair.split_once('='))
+            .filter(|(name, _)| !OWN.contains(name) && !name.is_empty() && name.chars().all(|c| c == '_' || c.is_ascii_alphanumeric()))
+            .map(|(name, value)| format!("export {name}={}; ", mosh::opts::shell_quote(value)))
+            .collect();
+        if exports.contains("export PATH=") { Self::Plain(exports) } else { Self::Login }
+    }
+
+    fn wrap(&self, command: &str) -> String {
+        let command = format!("echo {MARK}; {command}");
+        match self {
+            Self::Login => in_login_shell(&command),
+            Self::Plain(exports) => format!("exec \"$SHELL\" -c {}", mosh::opts::shell_quote(&format!("{exports}{command}"))),
+        }
+    }
+}
+
 fn failed(error: String) -> Ran {
     Ran {
         status: -1,
@@ -150,7 +191,7 @@ async fn exec<H: client::Handler, C: Future>(
         .await
         .map_err(|e| format!("the connection to the Host is gone: {e}"))?;
     channel
-        .exec(true, in_login_shell(&format!("echo {MARK}; {command}")))
+        .exec(true, command)
         .await
         .map_err(|e| format!("running a command: {e}"))?;
     let (mut unmark, mut stderr, mut status) = (Unmark::default(), Vec::new(), -1);
@@ -214,6 +255,27 @@ impl Unmark {
 
 #[cfg(test)]
 mod tests {
+    use super::*;
+
+    #[test]
+    fn a_command_gets_the_login_shells_environment_without_its_rc_files() {
+        let shell = Shell::from_env("PATH=/usr/bin:/bin\0GREETING=it's a \"walrus\"\nhere\0SHLVL=7\0");
+        let output = std::process::Command::new("sh")
+            .args(["-c", &shell.wrap(r#"printf '%s|%s' "$GREETING" "$SHLVL""#)])
+            .env("SHELL", "/bin/sh")
+            .output()
+            .unwrap();
+        let printed = String::from_utf8(output.stdout).unwrap();
+        let (greeting, level) = printed.split_once('\n').unwrap().1.rsplit_once('|').unwrap();
+        assert_eq!(greeting, "it's a \"walrus\"\nhere");
+        assert_ne!(level, "7", "the shell's own variables are its to set");
+    }
+
+    #[test]
+    fn an_environment_with_no_path_keeps_the_login_shell() {
+        assert!(matches!(Shell::from_env("HOME=/home/u\0"), Shell::Login));
+    }
+
     #[test]
     fn what_the_rc_files_print_is_dropped_even_when_the_mark_is_split() {
         let output = format!("Welcome to Ubuntu\n{}\n{{\"a\":1}}\n", super::MARK);
