@@ -13,7 +13,6 @@ use mosh::opts::Opts;
 use mosh_pipe::Ending;
 use russh::{client, ChannelMsg};
 
-use crate::session::in_login_shell;
 
 /// Every method is called from a thread of the core's own.
 pub trait Events: Send + Sync + 'static {
@@ -79,7 +78,12 @@ impl Pipe {
     }
 }
 
-pub async fn run<H: client::Handler>(handle: Arc<client::Handle<H>>, start: Start) {
+/// Runs the pipe over mosh where the Host is reached directly, and over the connection itself
+/// where a proxy stands between, since mosh's datagrams cannot follow it there.
+pub async fn run<H: client::Handler>(handle: Arc<client::Handle<H>>, start: Start, direct: bool) {
+    if !direct {
+        return over_channel(&handle, start).await;
+    }
     let Start { server, command, mut input, stop, end } = start;
     let (port, key, ip) = match bootstrap(&handle, &server, &command).await {
         Ok(found) => found,
@@ -122,7 +126,7 @@ async fn bootstrap<H: client::Handler>(
     let opts = Opts {
         server: server.into(),
         pipe: true,
-        command: vec!["sh".into(), "-c".into(), in_login_shell(command)],
+        command: vec!["sh".into(), "-c".into(), command.into()],
         ..Default::default()
     };
     let mut channel = handle
@@ -155,4 +159,52 @@ async fn bootstrap<H: client::Handler>(
     };
     let ip = found.target().ok_or("mosh-server never said where it was")?.to_string();
     Ok((port, key, ip))
+}
+
+/// The command on a channel of the connection: its input copied in, its output handed over.
+async fn over_channel<H: client::Handler>(handle: &client::Handle<H>, start: Start) {
+    let Start { command, input, end, .. } = start;
+    let mut channel = match handle.channel_open_session().await {
+        Ok(channel) => channel,
+        Err(e) => return end.say(-1, &format!("the connection to the Host is gone: {e}")),
+    };
+    if let Err(e) = channel.exec(true, command).await {
+        return end.say(-1, &format!("running a command: {e}"));
+    }
+    let (sender, mut written) = tokio::sync::mpsc::unbounded_channel::<Vec<u8>>();
+    tokio::task::spawn_blocking(move || {
+        let mut input = input;
+        let mut chunk = [0u8; 4096];
+        while let Ok(read @ 1..) = std::io::Read::read(&mut input, &mut chunk) {
+            if sender.send(chunk[..read].to_vec()).is_err() {
+                break;
+            }
+        }
+    });
+    let events = end.0.clone().expect("not yet ended");
+    let (mut status, mut stderr, mut open) = (-1, Vec::new(), true);
+    loop {
+        tokio::select! {
+            message = channel.wait() => match message {
+                Some(ChannelMsg::Data { data }) => events.output(&data),
+                Some(ChannelMsg::ExtendedData { data, .. }) => stderr.extend_from_slice(&data),
+                Some(ChannelMsg::ExitStatus { exit_status }) => status = exit_status as i32,
+                Some(ChannelMsg::Close) | None => break,
+                Some(_) => {}
+            },
+            bytes = written.recv(), if open => match bytes {
+                Some(bytes) => {
+                    let _ = channel.data(&bytes[..]).await;
+                }
+                // The app closed the input, which ends the command as a mosh pipe's end does.
+                None => {
+                    open = false;
+                    let _ = channel.eof().await;
+                    let _ = channel.signal(russh::Sig::TERM).await;
+                    let _ = channel.close().await;
+                }
+            },
+        }
+    }
+    end.say(if open { status } else { 0 }, &String::from_utf8_lossy(&stderr));
 }

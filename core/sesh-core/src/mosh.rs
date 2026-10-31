@@ -63,10 +63,10 @@ async fn drive(config: Config, context: Context) -> Result<(), String> {
         ssh::connect_any(&client_config, &config.host, port, &ssh_flags, || ssh::Handler {
             events: events.clone(),
             answers: answers.clone(),
-            known_hosts: config.known_hosts.clone(),
+            known_hosts: crate::known_hosts::KnownHosts::app(config.known_hosts.clone()),
             host: config.host.clone(),
             port,
-            agent: None,
+            forward: None,
         })
         .await?;
     let credentials = Credentials {

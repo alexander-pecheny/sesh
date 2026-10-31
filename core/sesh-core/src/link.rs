@@ -12,7 +12,7 @@ use tokio::sync::oneshot;
 
 use crate::flags::{self, Transport};
 use crate::session::{in_login_shell, Command, Context, Events, Session, State};
-use crate::ssh::Dialer;
+use crate::ssh::{Dialer, Handler};
 use crate::upload::{self, Pending};
 
 /// Printed before the command, so whatever the rc files say is not taken for its output.
@@ -40,12 +40,25 @@ pub fn connect(config: Config, events: Arc<dyn Events>) -> Session {
     Session::start(events, move |context| drive(config, context))
 }
 
+/// A Link to a Host named by its alias in the user's ssh config.
+pub fn connect_alias(alias: String, events: Arc<dyn Events>) -> Session {
+    Session::start(events, move |context| async move {
+        let dialed = crate::dial::dial(&alias, &context.events, &context.answers).await?;
+        let remote = Remote { handle: Arc::new(dialed.handle), direct: dialed.direct.is_some(), env: dialed.env };
+        serve(remote, context, dialed.carriers).await
+    })
+}
+
+/// The connection a Link runs everything on.
+struct Remote {
+    handle: Arc<client::Handle<Handler>>,
+    /// Nothing stands between, so a pipe can go over mosh's datagrams.
+    direct: bool,
+    /// `SetEnv`, given to every command.
+    env: Vec<(String, String)>,
+}
+
 async fn drive(config: Config, context: Context) -> Result<(), String> {
-    let Context {
-        events,
-        answers,
-        mut commands,
-    } = context;
     let flags = match config.transport {
         Transport::Ssh => flags::parse_ssh(&config.extra_flags)?,
         Transport::Mosh => flags::parse_mosh(&config.extra_flags)?.ssh,
@@ -63,8 +76,15 @@ async fn drive(config: Config, context: Context) -> Result<(), String> {
         known_hosts: config.known_hosts,
         flags,
     };
-    events.state(State::Connecting, "");
-    let handle = Arc::new(dialer.connect(&events, &answers).await?);
+    context.events.state(State::Connecting, "");
+    let handle = Arc::new(dialer.connect(&context.events, &context.answers).await?);
+    serve(Remote { handle, direct: true, env: Vec::new() }, context, Default::default()).await
+}
+
+async fn serve(remote: Remote, context: Context, _carriers: crate::dial::Carriers) -> Result<(), String> {
+    let Context { events, mut commands, .. } = context;
+    let Remote { handle, direct, env } = remote;
+    let env = Arc::new(env);
     let shell = Shell::read(&handle).await;
     events.state(State::Connected, "");
 
@@ -73,9 +93,9 @@ async fn drive(config: Config, context: Context) -> Result<(), String> {
     loop {
         match commands.recv().await {
             Some(Command::Run(id, command)) => {
-                let (handle, events, command) = (handle.clone(), events.clone(), shell.wrap(&command));
+                let (handle, events, command, env) = (handle.clone(), events.clone(), shell.wrap(&command), env.clone());
                 tokio::spawn(async move {
-                    let ran = run(&handle, &command).await.unwrap_or_else(failed);
+                    let ran = run(&handle, &command, &env).await.unwrap_or_else(failed);
                     events.ran(id, &ran);
                 });
             }
@@ -83,9 +103,9 @@ async fn drive(config: Config, context: Context) -> Result<(), String> {
                 let (cancel, cancelled) = oneshot::channel();
                 streams.retain(|_, stream| !stream.is_closed());
                 streams.insert(id, cancel);
-                let (handle, events, command) = (handle.clone(), events.clone(), shell.wrap(&command));
+                let (handle, events, command, env) = (handle.clone(), events.clone(), shell.wrap(&command), env.clone());
                 tokio::spawn(async move {
-                    let ran = exec(&handle, &command, |bytes| events.chunk(id, bytes), cancelled)
+                    let ran = exec(&handle, &command, &env, |bytes| events.chunk(id, bytes), cancelled)
                         .await
                         .unwrap_or_else(failed);
                     events.ran(id, &ran);
@@ -111,8 +131,9 @@ async fn drive(config: Config, context: Context) -> Result<(), String> {
                     events.ran(id, &Ran { status, stdout: String::new(), stderr });
                 });
             }
-            Some(Command::Pipe(start)) => {
-                tokio::spawn(crate::pipe::run(handle.clone(), start));
+            Some(Command::Pipe(mut start)) => {
+                start.command = shell.command(&start.command);
+                tokio::spawn(crate::pipe::run(handle.clone(), start, direct));
             }
             Some(Command::Close) | None => break,
             Some(_) => {}
@@ -134,7 +155,7 @@ const OWN: &[&str] = &["_", "PWD", "OLDPWD", "SHLVL", "SHELLOPTS", "BASHOPTS", "
 
 impl Shell {
     async fn read<H: client::Handler>(handle: &client::Handle<H>) -> Self {
-        let read = run(handle, &in_login_shell(&format!("echo {MARK}; env -0"))).await;
+        let read = run(handle, &in_login_shell(&format!("echo {MARK}; env -0")), &[]).await;
         match read {
             Ok(Ran { status: 0, stdout, .. }) => Self::from_env(&stdout),
             _ => Self::Login,
@@ -153,9 +174,13 @@ impl Shell {
     }
 
     fn wrap(&self, command: &str) -> String {
-        let command = format!("echo {MARK}; {command}");
+        self.command(&format!("echo {MARK}; {command}"))
+    }
+
+    /// `command` with the login shell's environment, with no mark before its output.
+    fn command(&self, command: &str) -> String {
         match self {
-            Self::Login => in_login_shell(&command),
+            Self::Login => in_login_shell(command),
             Self::Plain(exports) => format!("exec \"$SHELL\" -c {}", mosh::opts::shell_quote(&format!("{exports}{command}"))),
         }
     }
@@ -169,9 +194,9 @@ fn failed(error: String) -> Ran {
     }
 }
 
-pub async fn run<H: client::Handler>(handle: &client::Handle<H>, command: &str) -> Result<Ran, String> {
+pub async fn run<H: client::Handler>(handle: &client::Handle<H>, command: &str, env: &[(String, String)]) -> Result<Ran, String> {
     let mut stdout = Vec::new();
-    let ran = exec(handle, command, |bytes| stdout.extend_from_slice(bytes), std::future::pending::<()>()).await?;
+    let ran = exec(handle, command, env, |bytes| stdout.extend_from_slice(bytes), std::future::pending::<()>()).await?;
     Ok(Ran {
         stdout: String::from_utf8_lossy(&stdout).into_owned(),
         ..ran
@@ -183,6 +208,7 @@ pub async fn run<H: client::Handler>(handle: &client::Handle<H>, command: &str) 
 async fn exec<H: client::Handler, C: Future>(
     handle: &client::Handle<H>,
     command: &str,
+    env: &[(String, String)],
     mut out: impl FnMut(&[u8]),
     cancel: C,
 ) -> Result<Ran, String> {
@@ -190,6 +216,9 @@ async fn exec<H: client::Handler, C: Future>(
         .channel_open_session()
         .await
         .map_err(|e| format!("the connection to the Host is gone: {e}"))?;
+    for (name, value) in env {
+        let _ = channel.set_env(false, name.as_str(), value.as_str()).await;
+    }
     channel
         .exec(true, command)
         .await
@@ -360,7 +389,7 @@ mod tests {
         let (chunks, mut arrived) = mpsc::unbounded_channel();
         let (cancel, cancelled) = oneshot::channel();
         let stream = tokio::spawn(async move {
-            super::exec(&handle, "herdr agent follow 1", |bytes| drop(chunks.send(bytes.to_vec())), cancelled).await
+            super::exec(&handle, "herdr agent follow 1", &[], |bytes| drop(chunks.send(bytes.to_vec())), cancelled).await
         });
         let mut seen = Vec::new();
         while !seen.ends_with(b"{\"t\":\"state\"}\n") {

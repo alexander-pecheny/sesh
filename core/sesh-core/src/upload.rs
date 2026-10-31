@@ -513,10 +513,10 @@ mod tests {
             crate::ssh::Handler {
                 events: events.clone(),
                 answers: answers.clone(),
-                known_hosts: known_hosts.path().to_path_buf(),
+                known_hosts: crate::known_hosts::KnownHosts::app(known_hosts.path().to_path_buf()),
                 host: "127.0.0.1".into(),
                 port: address.port(),
-                agent: None,
+                forward: None,
             },
         )
         .await

@@ -315,7 +315,7 @@ fn list_matches(list: &str, value: &str) -> bool {
 }
 
 /// `*` and `?` globbing, case-insensitive, as OpenSSH matches host patterns.
-fn wildcard(pattern: &str, text: &str) -> bool {
+pub(crate) fn wildcard(pattern: &str, text: &str) -> bool {
     globs(&pattern.to_lowercase(), &text.to_lowercase())
 }
 

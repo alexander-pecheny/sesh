@@ -411,6 +411,21 @@ pub unsafe extern "C" fn sesh_link_connect(
     Box::into_raw(Box::new(sesh_session_t { session }))
 }
 
+/// Opens a Link to a Host named by its alias in the user's ssh config, reached as ssh(1)
+/// would reach it. Returns NULL only when `alias` is NULL.
+#[no_mangle]
+pub unsafe extern "C" fn sesh_link_connect_alias(
+    alias: *const c_char,
+    callbacks: sesh_callbacks_t,
+    userdata: *mut c_void,
+) -> *mut sesh_session_t {
+    let Some(alias) = text(alias) else {
+        return std::ptr::null_mut();
+    };
+    let session = link::connect_alias(alias, Arc::new(Sink { callbacks, userdata }));
+    Box::into_raw(Box::new(sesh_session_t { session }))
+}
+
 /// Runs `command` in the login shell of a Link's Host and returns its id; the result
 /// arrives on `on_ran`. Returns 0 when there is no session or no command.
 #[no_mangle]

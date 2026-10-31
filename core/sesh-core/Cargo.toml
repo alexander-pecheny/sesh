@@ -15,9 +15,12 @@ mosh-pipe = { path = "../../vendor/rmosh/crates/mosh-pipe" }
 mosh-sys = { path = "../../vendor/rmosh/crates/mosh-sys" }
 russh-sftp = "3"
 russh = { version = "0.54", default-features = false, features = ["flate2", "ring", "rsa"] }
-tokio = { version = "1", features = ["rt-multi-thread", "macros", "net", "io-util", "sync", "time", "fs"] }
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "net", "io-util", "sync", "time", "fs", "process"] }
 futures = "0.3"
 sha1 = "0.10"
+hmac = "0.12"
+base64ct = { version = "1", features = ["alloc"] }
+libc = "0.2"
 
 [dev-dependencies]
 tempfile = "3"

@@ -1,4 +1,5 @@
 pub mod agent;
+pub mod dial;
 pub mod ffi;
 pub mod flags;
 pub mod known_hosts;

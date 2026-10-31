@@ -12,7 +12,8 @@ use tokio::sync::oneshot;
 
 use crate::agent::{self, Agent};
 use crate::flags::{self, SshFlags};
-use crate::known_hosts::{self, Verdict};
+use crate::known_hosts::{self, KnownHosts, Verdict};
+use crate::ssh_config::Strict;
 use crate::session::{ask, Answers, Command, Context, Events, Prompt, Session, State};
 use crate::upload::{self, Pending};
 
@@ -34,13 +35,22 @@ pub struct Config {
     pub agent_keys: Vec<(String, Option<String>)>,
 }
 
+#[derive(Clone)]
 pub struct Handler {
     pub events: Arc<dyn Events>,
     pub answers: Arc<Answers>,
-    pub known_hosts: PathBuf,
+    pub known_hosts: KnownHosts,
+    /// The name and port the host's keys are recorded under.
     pub host: String,
     pub port: u16,
-    pub agent: Option<Agent>,
+    pub forward: Option<Forward>,
+}
+
+/// The agent a Host may ask to use: the phone's own Keys, or the agent on this machine.
+#[derive(Clone)]
+pub enum Forward {
+    App(Agent),
+    Socket(PathBuf),
 }
 
 impl client::Handler for Handler {
@@ -51,18 +61,37 @@ impl client::Handler for Handler {
         channel: Channel<client::Msg>,
         _session: &mut client::Session,
     ) -> Result<(), Self::Error> {
-        if let Some(agent) = &self.agent {
-            agent.attach(channel.into_stream());
+        match &self.forward {
+            Some(Forward::App(agent)) => agent.attach(channel.into_stream()),
+            Some(Forward::Socket(path)) => {
+                let path = path.clone();
+                tokio::spawn(async move {
+                    if let Ok(mut socket) = tokio::net::UnixStream::connect(path).await {
+                        let _ = tokio::io::copy_bidirectional(&mut channel.into_stream(), &mut socket).await;
+                    }
+                });
+            }
+            None => {}
         }
         Ok(())
     }
 
     async fn check_server_key(&mut self, key: &PublicKey) -> Result<bool, Self::Error> {
-        let previous = match known_hosts::check(&self.known_hosts, &self.host, self.port, key) {
-            Verdict::Known => return Ok(true),
-            Verdict::Unknown => None,
-            Verdict::Mismatch(old) => Some(old),
+        let hosts = &self.known_hosts;
+        let previous = match (hosts.check(&self.host, self.port, key), hosts.strict) {
+            (Verdict::Known, _) | (_, Strict::No) => return Ok(true),
+            (Verdict::Revoked, _) => return Ok(false),
+            (Verdict::Unknown, Strict::AcceptNew) => {
+                hosts.accept(&self.host, self.port, key, None).map_err(|_| russh::Error::IO(std::io::ErrorKind::Other.into()))?;
+                return Ok(true);
+            }
+            (Verdict::Unknown, Strict::Yes) | (Verdict::Mismatch(_), Strict::Yes | Strict::AcceptNew) => return Ok(false),
+            (Verdict::Unknown, _) => None,
+            (Verdict::Mismatch(old), _) => Some(old),
         };
+        if hosts.batch {
+            return Ok(false);
+        }
         let (tx, rx) = oneshot::channel();
         *self.answers.host_key.lock().unwrap() = Some(tx);
         self.events.host_key(
@@ -72,7 +101,7 @@ impl client::Handler for Handler {
         if !rx.await.unwrap_or(false) {
             return Ok(false);
         }
-        known_hosts::accept(&self.known_hosts, &self.host, self.port, key, previous.as_ref())
+        hosts.accept(&self.host, self.port, key, previous.as_ref())
             .map_err(|_| russh::Error::IO(std::io::ErrorKind::Other.into()))?;
         Ok(true)
     }
@@ -103,10 +132,10 @@ async fn drive(config: Config, context: Context) -> Result<(), String> {
     let handler = |host: &str, port| Handler {
         events: events.clone(),
         answers: answers.clone(),
-        known_hosts: config.known_hosts.clone(),
+        known_hosts: KnownHosts::app(config.known_hosts.clone()),
         host: host.to_string(),
         port,
-        agent: agent.clone(),
+        forward: agent.clone().map(Forward::App),
     };
 
     let mut _jump = None;
@@ -272,10 +301,10 @@ impl Dialer {
             connect_any(&config, &self.host, self.port, &self.flags, || Handler {
                 events: events.clone(),
                 answers: answers.clone(),
-                known_hosts: self.known_hosts.clone(),
+                known_hosts: KnownHosts::app(self.known_hosts.clone()),
                 host: self.host.clone(),
                 port: self.port,
-                agent: None,
+                forward: None,
             })
             .await?;
         let credentials = Credentials {
@@ -343,7 +372,7 @@ pub async fn authenticate(
         .ok_or_else(|| format!("{user}@{}: authentication failed", config.host))
 }
 
-async fn keyboard_interactive(
+pub async fn keyboard_interactive(
     handle: &mut client::Handle<Handler>,
     user: &str,
     events: &Arc<dyn Events>,
@@ -395,7 +424,7 @@ pub fn prompt(text: &str, echo: bool) -> Prompt {
     Prompt { prompt: text.to_string(), echo }
 }
 
-fn offers(result: &client::AuthResult, method: MethodKind) -> bool {
+pub fn offers(result: &client::AuthResult, method: MethodKind) -> bool {
     match result {
         client::AuthResult::Success => false,
         client::AuthResult::Failure { remaining_methods, .. } => {
@@ -506,10 +535,10 @@ mod tests {
             Handler {
                 events: events.clone(),
                 answers: answers.clone(),
-                known_hosts: known_hosts.path().to_path_buf(),
+                known_hosts: KnownHosts::app(known_hosts.path().to_path_buf()),
                 host: "127.0.0.1".into(),
                 port: address.port(),
-                agent: None,
+                forward: None,
             },
         )
         .await
