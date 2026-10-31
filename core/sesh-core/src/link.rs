@@ -49,6 +49,15 @@ pub fn connect_alias(alias: String, events: Arc<dyn Events>) -> Session {
     })
 }
 
+/// A Link's connection, lent to a terminal.
+pub struct Lent {
+    pub handle: Arc<client::Handle<Handler>>,
+    pub direct: bool,
+    /// The terminal's command, as the Host's shell runs it.
+    pub command: String,
+    pub env: Vec<(String, String)>,
+}
+
 /// The connection a Link runs everything on.
 struct Remote {
     handle: Arc<client::Handle<Handler>>,
@@ -130,6 +139,9 @@ async fn serve(remote: Remote, context: Context, _carriers: crate::dial::Carrier
                     };
                     events.ran(id, &Ran { status, stdout: String::new(), stderr });
                 });
+            }
+            Some(Command::Lend(command, reply)) => {
+                let _ = reply.send(Lent { handle: handle.clone(), direct, command: shell.command(&command), env: (*env).clone() });
             }
             Some(Command::Pipe(mut start)) => {
                 start.command = shell.command(&start.command);

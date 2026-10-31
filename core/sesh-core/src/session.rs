@@ -75,6 +75,8 @@ pub enum Command {
     Cancel(u32),
     Put(u32, PathBuf, String),
     Pipe(crate::pipe::Start),
+    /// Asks a Link for its connection, with `command` as its shell would run it.
+    Lend(String, oneshot::Sender<crate::link::Lent>),
 }
 
 #[derive(Default)]
@@ -175,6 +177,13 @@ impl Session {
 
     pub fn pipe(&self, start: crate::pipe::Start) {
         let _ = self.commands.send(Command::Pipe(start));
+    }
+
+    /// A Link's connection, for a terminal to run `command` on.
+    pub fn lend(&self, command: String) -> oneshot::Receiver<crate::link::Lent> {
+        let (reply, lent) = oneshot::channel();
+        let _ = self.commands.send(Command::Lend(command, reply));
+        lent
     }
 
     pub fn cancel(&self, id: u32) {

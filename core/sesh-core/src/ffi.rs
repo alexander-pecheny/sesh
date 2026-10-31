@@ -17,6 +17,7 @@ use crate::mosh;
 use crate::pipe;
 use crate::session::{self, Prompt, Session, State, Upload};
 use crate::ssh;
+use crate::terminal;
 
 #[repr(C)]
 #[derive(Clone, Copy)]
@@ -472,6 +473,27 @@ pub unsafe extern "C" fn sesh_session_pipe(
             std::ptr::null_mut()
         }
     }
+}
+
+/// Starts `command` in a terminal on a Link's connection, over mosh when `server` names a
+/// mosh-server and the Host is reached directly, else on a pty. Its output and state arrive
+/// on `callbacks`; drive it with `sesh_session_write`, `_resize` and `_close`, and free it
+/// with `sesh_session_free`. Returns NULL only when `link` or `command` is NULL.
+#[no_mangle]
+pub unsafe extern "C" fn sesh_session_terminal(
+    link: *mut sesh_session_t,
+    server: *const c_char,
+    command: *const c_char,
+    cols: u16,
+    rows: u16,
+    callbacks: sesh_callbacks_t,
+    userdata: *mut c_void,
+) -> *mut sesh_session_t {
+    let (Some(link), Some(command)) = (link.as_ref(), text(command)) else {
+        return std::ptr::null_mut();
+    };
+    let session = terminal::open(&link.session, text(server), command, cols, rows, Arc::new(Sink { callbacks, userdata }));
+    Box::into_raw(Box::new(sesh_session_t { session }))
 }
 
 /// Passes `bytes` to the command's stdin.

@@ -11,7 +11,7 @@ use mosh_client::session::{Event, Options};
 use russh::ChannelMsg;
 use tokio::sync::oneshot;
 
-use crate::flags::{self, MoshFlags, Predict, RemoteIp};
+use crate::flags::{self, Predict, RemoteIp};
 use crate::session::{Command, Context, Events, Session, State};
 use crate::ssh::{self, Credentials};
 use crate::upload::{self, Pending};
@@ -93,9 +93,34 @@ async fn drive(config: Config, context: Context) -> Result<(), String> {
     if flags.remote_ip == RemoteIp::Local {
         found.ip = Some(address.ip().to_string());
     }
-    bootstrap(&handle, &config, &flags, &events, &mut found).await?;
+    let command = config.remote_command.as_deref().map(str::trim).filter(|c| !c.is_empty()).map(crate::session::in_login_shell);
+    let line = server_line(&flags.server, flags.ports, flags.remote_ip, &config.host, command);
+    bootstrap(&handle, &line, config.cols, config.rows, &events, &mut found).await?;
     drop(handle);
+    let mut uploads = Pending::default();
+    run_client(&found, config.cols, config.rows, flags.predict, &events, &mut commands, |command| match command {
+        Command::Upload(id, files) => {
+            let task = upload::over_mosh(dialer.clone(), id, files, uploads.begin(id), events.clone(), answers.clone());
+            tokio::spawn(task);
+        }
+        Command::CancelUpload(id) => uploads.cancel(id),
+        _ => {}
+    })
+    .await
+}
 
+/// rmosh's client, run until it ends or the app closes it; commands other than keys, sizes
+/// and closing go to `other`.
+pub(crate) async fn run_client(
+    found: &Handshake,
+    cols: u16,
+    rows: u16,
+    predict: Predict,
+    events: &Arc<dyn Events>,
+    commands: &mut tokio::sync::mpsc::UnboundedReceiver<Command>,
+    mut other: impl FnMut(Command),
+) -> Result<(), String> {
+    settle_environment();
     let (udp_port, key) = found
         .connect
         .clone()
@@ -107,9 +132,9 @@ async fn drive(config: Config, context: Context) -> Result<(), String> {
 
     let sink = events.clone();
     let options = Options {
-        cols: config.cols.max(1) as i32,
-        rows: config.rows.max(1) as i32,
-        predict: match flags.predict {
+        cols: cols.max(1) as i32,
+        rows: rows.max(1) as i32,
+        predict: match predict {
             Predict::Adaptive => DisplayPreference::Adaptive,
             Predict::Always => DisplayPreference::Always,
             Predict::Never => DisplayPreference::Never,
@@ -144,7 +169,6 @@ async fn drive(config: Config, context: Context) -> Result<(), String> {
         .await
         .map_err(|_| "the mosh client did not start".to_string())??;
     events.state(State::Connected, "");
-    let mut uploads = Pending::default();
 
     loop {
         tokio::select! {
@@ -156,18 +180,11 @@ async fn drive(config: Config, context: Context) -> Result<(), String> {
                 Some(Command::Resize(cols, rows)) => {
                     client.send(Event::Resize(cols.max(1) as i32, rows.max(1) as i32))
                 }
-                Some(Command::Upload(id, files)) => {
-                    let task = upload::over_mosh(
-                        dialer.clone(), id, files, uploads.begin(id),
-                        events.clone(), answers.clone());
-                    tokio::spawn(task);
-                }
-                Some(Command::CancelUpload(id)) => uploads.cancel(id),
-                Some(Command::Run(..) | Command::Stream(..) | Command::Cancel(_) | Command::Put(..) | Command::Pipe(_)) => {}
                 Some(Command::Close) | None => {
                     client.send(Event::Quit);
                     return worker.await.map_err(|e| format!("the mosh client stopped: {e}"))?;
                 }
+                Some(command) => other(command),
             },
         }
     }
@@ -175,14 +192,14 @@ async fn drive(config: Config, context: Context) -> Result<(), String> {
 
 /// Run `mosh-server` on the far end and read its announcement, showing the user whatever
 /// the remote login says on the way.
-async fn bootstrap(
-    handle: &russh::client::Handle<ssh::Handler>,
-    config: &Config,
-    flags: &MoshFlags,
+pub(crate) async fn bootstrap<H: russh::client::Handler>(
+    handle: &russh::client::Handle<H>,
+    command: &str,
+    cols: u16,
+    rows: u16,
     events: &Arc<dyn Events>,
     found: &mut Handshake,
 ) -> Result<(), String> {
-    let command = command_line(config, flags)?;
     let mut channel = handle
         .channel_open_session()
         .await
@@ -191,8 +208,8 @@ async fn bootstrap(
         .request_pty(
             true,
             "xterm-256color",
-            config.cols.max(1) as u32,
-            config.rows.max(1) as u32,
+            cols.max(1) as u32,
+            rows.max(1) as u32,
             0,
             0,
             &[],
@@ -225,33 +242,22 @@ async fn bootstrap(
     Ok(())
 }
 
-/// What the far end is asked to run: the server, and under `remote` the announce that
-/// tells us the address ssh reached it on.
-fn command_line(config: &Config, flags: &MoshFlags) -> Result<String, String> {
+/// What the far end is asked to run: the server and its command, a line for `sh -c`, and
+/// under `remote` the announce that tells us the address ssh reached it on.
+pub(crate) fn server_line(server: &str, ports: Option<(u16, u16)>, remote_ip: RemoteIp, host: &str, command: Option<String>) -> String {
     let opts = Opts {
-        server: flags.server.clone(),
-        userhost: Some(config.host.clone()),
-        port_request: flags.ports.map(|(low, high)| {
-            if low == high {
-                low.to_string()
-            } else {
-                format!("{low}:{high}")
-            }
-        }),
-        command: match config.remote_command.as_deref().map(str::trim) {
-            Some(command) if !command.is_empty() => {
-                vec!["sh".into(), "-c".into(), crate::session::in_login_shell(command)]
-            }
-            _ => Vec::new(),
-        },
+        server: server.to_string(),
+        userhost: Some(host.to_string()),
+        port_request: ports.map(|(low, high)| if low == high { low.to_string() } else { format!("{low}:{high}") }),
+        command: command.map(|line| vec!["sh".into(), "-c".into(), line]).unwrap_or_default(),
         ..Default::default()
     };
-    let announce = match flags.remote_ip {
+    let announce = match remote_ip {
         RemoteIp::Remote => announce_prefix(),
         RemoteIp::Local => String::new(),
     };
     let locale = [("LANG".to_string(), LOCALE.to_string())];
-    Ok(format!("{announce}{}", server_command(&opts, &locale)))
+    format!("{announce}{}", server_command(&opts, &locale))
 }
 
 /// mosh's own code reads the terminal type and the locale from the environment, which an
@@ -273,12 +279,9 @@ mod tests {
     use super::*;
 
     fn line(extra: &str, remote_command: &str) -> String {
-        let config = Config {
-            host: "example.com".into(),
-            remote_command: Some(remote_command.into()),
-            ..Default::default()
-        };
-        command_line(&config, &flags::parse_mosh(extra).unwrap()).unwrap()
+        let flags = flags::parse_mosh(extra).unwrap();
+        let command = Some(remote_command).filter(|c| !c.is_empty()).map(crate::session::in_login_shell);
+        server_line(&flags.server, flags.ports, flags.remote_ip, "example.com", command)
     }
 
     #[test]
