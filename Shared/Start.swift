@@ -52,6 +52,34 @@ enum Start {
         return repos.map { abbreviate($0, home: home) }.filter { seen.insert($0).inserted }.prefix(8).map { $0 }
     }
 
+    /// The folder a git link clones into by default: the repository's own name.
+    static func cloneName(of link: String) -> String? {
+        let link = link.trimmingCharacters(in: .whitespacesAndNewlines)
+        let remote = ["https://", "http://", "ssh://", "git://"].contains { link.hasPrefix($0) }
+            || link.range(of: #"^[\w.-]+@[\w.-]+:"#, options: .regularExpression) != nil
+        guard remote, !link.contains(" ") else { return nil }
+        var name = link.split(whereSeparator: { $0 == "/" || $0 == ":" }).last.map(String.init) ?? ""
+        if name.hasSuffix(".git") { name.removeLast(4) }
+        return name.isEmpty || link.hasSuffix(":") ? nil : name
+    }
+
+    /// Where new folders go by default: the folder most of the recent repositories sit in.
+    static func parent(of recents: [String]) -> String {
+        let parents = recents.map { ($0 as NSString).deletingLastPathComponent }.filter { !$0.isEmpty }
+        let counts = Dictionary(parents.map { ($0, 1) }, uniquingKeysWith: +)
+        return parents.first { counts[$0] == counts.values.max() } ?? "~"
+    }
+
+    /// What one line of `git clone --progress` says: its phase and how far along it is.
+    static func cloning(_ line: String) -> (phase: String, done: Double?)? {
+        let line = line.replacingOccurrences(of: "remote: ", with: "").trimmingCharacters(in: .whitespaces)
+        guard let colon = line.firstIndex(of: ":"), !line.hasPrefix("fatal"), !line.hasPrefix("error") else { return nil }
+        let phase = String(line[..<colon])
+        let rest = line[line.index(after: colon)...]
+        let percent = rest.split(separator: "%").first.flatMap { Double($0.trimmingCharacters(in: .whitespaces)) }
+        return (phase, percent.map { $0 / 100 })
+    }
+
     /// The branch a new Worktree beside the Task's is offered: the Task's with the first free
     /// number after it.
     static func nextBranch(after branch: String, taken: Set<String>) -> String {

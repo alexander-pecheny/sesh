@@ -56,6 +56,10 @@ struct SeshMacApp: App {
             StreamDemo(file: file).frame(width: 800, height: 600)
         } else if let file = UserDefaults.standard.string(forKey: "document") {
             DocumentWindow(file: file).environmentObject(library)
+        } else if let folder = UserDefaults.standard.string(forKey: "picker") {
+            FolderPicker(machine: .mac, start: folder, home: NSHomeDirectory()) { _ in }
+        } else if let typed = UserDefaults.standard.string(forKey: "startsheet") {
+            StartSheetWindow(typed: typed).environmentObject(library)
         } else {
             RootView().environmentObject(library)
         }
@@ -120,6 +124,19 @@ private struct DocumentWindow: View {
             }
         }
         .frame(width: 900, height: 700)
+    }
+}
+
+/// `-picker FOLDER` shows the folder picker on the Mac, and `-startsheet TEXT` the New session
+/// sheet with TEXT typed as its repository, in a Vault kept apart, to check them with `-snapshot`.
+private struct StartSheetWindow: View {
+    let typed: String
+    @StateObject private var vault = Vault(.init(name: "sheet-check", alias: nil))
+
+    var body: some View {
+        let task = vault.all(.task).first ?? vault.create(.task, .init(title: "Check the sheet"))
+        let draft = StartSessionSheet.Draft(alias: nil, choice: "\u{0}other", typed: typed, config: "", remote: true, parallel: false, newBranch: "")
+        StartSessionSheet(vault: vault, task: task, shown: .init(agent: .claude, draft: draft)) { _ in }
     }
 }
 
