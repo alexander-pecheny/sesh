@@ -256,8 +256,9 @@ pub(crate) fn server_line(server: &str, ports: Option<(u16, u16)>, remote_ip: Re
         RemoteIp::Remote => announce_prefix(),
         RemoteIp::Local => String::new(),
     };
-    let locale = [("LANG".to_string(), LOCALE.to_string())];
-    format!("{announce}{}", server_command(&opts, &locale))
+    let mut vars = vec![("LANG".to_string(), LOCALE.to_string())];
+    vars.extend(crate::servers::terminal_vars());
+    format!("{announce}{}", server_command(&opts, &vars))
 }
 
 /// mosh's own code reads the terminal type and the locale from the environment, which an

@@ -134,7 +134,7 @@ async fn bootstrap<H: client::Handler>(
         .await
         .map_err(|e| format!("the connection to the Host is gone: {e}"))?;
     channel
-        .exec(true, format!("{}{}", announce_prefix(), server_command(&opts, &[])))
+        .exec(true, format!("{}{}", announce_prefix(), server_command(&opts, &crate::servers::pipe_vars())))
         .await
         .map_err(|e| format!("starting mosh-server: {e}"))?;
 

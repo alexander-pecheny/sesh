@@ -96,6 +96,10 @@ async fn serve(remote: Remote, context: Context, _carriers: crate::dial::Carrier
     let env = Arc::new(env);
     let shell = Shell::read(&handle).await;
     events.state(State::Connected, "");
+    if let (true, Some(reap)) = (direct, crate::servers::reap()) {
+        let (handle, command, env) = (handle.clone(), shell.wrap(&reap), env.clone());
+        tokio::spawn(async move { run(&handle, &command, &env).await });
+    }
 
     let mut uploads = Pending::default();
     let mut streams: HashMap<u32, oneshot::Sender<()>> = HashMap::new();

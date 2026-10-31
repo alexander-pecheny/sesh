@@ -6,6 +6,7 @@ pub mod known_hosts;
 pub mod link;
 pub mod mosh;
 pub mod pipe;
+pub mod servers;
 pub mod session;
 pub mod terminal;
 pub mod ssh;

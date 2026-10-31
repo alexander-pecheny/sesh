@@ -321,6 +321,15 @@ fn raw(text: String) -> *mut c_char {
     CString::new(text).unwrap_or_default().into_raw()
 }
 
+/// Names this device in the tag every mosh-server Sesh starts carries, so a later run of the
+/// app stops the servers an earlier one left behind. Call it once, before any connection.
+#[no_mangle]
+pub unsafe extern "C" fn sesh_set_device(id: *const c_char) {
+    if let Some(id) = text(id) {
+        crate::servers::set_device(&id);
+    }
+}
+
 /// Starts a Session and returns immediately; progress arrives through the callbacks.
 /// Returns NULL only when `config` is NULL.
 #[no_mangle]
