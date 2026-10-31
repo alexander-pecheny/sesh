@@ -25,6 +25,9 @@ struct Record: Codable, Identifiable, Equatable {
         var branch: String?
         var repo: String?
         var pane: String?
+        /// herdr's name for a session's Agent, which tells it apart from a later Agent that
+        /// herdr puts in the same pane.
+        var name: String?
         /// The herdr Workspace a Task's Worktree opened as.
         var workspace: String?
         var agent: String?

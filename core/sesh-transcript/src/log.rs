@@ -112,6 +112,13 @@ impl Log {
         Ok(())
     }
 
+    /// Drops a session's summary and items, for a pane that now runs another Agent.
+    pub fn forget(&self, key: &str) -> Result<()> {
+        self.db.execute("DELETE FROM items WHERE session = ?1", [key]).map_err(sql)?;
+        self.db.execute("DELETE FROM sessions WHERE key = ?1", [key]).map_err(sql)?;
+        Ok(())
+    }
+
     /// Every session whose summary changed after `seq`, as `session` lines.
     pub fn sessions_since(&self, seq: i64) -> Result<Vec<Value>> {
         let mut query = self
@@ -372,6 +379,11 @@ impl Writer {
     /// The provisional items a follower before this one left, for this one to carry on.
     pub fn adopted(&self) -> Vec<crate::Entry> {
         self.rows.adopted()
+    }
+
+    /// The name herdr gave the session's Agent.
+    pub fn name(&self) -> Option<&str> {
+        self.summary["name"].as_str()
     }
 
     /// The Transcript cursor the session was last read to, so a restart picks up there.

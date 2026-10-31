@@ -45,6 +45,8 @@ struct Close {
     let sessions: [Record]
     let runner: (String?) -> Runner
     let copy: ([Record]) async -> Void
+    /// Whether a session's pane may still hold its own Agent, not another herdr put there since.
+    var holdsPane: (Record) -> Bool = { $0.body.pane != nil }
 
     func plan() async -> Plan {
         let own = task.body.path.map { [(task.body.machine, task.body.repo ?? $0, $0, task.body.branch)] } ?? []
@@ -68,7 +70,7 @@ struct Close {
                             linked: uncommitted != nil, uncommitted: uncommitted ?? "")
         }
         let workspaces = await open
-        let workspace = task.body.workspace.flatMap { workspaces[$0] != nil ? $0 : nil }
+        let workspace = task.body.workspace.flatMap { workspaces[$0] == task.body.title ? $0 : nil }
             ?? workspaces.first { $0.value == task.body.title }?.key
         return Plan(worktrees: worktrees, workspace: workspace, sessions: sessions)
     }
@@ -79,7 +81,7 @@ struct Close {
     /// a run again after a failure only retries what is left.
     func perform(_ plan: Plan, discard: Bool) async -> [Failure] {
         await copy(plan.sessions)
-        for session in plan.agents {
+        for session in plan.agents where holdsPane(session) {
             _ = await runner(session.body.machine).follower.stop(session.body.pane ?? "")
         }
         let own = { (worktree: Worktree) in worktree.machine == task.body.machine && worktree.path == task.body.path }

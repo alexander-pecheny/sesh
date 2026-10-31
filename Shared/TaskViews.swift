@@ -13,7 +13,7 @@ struct AddMenu<Label: View>: View {
     var body: some View {
         let machines = TaskActions.machines(for: task, in: vault)
         Menu {
-            let menu = NewTabMenu(task: task.id, machines: machines.map(\.title), in: vault) { library.ended($0) }
+            let menu = NewTabMenu(task: task.id, machines: machines.map(\.title), in: vault, ended: { library.ended($0) }, reachable: { library.reachable($0) })
             ForEach(menu.sections, id: \.self) { section in
                 Section {
                     ForEach(section.items, id: \.self) { item in
@@ -65,7 +65,7 @@ struct TabMenuItems: View {
     let rename: (Record) -> Void
 
     var body: some View {
-        let menu = TabMenu(tab, in: vault, ended: { library.ended($0) }, resuming: library.resuming)
+        let menu = TabMenu(tab, in: vault, ended: { library.ended($0) }, resuming: library.resuming, reachable: { library.reachable($0) })
         if let record = menu.record { Button("Rename…") { rename(record) } }
         if let path = menu.path { Button("Copy Path") { Pasteboard.copy(path) } }
         if menu.closes { Button("Close Tab") { library.close(tab, in: task) } }

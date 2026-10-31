@@ -95,14 +95,14 @@ struct TabMenu {
     /// A running Agent session, to close with its Tab.
     let end: Record?
 
-    init(_ tab: TabItem, in vault: some Records, ended: (Record) -> Bool, resuming: Set<String>) {
+    init(_ tab: TabItem, in vault: some Records, ended: (Record) -> Bool, resuming: Set<String>, reachable: (Record) -> Bool = { _ in true }) {
         record = tab.record.flatMap { vault.records[$0] }
         targets = record.map { Tree.moveTargets(for: $0, in: vault) } ?? []
         path = record?.kind == .document ? record?.body.path : nil
         closes = tab != .journal
         let session = record?.kind == .session ? record : nil
         resume = session.flatMap { ended($0) ? $0 : nil }
-        end = session.flatMap { ended($0) || resuming.contains($0.id) ? nil : $0 }
+        end = session.flatMap { ended($0) || resuming.contains($0.id) || !reachable($0) ? nil : $0 }
     }
 
     var endTitle: String {
@@ -133,7 +133,7 @@ struct NewTabMenu {
 
     let sections: [Section]
 
-    init(task: String, machines: [String], in vault: some Records, ended: (Record) -> Bool) {
+    init(task: String, machines: [String], in vault: some Records, ended: (Record) -> Bool, reachable: (Record) -> Bool = { _ in true }) {
         // A Scratchpad session starts at once, so its item opens no sheet.
         let asks = vault.records[task]?.scratchpad != true
         let new = Agent.allCases.map { Item(title: "New \($0.title) session\(asks ? "…" : "")", action: .agent($0)) }
@@ -147,8 +147,9 @@ struct NewTabMenu {
         }
         let documents = vault.children(.document, task: task).sorted { ($0.body.title ?? "") < ($1.body.title ?? "") }
         sections = [Section(title: nil, items: new), Section(title: nil, items: [Item(title: "New Document", action: .document)]),
-                    reopen("Running Agent sessions", sessions.filter { !ended($0) }),
+                    reopen("Running Agent sessions", sessions.filter { !ended($0) && reachable($0) }),
                     reopen("Ended Agent sessions", sessions.filter(ended)),
+                    reopen("On machines Sesh cannot reach", sessions.filter { !ended($0) && !reachable($0) }),
                     reopen("Documents", documents)]
             .filter { !$0.items.isEmpty }
     }

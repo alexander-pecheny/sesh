@@ -41,7 +41,8 @@ enum TaskActions {
     static func pane(for task: Record, on machine: Machine, label: String, folder wanted: String? = nil) async -> Result<(Herdr.Opened, String), Herdr.Failure> {
         let title = task.body.title ?? "Task"
         let open = await Herdr.workspaces(on: machine)
-        let known = task.body.workspace.flatMap { open[$0] != nil && machine.alias == task.body.machine ? $0 : nil }
+        // herdr gives a closed Workspace's id to the next, so one labelled otherwise is another Task's.
+        let known = task.body.workspace.flatMap { open[$0] == title && machine.alias == task.body.machine ? $0 : nil }
         let workspace = known ?? open.first { $0.value == title }?.key
         let folder: String
         if let wanted {
@@ -89,9 +90,9 @@ enum TaskActions {
             case .success(let value): (place.pane, place.folder) = (value.0.pane, value.1)
             }
         }
-        let session = Start.session(agent, for: task.id, on: machine.alias, at: place, repo: repo, remote: remote, in: vault)
+        let name = Names.free(Names.slug("\(current.body.title ?? "task")-\(agent.rawValue)"), taken: await Herdr.agentNames(on: machine))
+        let session = Start.session(agent, for: task.id, on: machine.alias, at: place, repo: repo, remote: remote, name: name, in: vault)
         made(session)
-        let name = Names.slug("\(current.body.title ?? "task")-\(agent.rawValue)")
         if let problem = await Herdr.launch(agent, name: name, pane: place.pane ?? "", config: claudeConfig(vault, on: machine),
                                                remote: Self.remote(of: session, in: vault), on: machine) {
             vault.delete(vault.records[session.id] ?? session)
@@ -246,12 +247,12 @@ enum TaskActions {
             case .success(let value): pane = value.0.pane
             }
         }
-        let name = Names.slug("\(task.body.title ?? "task")-\(agent.rawValue)")
+        let name = Names.free(Names.slug("\(task.body.title ?? "task")-\(agent.rawValue)"), taken: await Herdr.agentNames(on: machine))
         if let problem = await Herdr.launch(
             agent, name: name, pane: pane, resuming: transcript, config: claudeConfig(vault, on: machine),
             remote: remote(of: session, in: vault), on: machine) { return problem }
         var record = vault.records[session.id] ?? session
-        record.body.pane = pane
+        (record.body.pane, record.body.name) = (pane, name)
         vault.write(record)
         return nil
     }
@@ -289,7 +290,9 @@ enum TaskActions {
     }
 
     private static func finish(_ close: Close, _ plan: Close.Plan, discard: Bool, library: Library) {
-        Task {
+        var close = close
+        close.holdsPane = library.holdsPane
+        Task { [close] in
             let failures = await close.perform(plan, discard: discard)
             guard !failures.isEmpty else { return }
             library.cleanupProblem = Library.CleanupProblem(

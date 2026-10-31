@@ -71,11 +71,10 @@ enum Herdr {
         (prompt: "Continue without trusting", keys: "down down enter"),
     ]
 
-    /// Starts `agent` in a fresh `pane` and waits until it can take a prompt. On failure the
+    /// Starts `agent`, named `name`, in a fresh `pane` and waits until it can take a prompt. On failure the
     /// pane is closed, so no half-started Agent lingers, and the reason comes back.
-    static func launch(_ agent: Agent, name wanted: String, pane: String, resuming transcript: String? = nil,
+    static func launch(_ agent: Agent, name: String, pane: String, resuming transcript: String? = nil,
                        config: String? = nil, remote: Bool = true, on runner: Runner) async -> String? {
-        let name = Names.free(wanted, taken: await agentNames(on: runner))
         if agent == .claude, let config, !config.isEmpty {
             let dir = shellPath(config)
             _ = await runner.run("[ -e \(dir)/hooks/herdr-agent-state.sh ] || CLAUDE_CONFIG_DIR=\(dir) \(command) integration install claude")

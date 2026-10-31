@@ -166,6 +166,14 @@ final class TaskCommandTests: XCTestCase {
         XCTAssertEqual(menu.sections[4].items.map(\.action), [.open(.document(a.id)), .open(.document(b.id))])
     }
 
+    func testASessionOnAMachineSeshCannotReachIsNeitherRunningNorEnded() {
+        let task = make(.task, "Own")
+        let away = make(.session, "Away", task: task.id)
+        let menu = NewTabMenu(task: task.id, machines: ["Mac"], in: vault, ended: { _ in false }, reachable: { $0.id != away.id })
+        XCTAssertEqual(menu.sections.map(\.title), [nil, nil, "On machines Sesh cannot reach"])
+        XCTAssertNil(TabMenu(.session(away.id), in: vault, ended: { _ in false }, resuming: [], reachable: { _ in false }).end)
+    }
+
     func testClaudeStartsWithRemoteControlUnlessTheTaskSaysNo() {
         XCTAssertTrue(Agent.claude.flags("fix").hasPrefix("--remote-control 'fix' "))
         XCTAssertEqual(Agent.claude.flags("fix", remote: false), "--dangerously-skip-permissions")

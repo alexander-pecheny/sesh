@@ -153,6 +153,10 @@ impl Machine {
         self.acts.retain(|key, _| panes.iter().any(|pane| pane["pane_id"] == key.as_str()));
         for pane in panes {
             let (Some(key), Some(agent)) = (pane["pane_id"].as_str(), Agent::of(pane)) else { continue };
+            if self.replaced(key, pane)? {
+                self.sessions.remove(key);
+                self.log.forget(key)?;
+            }
             if let Some(followed) = self.sessions.get_mut(key) {
                 followed.seen = now;
                 followed.follower.tick(pane, now)?;
@@ -194,6 +198,17 @@ impl Machine {
             self.play(&session, request, mpsc::channel().0);
         }
         Ok(())
+    }
+
+    /// Whether `pane` runs another Agent than the one its Session log is of. herdr gives a closed
+    /// pane's id to the next, and Sesh names each Agent it starts apart from the others there.
+    fn replaced(&self, key: &str, pane: &Value) -> Result<bool> {
+        let Some(name) = pane["name"].as_str() else { return Ok(false) };
+        let logged = match self.sessions.get(key) {
+            Some(followed) => followed.writer.name().map(str::to_string),
+            None => self.log.session(key)?.and_then(|summary| summary["name"].as_str().map(str::to_string)),
+        };
+        Ok(logged.is_some_and(|logged| logged != name))
     }
 
     /// Plays what a device asked into the session's pane off the follower's loop, since a stop
@@ -944,6 +959,28 @@ mod tests {
         let items = machine.log.last("w1:p1", 10).unwrap();
         std::fs::remove_dir_all(&dir).unwrap();
         assert_eq!(items, Vec::<Value>::new());
+    }
+
+    #[test]
+    fn a_pane_another_agent_takes_over_starts_a_fresh_log() {
+        let dir = std::env::temp_dir().join(format!("sesh-reused-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let pane = |name: &str, said: &str| {
+            let transcript = dir.join(format!("{name}.jsonl"));
+            let line = json!({"type": "user", "timestamp": "2026-10-09T10:00:00Z", "origin": {"kind": "human"}, "message": {"role": "user", "content": said}});
+            std::fs::write(&transcript, format!("{line}\n")).unwrap();
+            [json!({"pane_id": "w1:p1", "agent": "claude", "agent_status": "idle", "name": name,
+                "agent_session": {"kind": "path", "value": transcript.to_str().unwrap()}})]
+        };
+        let mut machine = Machine::new(Log::open(&dir.join("sessions.db")).unwrap(), Shared(Rc::new(RefCell::new(Quiet))));
+        let start = Instant::now();
+        machine.tick(&pane("old-claude", "old task"), start).unwrap();
+        machine.tick(&pane("new-claude", "new task"), start + TICK).unwrap();
+        let texts: Vec<Value> = machine.log.last("w1:p1", 10).unwrap().iter().map(|item| item["entry"]["text"].clone()).collect();
+        let summary = machine.log.session("w1:p1").unwrap().unwrap();
+        std::fs::remove_dir_all(&dir).unwrap();
+        assert_eq!(texts, ["new task"]);
+        assert_eq!(summary["name"], "new-claude");
     }
 
     #[test]
