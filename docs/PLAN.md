@@ -544,9 +544,9 @@ owner alone for now: unsandboxed, built and installed from Xcode. The phone come
    the database and the Transcript copies; offline, the device searches its copy without
    Conversations and says so. A hit opens its exact place.
 
-**Reaching machines.** The Mac app runs everything through `/usr/bin/ssh` with the owner's
-`~/.ssh/config`, one ControlMaster per Host, so a Host on the Mac is an ssh alias such as
-`vps-he`, and the Mac itself is run through `/bin/zsh -lc`. The iOS app's Hosts and Keys
+**Reaching machines.** The Mac app reaches a Host by its alias in the owner's `~/.ssh/config`,
+such as `vps-he`, through one core Link per Host that reads the config as ssh(1) does (ADR
+0017), and runs the Mac itself through `/bin/zsh`. The iOS app's Hosts and Keys
 stay on the phone for now. Both kinds of machine get the same helper in `~/.sesh/bin`.
 
 **Vault protocol.** The helper serves a Vault from a folder, `~/.sesh/vaults/<name>/`,
@@ -597,7 +597,7 @@ helpers-release` publishes a helper that speaks the Vault protocol, launch the a
 **The phone (7 October 2026).** The iOS app's main screen is now the Tasks, and the
 Terminal and Projects UI modes are gone. The Vault, Library, Task actions, Copier, search
 and Document text live in `Shared/` and run on a `Machine` each platform provides: on the
-Mac an ssh alias over system ssh, on the phone a Host from the app's list reached through
+Mac an ssh alias over a core Link, on the phone a Host from the app's list reached through
 one Link per Host, matched to the Vault's alias. Adding a Vault on the phone takes its
 name, the Host and the alias the Mac uses for that Host, so a Vault made on the Mac opens
 on both. A Task opens its Journal, Agent sessions, Documents, subagents and Terminals in
