@@ -6,19 +6,6 @@ import GhosttyKit
 /// on tokio threads; `Bridge` is the only thing they touch, and it hops to main.
 @MainActor
 final class SeshSession: ObservableObject, Identifiable {
-    struct HostKeyQuestion: Identifiable {
-        let id = UUID()
-        let fingerprint: String
-        let previous: String?
-    }
-
-    struct AuthQuestion: Identifiable {
-        let id: UInt32
-        let title: String
-        let instruction: String
-        let prompts: [(text: String, echo: Bool)]
-    }
-
     enum Stage: Equatable {
         case connecting, authenticating, connected, closed, failed, bootstrapping
     }
@@ -290,18 +277,6 @@ final class SeshSession: ObservableObject, Identifiable {
     }
 }
 
-final class CStrings {
-    private var allocated: [UnsafeMutablePointer<CChar>] = []
-
-    func make(_ value: String?) -> UnsafePointer<CChar>? {
-        guard let value, let copy = strdup(value) else { return nil }
-        allocated.append(copy)
-        return UnsafePointer(copy)
-    }
-
-    deinit { allocated.forEach { free($0) } }
-}
-
 private final class Bridge {
     weak var owner: SeshSession?
     var terminal: Ghostty.TerminalView?
@@ -323,7 +298,7 @@ private final class Bridge {
         },
         on_host_key: { userdata, fingerprint, previous in
             guard let userdata, let fingerprint else { return }
-            let question = SeshSession.HostKeyQuestion(
+            let question = HostKeyQuestion(
                 fingerprint: String(cString: fingerprint),
                 previous: previous.map { String(cString: $0) })
             let bridge = Bridge.of(userdata)
@@ -331,7 +306,7 @@ private final class Bridge {
         },
         on_auth_prompt: { userdata, id, name, instruction, prompts, echoes, count in
             guard let userdata, let prompts, let echoes else { return }
-            let question = SeshSession.AuthQuestion(
+            let question = AuthQuestion(
                 id: id,
                 title: name.map { String(cString: $0) } ?? "Authentication",
                 instruction: instruction.map { String(cString: $0) } ?? "",

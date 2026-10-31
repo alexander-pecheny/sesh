@@ -4,8 +4,8 @@ import GhosttyKit
 import SwiftUI
 
 extension Ghostty {
-    /// libghostty for the Mac. Unlike the phone's, its surfaces run their own process: a
-    /// shell here, or ssh to a Host.
+    /// libghostty for the Mac. A surface runs its own process on the Mac itself, and is fed
+    /// from a Link's terminal for a Host.
     @MainActor
     final class MacApp {
         static let shared = MacApp()
@@ -68,27 +68,66 @@ extension Ghostty {
         }
     }
 
-    /// One terminal running `command` in `folder`, or the login shell when there is none.
+    /// One terminal: a process on the Mac, or a Link's terminal on a Host.
     @MainActor
-    final class TerminalSurface: NSView {
+    final class TerminalSurface: NSView, TerminalEvents {
         private var surface: ghostty_surface_t?
         var onClose: (() -> Void)?
+        /// Opens the Link's terminal at the size the surface first takes.
+        private var open: ((UInt16, UInt16, TerminalEvents) async -> CoreTerminal?)?
+        private var remote: CoreTerminal?
+        private var grid: (UInt16, UInt16) = (0, 0)
 
+        /// `command` in `folder` on the Mac, or the login shell when there is none.
         init(command: String?, folder: String?) {
             super.init(frame: NSRect(x: 0, y: 0, width: 800, height: 600))
+            make { config in
+                let command = command.flatMap { strdup($0) }, folder = folder.flatMap { strdup($0) }
+                defer { free(command); free(folder) }
+                config.command = UnsafePointer(command)
+                config.working_directory = UnsafePointer(folder)
+                return ghostty_surface_new(MacApp.shared.app, &config)
+            }
+        }
+
+        /// Fed from the terminal `open` starts on a Link once the surface knows its size.
+        init(open: @escaping (UInt16, UInt16, TerminalEvents) async -> CoreTerminal?) {
+            self.open = open
+            super.init(frame: NSRect(x: 0, y: 0, width: 800, height: 600))
+            make { config in
+                config.io_mode = GHOSTTY_SURFACE_IO_MANUAL
+                config.io_write_userdata = Unmanaged.passUnretained(self).toOpaque()
+                config.io_write_cb = { userdata, bytes, len in
+                    guard let userdata, let bytes, len > 0 else { return }
+                    let view = Unmanaged<TerminalSurface>.fromOpaque(userdata).takeUnretainedValue()
+                    let data = Data(bytes: bytes, count: Int(len))
+                    DispatchQueue.main.async { MainActor.assumeIsolated { view.remote?.write(data) } }
+                }
+                return ghostty_surface_new(MacApp.shared.app, &config)
+            }
+        }
+
+        private func make(_ create: (inout ghostty_surface_config_s) -> ghostty_surface_t?) {
             wantsLayer = true
-            guard let app = MacApp.shared.app else { return }
+            guard MacApp.shared.app != nil else { return }
             var config = ghostty_surface_config_new()
             config.platform_tag = GHOSTTY_PLATFORM_MACOS
             config.platform = ghostty_platform_u(macos: ghostty_platform_macos_s(nsview: Unmanaged.passUnretained(self).toOpaque()))
             config.userdata = Unmanaged.passUnretained(self).toOpaque()
             config.scale_factor = Double(NSScreen.main?.backingScaleFactor ?? 2)
             config.font_size = Self.fontSize
-            let command = command.flatMap { strdup($0) }, folder = folder.flatMap { strdup($0) }
-            defer { free(command); free(folder) }
-            config.command = UnsafePointer(command)
-            config.working_directory = UnsafePointer(folder)
-            surface = ghostty_surface_new(app, &config)
+            surface = create(&config)
+        }
+
+        func output(_ data: Data) {
+            guard let surface, !data.isEmpty else { return }
+            data.withUnsafeBytes { ghostty_surface_process_output(surface, $0.baseAddress?.assumingMemoryBound(to: CChar.self), UInt($0.count)) }
+        }
+
+        func ended(_ problem: String?) {
+            if let problem { output(Data("\r\n\(problem)\r\n".utf8)) }
+            remote = nil
+            onClose?()
         }
 
         required init?(coder: NSCoder) { fatalError("unsupported") }
@@ -108,6 +147,7 @@ extension Ghostty {
         }()
 
         deinit {
+            MainActor.assumeIsolated { remote?.close() }
             if let surface { ghostty_surface_free(surface) }
         }
 
@@ -162,6 +202,16 @@ extension Ghostty {
             let scheme = dark ? GHOSTTY_COLOR_SCHEME_DARK : GHOSTTY_COLOR_SCHEME_LIGHT
             ghostty_app_set_color_scheme(ghostty_surface_app(surface), scheme)
             ghostty_surface_set_color_scheme(surface, scheme)
+            let size = ghostty_surface_size(surface)
+            guard size.columns > 0, size.rows > 0, (size.columns, size.rows) != grid else { return }
+            grid = (size.columns, size.rows)
+            if let remote { return remote.resize(cols: size.columns, rows: size.rows) }
+            guard let open else { return }
+            self.open = nil
+            Task { @MainActor in
+                remote = await open(grid.0, grid.1, self)
+                if remote == nil { onClose?() } else { remote?.resize(cols: grid.0, rows: grid.1) }
+            }
         }
 
         // MARK: Keys

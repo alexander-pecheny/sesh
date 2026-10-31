@@ -9,8 +9,8 @@ final class Terminals {
 }
 
 extension Library {
-    /// The live view of a pane: `herdr terminal attach` over mosh, started through the Host's
-    /// shared ssh connection.
+    /// The live view of a pane: `herdr terminal attach`, on the Mac itself or on a Host's Link,
+    /// over mosh where the Host is reached directly.
     func surface(for key: String, pane: String, on machine: Machine, gone: @escaping () -> Void) async -> Ghostty.TerminalSurface? {
         if let known = terminals.surfaces[key] { return known }
         // Only herdr saying the pane is gone closes its Tab; an unreachable machine is asked again.
@@ -26,26 +26,20 @@ extension Library {
         }
         guard let terminal else { return nil }
         let attach = Herdr.attach(terminal)
-        let command: String
-        if let alias = machine.alias {
-            // herdr-sesh lives at a fixed path, so the attach needs no login shell, which on a busy Host costs seconds.
-            let remote = quote(attach)
-            // mosh carries one screen per session, so each Terminal has its own; it starts its
-            // server through the Host's one shared ssh connection, so no new one opens.
-            let ssh = "ssh -o ControlMaster=auto -o ControlPath=\(Machine.controlPath) -o ControlPersist=600"
-            // The app's own mosh, and the mosh-server the helper installer put on the Host.
-            _ = await machine.prepare()
-            let bin = Bundle.main.bundleURL.appending(path: "Contents/MacOS")
-            let server = Helper.moshServer.map { " --server=\($0)" } ?? ""
-            // mosh-client looks the terminal type up locally, and knows no xterm-ghostty.
-            command = "TERM=xterm-256color \(quote(bin.appending(path: "mosh").path)) --client=\(quote(bin.appending(path: "mosh-client").path))"
-                + "\(server) --experimental-remote-ip=remote --ssh=\(quote(ssh)) \(alias) -- sh -c \(remote)"
-        } else {
-            command = attach
-        }
         if let known = terminals.surfaces[key] { return known }
-        // Ghostty starts commands with a bare PATH; the login shell has the user's.
-        let surface = Ghostty.TerminalSurface(command: "/bin/zsh -lic \(quote(command))", folder: nil)
+        let surface: Ghostty.TerminalSurface
+        if let link = machine.link {
+            // The mosh-server the helper installer put on the Host.
+            _ = await machine.prepare()
+            let server = Helper.moshServer
+            surface = Ghostty.TerminalSurface { [weak link] cols, rows, events in
+                guard let link else { return nil }
+                return try? await link.terminal(attach, server: server, cols: cols, rows: rows, events: events).get()
+            }
+        } else {
+            // Ghostty starts commands with a bare PATH; the login shell has the user's.
+            surface = Ghostty.TerminalSurface(command: "/bin/zsh -lic \(quote(attach))", folder: nil)
+        }
         surface.pasteImage = { data, ext in await machine.upload(data, ext: ext) }
         // The attach ended: the pane is gone, or only the connection, and the next look attaches again.
         surface.onClose = { [weak self] in

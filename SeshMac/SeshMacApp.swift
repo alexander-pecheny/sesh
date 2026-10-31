@@ -4,6 +4,8 @@ import SwiftUI
 struct SeshMacApp: App {
     @StateObject private var library = Library()
 
+    init() { Device.name() }
+
     var body: some Scene {
         WindowGroup(id: "main") {
             root

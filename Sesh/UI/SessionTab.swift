@@ -85,7 +85,7 @@ struct SessionTab: View {
 }
 
 struct HostKeySheet: View {
-    let question: SeshSession.HostKeyQuestion
+    let question: HostKeyQuestion
     let host: Host
     let answer: (Bool) -> Void
 
@@ -119,13 +119,13 @@ struct HostKeySheet: View {
 }
 
 struct AuthSheet: View {
-    let question: SeshSession.AuthQuestion
+    let question: AuthQuestion
     @Binding var savePassword: Bool
     let answer: ([String]?) -> Void
     @State private var values: [String]
     @FocusState private var focused: Int?
 
-    init(question: SeshSession.AuthQuestion, savePassword: Binding<Bool>, answer: @escaping ([String]?) -> Void) {
+    init(question: AuthQuestion, savePassword: Binding<Bool>, answer: @escaping ([String]?) -> Void) {
         self.question = question
         _savePassword = savePassword
         self.answer = answer

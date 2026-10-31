@@ -78,17 +78,6 @@ targets:
   SeshMac:
     type: application
     platform: macOS
-    # rmosh's mosh and mosh-client, which the Mac's Terminals run, so no mosh need be installed.
-    postBuildScripts:
-      - name: Bundle mosh
-        basedOnDependencyAnalysis: false
-        showEnvVars: false
-        script: |
-          "$SRCROOT/scripts/build-mosh.sh" client
-          for bin in mosh mosh-client; do
-            cp -f "$SRCROOT/build/mosh/$bin" "$TARGET_BUILD_DIR/$EXECUTABLE_FOLDER_PATH/$bin"
-            codesign --force --sign - --options runtime "$TARGET_BUILD_DIR/$EXECUTABLE_FOLDER_PATH/$bin"
-          done
     sources:
       - path: SeshMac
       - path: Shared
@@ -105,6 +94,10 @@ targets:
     dependencies:
       - framework: Frameworks/GhosttyKit.xcframework
         embed: false
+      - framework: Frameworks/SeshCore.xcframework
+        embed: false
+      # rmosh's client reads terminfo through it on the Mac.
+      - sdk: libncurses.tbd
       - sdk: Carbon.framework
       - sdk: Metal.framework
       - sdk: QuartzCore.framework
@@ -130,6 +123,7 @@ targets:
         SESH_URL_SCHEME: sesh
         ENABLE_HARDENED_RUNTIME: YES
         ENABLE_APP_SANDBOX: NO
+        SWIFT_OBJC_BRIDGING_HEADER: SeshMac/SeshMac-Bridging-Header.h
         CODE_SIGN_IDENTITY: "-"
       configs:
         # A Debug build keeps its own settings and Vault copies, apart from the installed app.

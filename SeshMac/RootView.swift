@@ -5,6 +5,7 @@ struct RootView: View {
     @EnvironmentObject private var library: Library
     @StateObject private var search = Search()
     @FocusState private var searching: Bool
+    @ObservedObject private var asking = Asking.shared
 
     var body: some View {
         NavigationSplitView {
@@ -29,6 +30,9 @@ struct RootView: View {
         .onChange(of: library.selection) { if library.selection != nil { search.query = "" } }
         .onAppear { search.library = library }
         .reportsCleanup(library)
+        .background { if let link = asking.link { Questions(link: link) } }
+        // A socket from before sleep may be dead without TCP knowing yet.
+        .onReceive(NSWorkspace.shared.notificationCenter.publisher(for: NSWorkspace.didWakeNotification)) { _ in Machine.redial() }
         #if DEBUG
         // `-newtask TITLE` makes a Task in the first Vault, as the New Task sheet does.
         .task {

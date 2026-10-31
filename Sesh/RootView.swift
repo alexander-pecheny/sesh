@@ -27,7 +27,7 @@ struct RootView: View {
             content
             #endif
         }
-        .background { if let link = asking.link { Questions(link: link) } }
+        .background { if let link = asking.link as? HostLink { Questions(link: link) } }
         .onChange(of: scenePhase) { _, phase in
             switch phase {
             case .background: Machine.pause()
