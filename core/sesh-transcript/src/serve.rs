@@ -398,7 +398,7 @@ fn run(record: Option<(PathBuf, String)>) -> Result<i32> {
     listener.set_nonblocking(true).map_err(|err| err.to_string())?;
     let source: Rc<RefCell<dyn Source>> = match record {
         Some((dir, pane)) => Rc::new(RefCell::new(Recorder::new(&dir, pane)?)),
-        None => Rc::new(RefCell::new(Herdr)),
+        None => Rc::new(RefCell::new(crate::listen::Listening::new(Herdr, crate::listen::socket()))),
     };
     let mut machine = Machine::new(log, Shared(source.clone()));
     let mut clients: Vec<Client> = Vec::new();

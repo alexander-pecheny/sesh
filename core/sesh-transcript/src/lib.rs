@@ -5,6 +5,7 @@ pub mod agent;
 pub use agent::claude::Background;
 pub use agent::Agent;
 pub mod follower;
+mod listen;
 pub mod log;
 pub mod poll;
 pub mod reconcile;
