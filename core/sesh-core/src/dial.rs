@@ -23,6 +23,8 @@ use crate::ssh_config::{self, wildcard, Host, Method, Proxy};
 
 /// A chain of jumps longer than this is taken for a loop.
 const MAX_HOPS: usize = 8;
+/// How often a quiet connection is checked when the config says nothing.
+const KEEPALIVE: std::time::Duration = std::time::Duration::from_secs(15);
 /// How much of a proxy command's stderr is kept to explain its failure.
 const STDERR_KEPT: usize = 4096;
 
@@ -55,6 +57,8 @@ async fn resolve(alias: &str, user: Option<String>, port: Option<u16>) -> Result
         let mut host = ssh_config::resolve(&alias, &local())?;
         host.user = user.unwrap_or(host.user);
         host.port = port.unwrap_or(host.port);
+        // Unlike an interactive ssh, a Link has no one at its keyboard to notice it went dead.
+        host.alive_interval.get_or_insert(KEEPALIVE);
         Ok(host)
     })
     .await
