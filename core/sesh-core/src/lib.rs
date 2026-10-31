@@ -7,4 +7,5 @@ pub mod mosh;
 pub mod pipe;
 pub mod session;
 pub mod ssh;
+pub mod ssh_config;
 pub mod upload;
