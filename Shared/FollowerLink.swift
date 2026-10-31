@@ -25,6 +25,13 @@ final class FollowerLink {
     private var members = 0
     private var summaries: (online: (Bool) -> Void, line: (String) -> Void)?
     private var watchers: [String: Watcher] = [:]
+    private var vaults: [String: VaultWatcher] = [:]
+
+    private struct VaultWatcher {
+        let from: () -> Int
+        let online: (Bool) -> Void
+        let line: (String) -> Void
+    }
 
     private struct Watcher {
         let from: () -> Int
@@ -35,6 +42,7 @@ final class FollowerLink {
 
     private struct Routed: Decodable {
         let session: String?
+        let vault: String?
     }
 
     init(_ machine: Runner, pause: Duration = .seconds(2), online: @escaping () -> Bool = Reachability.online) {
@@ -80,6 +88,28 @@ final class FollowerLink {
             if ended.status > 0, !ended.lost, !ended.problem.isEmpty { problem(ended.problem) }
             return false
         }
+    }
+
+    /// The Vault in `folder`, its records after the number `seq` says is held, over the
+    /// machine's one stream where it can be written to; `online` says whenever that stream
+    /// starts or stops. Returns why it ended, nil once the calling task is cancelled.
+    func vault(_ folder: String, from seq: @escaping () -> Int, online: @escaping (Bool) -> Void,
+               line: @escaping (String) -> Void) async -> String? {
+        guard machine.talks else {
+            online(true)
+            let ended = await machine.stream("\(Helper.path) vault follow \(folder) --since \(seq())", line: line)
+            return ended.ok || Task.isCancelled ? nil : ended.problem
+        }
+        let watcher = VaultWatcher(from: seq, online: online, line: line)
+        vaults[folder] = watcher
+        if let ask {
+            online(true)
+            Self.follow(folder, with: watcher, over: ask)
+        }
+        await member()
+        vaults[folder] = nil
+        ask?(Self.request(["op": "unvault", "dir": folder]))
+        return nil
     }
 
     /// A Transcript file's entries from `cursor`, read by the helper without the follower; it
@@ -147,11 +177,16 @@ final class FollowerLink {
             guard let self else { return }
             self.ask = ask
             for (session, watcher) in watchers { Self.watch(session, with: watcher, over: ask) }
-        }, hello: { [weak self] in self?.summaries?.online(true) },
+            for (folder, watcher) in vaults { Self.follow(folder, with: watcher, over: ask) }
+        }, hello: { [weak self] in
+            self?.summaries?.online(true)
+            self?.vaults.values.forEach { $0.online(true) }
+        },
         problem: { [weak self] problem in self?.watchers.values.forEach { $0.problem(problem) } },
         line: { [weak self] text in self?.route(text) }) { [weak self] ended in
             self?.ask = nil
             self?.summaries?.online(false)
+            self?.vaults.values.forEach { $0.online(false) }
             if ended.status > 0, !ended.lost, !ended.problem.isEmpty { self?.watchers.values.forEach { $0.problem(ended.problem) } }
             return false
         }
@@ -162,12 +197,19 @@ final class FollowerLink {
         ask(request(["op": "watch", "session": session, "since": watcher.from()]))
     }
 
+    private static func follow(_ folder: String, with watcher: VaultWatcher, over ask: (String) -> Void) {
+        ask(request(["op": "vault", "dir": folder, "since": watcher.from()]))
+    }
+
     private static func request(_ fields: [String: Any]) -> String {
         (try? JSONSerialization.data(withJSONObject: fields)).map { String(decoding: $0, as: UTF8.self) } ?? ""
     }
 
-    /// The follower's hello goes to everyone; a line about one session to that session alone.
+    /// The follower's hello goes to everyone; a line about one session or Vault to it alone.
     private func route(_ text: String) {
+        if text.contains(#""vault":"#), let folder = (try? JSONDecoder().decode(Routed.self, from: Data(text.utf8)))?.vault {
+            return vaults[folder]?.line(text) ?? ()
+        }
         summaries?.line(text)
         if text.contains(#""t":"hello""#) { return watchers.values.forEach { $0.line(text) } }
         guard let session = (try? JSONDecoder().decode(Routed.self, from: Data(text.utf8)))?.session else { return }

@@ -35,6 +35,7 @@ final class Vault: ObservableObject, Identifiable, Records {
         let kind: Record.Kind?
         let body: Record.Body?
         let deleted: Bool?
+        let message: String?
     }
 
     @Published private(set) var records: [String: Record] = [:]
@@ -149,10 +150,12 @@ final class Vault: ObservableObject, Identifiable, Records {
         online = true
         if let head = try? JSONDecoder().decode(Line.self, from: Data(made.out.utf8)).seq, head < seq { await restore() }
         await flush()
-        let ended = await machine.stream("\(Helper.path) vault follow \(folder) --since \(seq)") { [weak self] in
-            self?.apply($0)
-        }
-        if !ended.ok, !Task.isCancelled { problem = ended.problem }
+        let ended = await machine.follower.vault(folder, from: { [weak self] in self?.seq ?? 0 }, online: { [weak self] up in
+            guard let self else { return }
+            online = up
+            if up { Task { await self.flush() } }
+        }, line: { [weak self] in self?.apply($0) })
+        if let ended, !Task.isCancelled { problem = ended }
     }
 
     private func apply(_ text: String) {
@@ -166,6 +169,7 @@ final class Vault: ObservableObject, Identifiable, Records {
             records[id] = Record(id: id, kind: kind, body: line.body ?? Record.Body(), seq: lineSeq, deleted: line.deleted ?? false)
             save()
         case "head": if let head = line.seq { seq = max(seq, head); save() }
+        case "vault_error": problem = line.message
         default: break
         }
     }

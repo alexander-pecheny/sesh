@@ -477,11 +477,20 @@ struct Client {
     done_asking: bool,
     /// Replies to this device's acts, as their threads finish them.
     replies: (mpsc::Sender<Value>, mpsc::Receiver<Value>),
+    /// The Vaults this device follows over the same connection, by the folder it named.
+    vaults: HashMap<String, FollowedVault>,
+}
+
+/// A Vault a device follows: its records after the last number it has.
+struct FollowedVault {
+    vault: crate::vault::Vault,
+    since: i64,
+    version: Option<i64>,
 }
 
 impl Client {
     fn new(stream: UnixStream) -> Self {
-        Client { stream, read: Vec::new(), write: Vec::new(), open: true, summaries: 0, all: false, watched: HashMap::new(), pinged: Instant::now(), done_asking: false, replies: mpsc::channel() }
+        Client { stream, read: Vec::new(), write: Vec::new(), open: true, summaries: 0, all: false, watched: HashMap::new(), pinged: Instant::now(), done_asking: false, replies: mpsc::channel(), vaults: HashMap::new() }
     }
 
     fn send(&mut self, line: &Value) {
@@ -569,6 +578,14 @@ impl Client {
                 self.send(&json!({"t": "synced", "session": session}));
             }
             "unwatch" => drop(self.watched.remove(&session)),
+            "vault" => {
+                let dir = request["dir"].as_str().unwrap_or_default().to_string();
+                match crate::vault::Vault::open(expand(&dir), false) {
+                    Ok(vault) => drop(self.vaults.insert(dir, FollowedVault { vault, since: request["since"].as_i64().unwrap_or(0), version: None })),
+                    Err(err) => self.send(&json!({"t": "vault_error", "vault": dir, "message": err.to_string()})),
+                }
+            }
+            "unvault" => drop(self.vaults.remove(request["dir"].as_str().unwrap_or_default())),
             "page" => {
                 let before = request["before"].as_i64().unwrap_or(i64::MAX);
                 let limit = request["limit"].as_u64().unwrap_or(OPENING as u64) as usize;
@@ -605,7 +622,47 @@ impl Client {
                 self.send(line);
             }
         }
+        self.push_vaults();
         Ok(())
+    }
+
+    /// Each followed Vault's records written since this device last heard, then its head, all
+    /// marked with the folder it named; once at the start even when there are none.
+    fn push_vaults(&mut self) {
+        let mut lines = Vec::new();
+        for (dir, followed) in &mut self.vaults {
+            let pulled = followed.vault.data_version().and_then(|now| {
+                if followed.version == Some(now) {
+                    return Ok(None);
+                }
+                let (records, head) = followed.vault.pull(followed.since)?;
+                let first = followed.version.is_none();
+                followed.version = Some(now);
+                Ok((first || !records.is_empty()).then_some((records, head)))
+            });
+            match pulled {
+                Ok(Some((records, head))) => {
+                    followed.since = head;
+                    lines.extend(records.iter().map(crate::vault::Record::line).chain([crate::vault::head_line(head)]).map(|mut line| {
+                        line["vault"] = dir.clone().into();
+                        line
+                    }));
+                }
+                Ok(None) => {}
+                Err(err) => lines.push(json!({"t": "vault_error", "vault": dir, "message": err.to_string()})),
+            }
+        }
+        for line in &lines {
+            self.send(line);
+        }
+    }
+}
+
+/// `~/` in a folder a device named, which no shell expanded on its way here.
+fn expand(dir: &str) -> PathBuf {
+    match dir.strip_prefix("~/") {
+        Some(rest) => std::env::var_os("HOME").map(PathBuf::from).unwrap_or_default().join(rest),
+        None => PathBuf::from(dir),
     }
 }
 
@@ -883,6 +940,37 @@ mod tests {
             self.0.lock().unwrap().push(input.clone());
             Ok(())
         }
+    }
+
+    #[test]
+    fn a_vault_followed_on_the_same_connection_sends_what_changed_marked_with_its_folder() {
+        let dir = std::env::temp_dir().join(format!("sesh-vault-follow-{}", std::process::id()));
+        let folder = dir.join("hobby");
+        let mut written = crate::vault::Vault::open(&folder, true).unwrap();
+        let change = |id: &str| serde_json::from_value::<crate::vault::Change>(json!({"id": id, "kind": "task", "body": {"title": id}, "base": 0})).unwrap();
+        written.push(vec![change("t1")]).unwrap();
+        let mut machine = Machine::new(Log::open(&dir.join("sessions.db")).unwrap(), Shared(Rc::new(RefCell::new(Quiet))));
+        let mut client = Client::new(UnixStream::pair().unwrap().0);
+        let named = folder.display().to_string();
+        let heard = |client: &mut Client, machine: &mut Machine| {
+            client.push(machine).unwrap();
+            let lines: Vec<Value> = String::from_utf8(std::mem::take(&mut client.write)).unwrap().lines().map(|line| serde_json::from_str(line).unwrap()).collect();
+            lines.iter().map(|line| format!("{}:{}", line["t"].as_str().unwrap(), line["id"].as_str().unwrap_or(""))).collect::<Vec<_>>()
+        };
+        client.request(&mut machine, &json!({"op": "vault", "dir": named, "since": 0})).unwrap();
+        let first = heard(&mut client, &mut machine);
+        let quiet = heard(&mut client, &mut machine);
+        written.push(vec![change("t2")]).unwrap();
+        let later = heard(&mut client, &mut machine);
+        client.request(&mut machine, &json!({"op": "unvault", "dir": named})).unwrap();
+        written.push(vec![change("t3")]).unwrap();
+        let after = heard(&mut client, &mut machine);
+        let marked = client.vaults.is_empty();
+        std::fs::remove_dir_all(&dir).unwrap();
+        assert_eq!(first, ["record:t1", "head:"]);
+        assert!(quiet.is_empty(), "{quiet:?}");
+        assert_eq!(later, ["record:t2", "head:"]);
+        assert!(after.is_empty() && marked);
     }
 
     #[test]
