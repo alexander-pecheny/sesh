@@ -16,8 +16,13 @@ An SSH private key the app holds, imported by the user. A Host names the Key it 
 _Avoid_: identity, credential
 
 **Transport**:
-How a Host is reached: SSH or mosh. A Host has one Transport.
+How a Host's Terminals reach it: SSH or mosh. A Host has one Transport; its Link is always SSH.
 _Avoid_: protocol, mode
+
+**Link**:
+The one SSH connection a device keeps to a Host, dialed the same way on the Mac and the phone.
+Every command, stream, Upload and Terminal for that Host runs on it.
+_Avoid_: connection, channel
 
 **Extra flags**:
 Free-text options the user appends to a Host's ssh or mosh command line. Parsed
@@ -34,8 +39,8 @@ own Keys. There is no separate agent. Applies to the SSH Transport only, since m
 SSH session ends once the server starts.
 
 **Session**:
-One live connection to a Host, shown in one Tab. Ends when the remote shell exits or the
-user closes it.
+One live terminal on a Host's Link, shown in one Tab. Ends when the remote shell exits, the
+Link drops or the user closes it.
 _Avoid_: terminal, connection
 
 **Tab**:
@@ -43,8 +48,8 @@ One thing open at a time in Sesh. Inside a Task a Tab is the Journal, a Document
 Terminal or an Agent session, and every Tab but the Journal can move to another Task. A
 Terminal is a shell in a sesh-mux pane of the Task's Workspace: it outlives the app, and
 closing its Tab ends it. An Agent session Tab shows the Conversation or the Agent's own
-terminal. The phone has the same Tabs; its Terminal is an ordinary Session whose remote
-command attaches the sesh-mux pane. A Task's open Tabs are kept in its Vault, so every device
+terminal. The phone has the same Tabs; its Terminal, like the Mac's, is a Session that attaches
+the sesh-mux pane. A Task's open Tabs are kept in its Vault, so every device
 shows the same ones, though each shows its own in front and a subagent's stays where it opened.
 _Avoid_: pane, page
 

@@ -26,3 +26,6 @@ the word, and the path may be read by a program instead.
 One connection per mosh Upload costs an authentication each time. That is silent with a
 key or a saved password, and the prompt it otherwise raises is the existing `AuthSheet`,
 whose "Save password" toggle stops the asking.
+
+Since ADR 0019 every Upload goes over the Host's Link, so a mosh Terminal no longer dials a
+connection of its own for one.
