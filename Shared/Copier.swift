@@ -1,16 +1,17 @@
 import Foundation
 
 /// Copies every adopted Agent session's Transcripts into its Vault while the app runs, so a
-/// Conversation outlives its machine and the Agent's own clean-up (ADR 0008).
+/// Conversation outlives its machine and the Agent's own clean-up (ADR 0008). A round asks each
+/// machine's follower once for what the copies lack, and the Vault's once to store it (ADR 0019).
 @MainActor
 final class Copier {
     private static let round = Duration.seconds(30)
-    /// Bytes moved per Transcript per round between two machines, so one huge file cannot
-    /// hold up the rest.
-    private static let chunk = 4 << 20
 
     private weak var vault: Vault?
     private var task: Task<Void, Never>?
+    /// How long each Transcript copy in the Vault is, by session and file name, as the Vault's
+    /// follower last said.
+    private var copies: [String: [String: Int]] = [:]
 
     init(vault: Vault) { self.vault = vault }
 
@@ -35,57 +36,63 @@ final class Copier {
         await vault.mirror.update()
     }
 
+    private struct Read: Decodable {
+        struct Session: Decodable {
+            struct File: Decodable {
+                let path: String
+                let from: Int?
+                let data: String?
+            }
+            let id: String
+            let transcript: String?
+            let files: [File]?
+        }
+        let sessions: [Session]
+    }
+
+    private struct Stored: Decodable { let copies: [String: [String: Int]] }
+
     /// Brings these sessions' copies up to date now, as closing a Task does before it stops them.
     func copy(_ sessions: [Record]) async {
         guard let vault else { return }
-        for session in sessions {
-            guard let pane = session.body.pane else { continue }
-            let machine = TaskActions.machine(session.body.machine)
-            // A pane id comes back for a later Agent, whose Transcript is not this session's.
-            if case .found(let found) = await Mux.look(for: pane, on: machine), Library.owns(session, name: found.name, cwd: found.cwd),
-               let path = await found.agent_session?.path.asyncOr({ await self.found(pane, on: machine) }),
-               !(session.body.transcripts ?? []).contains(path) {
-                var record = vault.records[session.id] ?? session
-                record.body.transcripts = (record.body.transcripts ?? []) + [path]
-                vault.write(record)
-            }
-            for path in vault.records[session.id]?.body.transcripts ?? [] {
-                await copy(path, of: session, from: machine, into: vault)
+        let sessions = sessions.filter { $0.body.pane != nil }
+        let unknown = sessions.filter { copies[$0.id] == nil && TaskActions.machine($0.body.machine) != vault.machine }
+        if !unknown.isEmpty { await store([], of: unknown.map(\.id), in: vault) }
+        var appends: [[String: Any]] = []
+        for (alias, all) in Dictionary(grouping: sessions, by: \.body.machine) {
+            let machine = TaskActions.machine(alias)
+            let local = machine == vault.machine
+            // Without its copies' lengths a session would be read from the start, for nothing.
+            let group = all.filter { local || copies[$0.id] != nil }
+            guard !group.isEmpty else { continue }
+            var request: [String: Any] = ["op": "transcripts", "sessions": group.map { session -> [String: Any] in
+                var asked: [String: Any] = ["id": session.id, "session": session.body.pane ?? "", "copies": copies[session.id] ?? [:],
+                                            "transcripts": vault.records[session.id]?.body.transcripts ?? []]
+                (asked["name"], asked["path"]) = (session.body.name, session.body.path)
+                return asked
+            }]
+            if local { request["vault"] = vault.folder }
+            let ran = await machine.follower.ask(request)
+            guard let read = try? JSONDecoder().decode(Read.self, from: Data(ran.out.utf8)) else { continue }
+            for session in read.sessions {
+                if let path = session.transcript, var record = vault.records[session.id], !(record.body.transcripts ?? []).contains(path) {
+                    record.body.transcripts = (record.body.transcripts ?? []) + [path]
+                    vault.write(record)
+                }
+                for file in session.files ?? [] where !local {
+                    guard let data = file.data, let from = file.from else { continue }
+                    appends.append(["id": session.id, "file": (file.path as NSString).lastPathComponent, "from": from, "data": data])
+                }
             }
         }
+        if !appends.isEmpty { await store(appends, of: [], in: vault) }
     }
 
-    /// sesh-mux names Claude's session only by id; the helper finds its Transcript from that, and
-    /// its first line says where.
-    private func found(_ pane: String, on machine: Machine) async -> String? {
-        struct Hello: Decodable { let transcript: String? }
-        let ran = await machine.run("\(Helper.path) follow \(quote(pane)) --last 0 | head -n 1")
-        let path = (try? JSONDecoder().decode(Hello.self, from: Data(ran.out.utf8)))?.transcript
-        return path?.isEmpty == false ? path : nil
-    }
-
-    private func copy(_ path: String, of session: Record, from machine: Machine, into vault: Vault) async {
-        let helper = "\(Helper.path) vault"
-        if machine == vault.machine {
-            _ = await machine.run("\(helper) copy \(vault.folder) \(session.id) --from \(quote(path))")
-            return
-        }
-        struct Size: Decodable { let size: Int }
-        let name = (path as NSString).lastPathComponent
-        let have = await vault.machine.run("\(helper) size \(vault.folder) \(session.id) \(quote(name))")
-        guard let size = try? JSONDecoder().decode(Size.self, from: Data(have.out.utf8)).size else { return }
-        let read = await machine.run("tail -c +\(size + 1) \(quote(path)) | head -c \(Self.chunk) | base64 | tr -d '\\n'")
-        guard read.ok, let bytes = Data(base64Encoded: read.out), !bytes.isEmpty else { return }
-        let staged = "\(vault.folder)/inbox/\(UUID().uuidString.lowercased()).bytes"
-        guard (await vault.machine.put(bytes, to: staged)).ok else { return }
-        _ = await vault.machine.run(
-            "\(helper) append \(vault.folder) \(session.id) \(quote(name)) --offset \(size) \(staged); rm -f \(staged)")
-    }
-}
-
-private extension Optional where Wrapped == String {
-    func asyncOr(_ fallback: () async -> String?) async -> String? {
-        if let self { return self }
-        return await fallback()
+    /// Hands the Vault's follower what the machines read, and learns how long every copy of these
+    /// sessions now is, so the next round asks only for the rest.
+    private func store(_ appends: [[String: Any]], of sessions: [String], in vault: Vault) async {
+        let ran = await vault.machine.follower.ask(["op": "store", "dir": vault.folder, "sessions": sessions, "appends": appends])
+        guard let stored = try? JSONDecoder().decode(Stored.self, from: Data(ran.out.utf8)) else { return }
+        copies.merge(stored.copies) { $1 }
     }
 }

@@ -247,6 +247,22 @@ impl Vault {
         }
     }
 
+    /// The size of each Transcript copy the session has, by file name.
+    pub fn copies(&self, session: &str) -> Result<serde_json::Map<String, Value>> {
+        let dir = self.copy_path(session, "-")?.with_file_name("");
+        let entries = match std::fs::read_dir(dir) {
+            Ok(entries) => entries,
+            Err(err) if err.kind() == std::io::ErrorKind::NotFound => return Ok(Default::default()),
+            Err(err) => return Err(err.into()),
+        };
+        let mut copies = serde_json::Map::new();
+        for entry in entries {
+            let entry = entry?;
+            copies.insert(entry.file_name().to_string_lossy().into_owned(), entry.metadata()?.len().into());
+        }
+        Ok(copies)
+    }
+
     pub fn append(&self, session: &str, file: &str, offset: u64, bytes: &[u8]) -> Result<u64> {
         let path = self.copy_path(session, file)?;
         std::fs::create_dir_all(path.parent().expect("a copy has a folder"))?;

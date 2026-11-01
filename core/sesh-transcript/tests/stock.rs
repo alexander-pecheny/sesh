@@ -357,6 +357,34 @@ fn the_follower_starts_an_agent_and_closes_its_pane_when_it_exits_on_start() {
 }
 
 #[test]
+fn a_round_of_copying_asks_the_agents_follower_for_chunks_and_the_vaults_to_store_them() {
+    let host = Host::new("copy");
+    host.session("s1", "idle");
+    host.say("s1", "user", "hi");
+    let vault = host.root.join("vault");
+    assert!(host.command(&["vault", "init", vault.to_str().unwrap()]).output().unwrap().status.success());
+    let mut follower = host.follower(0);
+    let ask = |request: &Value| {
+        let output = host.command(&["ask", &request.to_string()]).output().unwrap();
+        assert!(output.status.success(), "{}", String::from_utf8_lossy(&output.stderr));
+        serde_json::from_slice::<Value>(&output.stdout).unwrap()
+    };
+    let read = ask(&json!({"op": "transcripts", "sessions": [{"id": "r1", "session": "w1:p1", "transcripts": [], "copies": {}}]}));
+    let session = &read["sessions"][0];
+    let file = &session["files"][0];
+    let appends = json!([{"id": "r1", "file": "s1.jsonl", "from": file["from"], "data": file["data"]}]);
+    let staged = host.root.join("store.json");
+    std::fs::write(&staged, json!({"op": "store", "dir": vault, "appends": appends}).to_string()).unwrap();
+    let stored = host.command(&["ask", "--file", staged.to_str().unwrap()]).output().unwrap();
+    follower.kill().unwrap();
+    follower.wait().unwrap();
+    let size = host.transcript("s1").metadata().unwrap().len();
+    assert_eq!((read["t"].as_str(), session["transcript"].as_str()), (Some("done"), host.transcript("s1").to_str()));
+    assert_eq!(serde_json::from_slice::<Value>(&stored.stdout).unwrap()["copies"], json!({"r1": {"s1.jsonl": size}}));
+    assert!(!staged.exists());
+}
+
+#[test]
 fn a_newer_build_takes_over_an_older_follower_and_keeps_its_log() {
     let host = Host::new("newer");
     host.session("s1", "idle");

@@ -2,6 +2,7 @@
 
 pub mod act;
 pub mod agent;
+pub mod copy;
 pub use agent::claude::Background;
 pub use agent::Agent;
 pub mod follower;
