@@ -125,6 +125,7 @@ final class TaskCommandTests: XCTestCase {
         XCTAssertEqual(running.end?.id, session.id)
         XCTAssertNil(running.resume)
         XCTAssertEqual(running.endTitle, "Close Tab and End Codex Session")
+        XCTAssertEqual(running.endOnlyTitle, "End Codex Session")
         XCTAssertNil(running.path)
         let ended = menu(.session(session.id), ended: true)
         XCTAssertEqual(ended.resume?.id, session.id)

@@ -105,9 +105,8 @@ struct TabMenu {
         end = session.flatMap { ended($0) || resuming.contains($0.id) || !reachable($0) ? nil : $0 }
     }
 
-    var endTitle: String {
-        "Close Tab and End \(end?.body.agent.flatMap(Agent.init)?.title ?? "Agent") Session"
-    }
+    var endTitle: String { "Close Tab and \(endOnlyTitle)" }
+    var endOnlyTitle: String { "End \(end?.body.agent.flatMap(Agent.init)?.title ?? "Agent") Session" }
 }
 
 /// A Task's Add menu: new Tabs first, then every Agent session and Document it has had, to reopen.

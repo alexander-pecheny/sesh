@@ -71,6 +71,7 @@ struct TabMenuItems: View {
         if menu.closes { Button("Close Tab") { library.close(tab, in: task) } }
         if let session = menu.resume { Button("Resume Agent session") { Task { await library.resume(session) } } }
         if let session = menu.end {
+            Button(menu.endOnlyTitle) { library.askToEnd(session) }
             Button(menu.endTitle) {
                 library.close(tab, in: task)
                 library.askToEnd(session)
