@@ -1,115 +1,19 @@
 import Foundation
 
-/// A machine the Mac runs commands on: itself through its shell, or a Host named by its alias
-/// in the owner's `~/.ssh/config`, reached through the core's one Link per Host.
+/// Commands the Mac runs on itself, through its login shell's environment.
 @MainActor
-final class Machine: Runner, Identifiable, Hashable {
-    /// The ssh alias, or nil for the Mac itself.
-    let alias: String?
+final class Local {
     private var running: Set<Process> = []
     private var tethers: [ObjectIdentifier: Pipe] = [:]
-
-    nonisolated static func == (a: Machine, b: Machine) -> Bool { a.alias == b.alias }
-    nonisolated func hash(into hasher: inout Hasher) { hasher.combine(alias) }
-
-    private init(alias: String?) { self.alias = alias }
-
-    nonisolated var id: String { alias ?? "" }
-    var title: String { alias ?? "This Mac" }
-    var carrier: String? { alias == nil ? nil : Helper.moshServer == nil ? "ssh" : "mosh" }
-    var talks: Bool { true }
-
-    static let mac = Machine(alias: nil)
-    /// The machines on this device itself, which serve every Vault.
-    static let here = [mac]
-    private static var known: [String: Machine] = [:]
-
-    /// One object per Host for the app's life: Conversations hold their machine weakly.
-    /// A normal quit stops every command at once instead of leaving it to notice.
-    static func stopAll() {
-        mac.running.forEach { $0.terminate() }
-        known.values.forEach { $0.link?.close() }
-    }
-
-    /// Lets go of every Host's connection, as after sleep, when its socket may be dead; the next
-    /// command dials again, and mosh pipes carry on by themselves.
-    static func redial() {
-        known.values.forEach { $0.link?.close(); $0.link?.resume() }
-    }
-
-    static func named(_ alias: String?) -> Machine {
-        guard let alias else { return mac }
-        if let machine = known[alias] { return machine }
-        let machine = Machine(alias: alias)
-        known[alias] = machine
-        Asking.shared.links = { known.values.compactMap(\.link) }
-        return machine
-    }
-
-    /// The connection to the Host; the Mac itself has none.
-    private(set) lazy var link: CoreLink? = alias.map { alias in
-        CoreLink(title: alias) { callbacks, userdata in sesh_link_connect_alias(alias, callbacks, userdata) }
-    }
 
     /// An interactive shell may greet first; everything before this line is its greeting.
     nonisolated static let mark = "--sesh-output--"
 
-    func run(_ command: String) async -> Ran {
-        if let link { return await link.run(command) }
-        return await local(command, line: nil)
-    }
-
-    func stream(_ command: String, line: @escaping (String) -> Void) async -> Ran {
-        await stream(command, opened: nil, line: line)
-    }
-
-    func fetch(_ command: String, line: @escaping (String) -> Void) async -> Ran {
-        if let link { return await link.stream(command, line: line) }
-        return await local(command, line: line)
-    }
-
-    func stream(_ command: String, opened: @escaping (@escaping (String) -> Void) -> Void, line: @escaping (String) -> Void) async -> Ran {
-        await stream(command, opened: Optional(opened), line: line)
-    }
-
-    /// A Host's stream outlives sleep and roaming over its own mosh pipe, which the Link only starts.
-    private func stream(_ command: String, opened: ((@escaping (String) -> Void) -> Void)?, line: @escaping (String) -> Void) async -> Ran {
-        guard let link else { return await local(command, line: line, opened: opened) }
-        guard let server = Helper.moshServer else { return await link.stream(command, line: line) }
-        return await link.pipe(command, server: server, opened: opened, line: line)
-    }
-
-    func put(_ data: Data, to path: String) async -> Ran {
-        if let link { return await link.put(data, to: path) }
-        let target = shellPath(path)
-        return await local("mkdir -p \"$(dirname \(target))\" && cat > \(target)", line: nil, input: data)
-    }
-
-    private var home: String?
-    private(set) lazy var follower = FollowerLink(self)
-    private lazy var installer = HelperInstaller(
-        title: title, run: { [unowned self] in await run($0) }, put: { [unowned self] in await put($0, to: $1) })
-
-    func prepare() async -> String? { await installer.prepare() }
-
-    /// Pasted images land in `~/.sesh/uploads` under the moment they were pasted, as the
-    /// phone's Uploads do, so the Agent can be told where to look.
-    func upload(_ data: Data, ext: String) async -> String? {
-        if home == nil {
-            let ran = await run("printf %s \"$HOME\"")
-            if ran.ok, !ran.out.isEmpty { home = ran.out }
-        }
-        guard let home else { return nil }
-        let stamp = Date().formatted(.iso8601.year().month().day().time(includingFractionalSeconds: false).timeSeparator(.omitted))
-        let path = "\(home)/.sesh/uploads/pasted-\(stamp).\(ext)"
-        return (await put(data, to: path)).ok ? path : nil
-    }
-
-    // MARK: The Mac itself
-
     /// The login shell's environment as `export` lines, read once, so PATH has what the user
     /// installed without a login shell for every command.
     private var environment: Task<String?, Never>?
+
+    func stop() { running.forEach { $0.terminate() } }
 
     private func loginExports() async -> String? {
         if environment == nil {
@@ -128,8 +32,8 @@ final class Machine: Runner, Identifiable, Hashable {
         "{ \(command)\n} & child=$!; { cat >/dev/null; kill $child 2>/dev/null; } >/dev/null 2>&1 & wait $child"
     }
 
-    private func local(_ command: String, line: ((String) -> Void)?, input: Data? = nil,
-                       opened: ((@escaping (String) -> Void) -> Void)? = nil) async -> Ran {
+    func run(_ command: String, line: ((String) -> Void)?, input: Data?,
+             opened: ((@escaping (String) -> Void) -> Void)?) async -> Ran {
         let exports = await loginExports()
         // The tether reads stdin itself, so a stream that is written to goes without one.
         let command = line == nil || opened != nil ? command : Self.tethered(command)
@@ -235,7 +139,7 @@ private final class Greeted {
     func feed(_ chunk: Data) {
         guard let line else { return }
         for text in lines.feed(chunk) {
-            if greeted { line(text) } else { greeted = text == Machine.mark }
+            if greeted { line(text) } else { greeted = text == Local.mark }
         }
     }
 
