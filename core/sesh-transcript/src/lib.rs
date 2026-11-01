@@ -12,6 +12,7 @@ pub mod reconcile;
 pub mod replay;
 pub mod screen;
 pub mod serve;
+pub mod start;
 pub mod vault;
 
 /// The helper's version as `--version` prints it: its sources' hash, then the follower it runs.

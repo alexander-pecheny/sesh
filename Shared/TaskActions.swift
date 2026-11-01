@@ -93,8 +93,8 @@ enum TaskActions {
         let name = Names.free(Names.slug("\(current.body.title ?? "task")-\(agent.rawValue)"), taken: await Mux.agentNames(on: machine))
         let session = Start.session(agent, for: task.id, on: machine.alias, at: place, repo: repo, remote: remote, name: name, in: vault)
         made(session)
-        if let problem = await Mux.launch(agent, name: name, pane: place.pane ?? "", config: claudeConfig(vault, on: machine),
-                                               remote: Self.remote(of: session, in: vault), on: machine) {
+        if let problem = await machine.follower.start(agent, name: name, pane: place.pane ?? "", config: claudeConfig(vault, on: machine),
+                                                      remote: Self.remote(of: session, in: vault)) {
             vault.delete(vault.records[session.id] ?? session)
             return .failure(Mux.Failure(problem))
         }
@@ -248,9 +248,9 @@ enum TaskActions {
             }
         }
         let name = Names.free(Names.slug("\(task.body.title ?? "task")-\(agent.rawValue)"), taken: await Mux.agentNames(on: machine))
-        if let problem = await Mux.launch(
+        if let problem = await machine.follower.start(
             agent, name: name, pane: pane, resuming: transcript, config: claudeConfig(vault, on: machine),
-            remote: remote(of: session, in: vault), on: machine) { return problem }
+            remote: remote(of: session, in: vault)) { return problem }
         var record = vault.records[session.id] ?? session
         (record.body.pane, record.body.name) = (pane, name)
         vault.write(record)

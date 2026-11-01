@@ -21,7 +21,7 @@ const DEFAULT_LAST: usize = 50;
 const USAGE: &str = "usage: sesh-transcript --version | follow --protocol | follow <pane> [--since CURSOR] [--last N]
        | serve [--foreground] [--record DIR --pane PANE] | attach [--sessions] [--watch KEY[:SEQ]]...
        | page KEY --before ORD [--limit N] | replay FILE [--lines]
-       | send KEY ID TEXT | unqueue KEY ID | hand KEY
+       | send KEY ID TEXT | unqueue KEY ID | hand KEY | ask REQUEST | ask --file FILE
        | keys KEY NAME... | answer KEY --json ANSWERS | permit KEY allow|deny | stop KEY
        | history <pane> --before ID [--last N] | entry <pane> ID | background <pane>...
        | vault init DIR | vault pull|follow DIR [--since SEQ] | vault push DIR FILE
@@ -57,6 +57,7 @@ fn main() {
             None => usage(),
         },
         Some("vault") => vault(rest),
+        Some("ask") => ask(rest),
         _ => usage(),
     };
     std::process::exit(exit.unwrap_or_else(|message| {
@@ -103,6 +104,22 @@ fn page(args: &[String]) -> Exit {
     let ([session], Some(before)) = (rest.as_slice(), options.get("before").and_then(|ord| ord.parse::<i64>().ok())) else { return usage() };
     let limit: u64 = options.get("limit").and_then(|limit| limit.parse().ok()).unwrap_or(50);
     serve::ask(&json!({"op": "page", "session": session, "before": before, "limit": limit}))
+}
+
+/// Any request as JSON, or read from a file that is then removed, for one too long for a command
+/// line, such as the Transcripts a Vault takes (ADR 0019).
+fn ask(args: &[String]) -> Exit {
+    let text = match args {
+        [flag, file] if flag == "--file" => {
+            let text = std::fs::read_to_string(file).map_err(|err| format!("{file}: {err}"))?;
+            std::fs::remove_file(file).map_err(|err| format!("{file}: {err}"))?;
+            text
+        }
+        [json] => json.clone(),
+        _ => return usage(),
+    };
+    let request: Value = serde_json::from_str(&text).map_err(|err| format!("not a request: {err}"))?;
+    serve::ask(&request)
 }
 
 fn usage() -> Exit {

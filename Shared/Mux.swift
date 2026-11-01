@@ -57,54 +57,6 @@ enum Mux {
             """
     }
 
-    /// Menus an Agent may open before its first prompt, and the keys that get past them.
-    private static let menus = [
-        (prompt: "Yes, I trust this folder", keys: "down enter"),
-        (prompt: "Do you trust the contents of this directory", keys: "enter"),
-        (prompt: "Skip until next version", keys: "down enter"),
-        (prompt: "Continue without trusting", keys: "down down enter"),
-    ]
-
-    /// Starts `agent`, named `name`, in a fresh `pane` and waits until it can take a prompt. On failure the
-    /// pane is closed, so no half-started Agent lingers, and the reason comes back.
-    static func launch(_ agent: Agent, name: String, pane: String, resuming transcript: String? = nil,
-                       config: String? = nil, remote: Bool = true, on runner: Runner) async -> String? {
-        if agent == .claude, let config, !config.isEmpty {
-            let dir = shellPath(config)
-            _ = await runner.run("[ -e \(dir)/hooks/sesh-mux-agent-state.sh ] || CLAUDE_CONFIG_DIR=\(dir) \(command) integration install claude")
-            _ = await runner.run("\(command) pane run \(quote(pane)) \(quote("export CLAUDE_CONFIG_DIR=\(shellPath(config))"))")
-        }
-        var ran = await runner.run(
-            "\(command) agent start \(quote(name)) --kind \(agent.rawValue) --pane \(quote(pane)) --timeout 60000"
-                + " -- \(agent.flags(name, resuming: transcript, remote: remote))")
-        let notReady = !ran.ok && (ran.err + ran.out).contains("agent_not_ready")
-        if ran.ok || notReady {
-            // The user picked this folder and pressed Start, which answers the trust question;
-            // updates are skipped and new hooks left for the user to trust.
-            var answered = false
-            for _ in menus.indices {
-                let screen = await runner.run("\(command) pane read \(quote(pane)) --source visible")
-                guard let menu = menus.first(where: { screen.out.contains($0.prompt) }) else { break }
-                _ = await runner.run("\(command) agent send-keys \(quote(pane)) \(menu.keys)")
-                answered = true
-                for _ in 0..<20 {
-                    try? await Task.sleep(for: .milliseconds(100))
-                    if !(await runner.run("\(command) pane read \(quote(pane)) --source visible")).out.contains(menu.prompt) { break }
-                }
-            }
-            // A menu Sesh does not know waits for the user, who answers it in the Conversation.
-            if notReady && !answered { return nil }
-            if answered {
-                ran = await runner.run("\(command) agent wait \(quote(pane)) --until idle --until done --timeout 30000")
-            }
-        }
-        guard !ran.ok else { return nil }
-        let screen = await runner.run("\(command) pane read \(quote(pane)) --source recent-unwrapped --lines 40")
-        _ = await runner.run("\(command) pane close \(quote(pane))")
-        let tail = screen.out.split(separator: "\n").filter { !$0.allSatisfy(\.isWhitespace) }.suffix(12)
-        return ([ran.problem] + tail.map(String.init)).joined(separator: "\n")
-    }
-
     struct Opened {
         let workspace: String
         let pane: String
