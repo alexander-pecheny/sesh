@@ -61,20 +61,27 @@ fn words(markdown: &str) -> String {
     out
 }
 
-/// A message's words, with an image the same word whether the message names its file, as a
-/// device sends it, or Claude's placeholder stands for it, as the Transcript and screen show it.
+/// A message's words without its images, which a device sends as file paths and Claude shows
+/// as `[Image #3]` placeholders, wherever it chooses to put them.
 fn said_words(text: &str) -> String {
     let mut plain = String::new();
     let mut rest = text;
     while let Some(start) = rest.find("[Image #") {
         let Some(end) = rest[start..].find(']') else { break };
         plain.push_str(&rest[..start]);
-        plain.push_str(" image ");
+        plain.push(' ');
         rest = &rest[start + end + 1..];
     }
     plain.push_str(rest);
-    let lines = plain.lines().map(|line| line.split_whitespace().map(|word| image_path(word).map_or(word, |_| "image")).collect::<Vec<_>>().join(" "));
+    let lines = plain.lines().map(|line| line.split_whitespace().filter(|word| image_path(word).is_none()).collect::<Vec<_>>().join(" "));
     words(&lines.collect::<Vec<_>>().join("\n"))
+}
+
+/// A whole message's words, a message of images alone being the word "image".
+fn message_words(text: &str) -> String {
+    let said = said_words(text);
+    let image = text.contains("[Image #") || text.split_whitespace().any(|word| image_path(word).is_some());
+    if said.is_empty() && image { "image".into() } else { said }
 }
 
 fn without_urls(line: &str) -> String {
@@ -125,7 +132,7 @@ impl Corpus {
             "tool" => entry.command.clone().or_else(|| entry.description.clone()).unwrap_or_default(),
             _ => entry.text.clone().unwrap_or_default(),
         };
-        list.push(if entry.kind == "user" { said_words(&text) } else { words(&text) });
+        list.push(if entry.kind == "user" { message_words(&text) } else { words(&text) });
         if list.len() > CORPUS {
             list.remove(0);
         }
@@ -214,7 +221,7 @@ impl Reconciler {
         self.corpus.learn(entry);
         if entry.kind == "user" {
             let text = entry.text.as_deref().unwrap_or_default();
-            let said = said_words(text);
+            let said = message_words(text);
             // A message of only emoji has no words to match by.
             let sent = |message: &Message| covers(&said, &message.words) || message.words.is_empty() && message.text.trim() == text.trim();
             // Claude puts a dropped turn's prompt back in its input box, ahead of the next message.
@@ -375,7 +382,7 @@ impl Reconciler {
 
     /// Takes a message a device sent, or a new state for one held.
     pub fn message(&mut self, id: &str, text: &str, state: &'static str, now: Instant) {
-        let message = Message { id: id.into(), text: text.into(), words: said_words(text), state, at: now, nudged: false };
+        let message = Message { id: id.into(), text: text.into(), words: message_words(text), state, at: now, nudged: false };
         match self.messages.iter_mut().find(|held| held.id == id) {
             Some(held) => *held = message,
             None => self.messages.push(message),
@@ -454,7 +461,7 @@ impl Reconciler {
             if !self.idle.is_some_and(|since| now.duration_since(since.max(message.at)) >= LOST_AFTER) {
                 continue;
             }
-            let said = |entry: &&Entry| entry.kind == "user" && covers(&said_words(entry.text.as_deref().unwrap_or_default()), &message.words);
+            let said = |entry: &&Entry| entry.kind == "user" && covers(&message_words(entry.text.as_deref().unwrap_or_default()), &message.words);
             match held.iter().rev().find(said) {
                 Some(entry) => settled.push((message.id.clone(), entry.clone())),
                 None => (message.state, message.at) = (LOST, now),

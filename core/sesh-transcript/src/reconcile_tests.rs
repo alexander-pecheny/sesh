@@ -233,6 +233,11 @@ fn a_message_matches_its_entry_however_its_letters_or_images_are_spelled() {
     live.message("sent.2", "'/Users/me/.sesh/uploads/pasted-2026-10-10T131849.png' look", SENT, now);
     assert_eq!(live.deliver(&said("user", "на\u{0439}ти данные"), now), Some("sent.1".into()));
     assert_eq!(live.deliver(&said("user", "[Image #3] look"), now), Some("sent.2".into()));
+    // Claude puts the placeholder first, wherever the path was.
+    live.message("sent.3", "i've deployed. then tried to export\n\n'/Users/me/.sesh/uploads/pasted-2026-11-01T131733.png'", SENT, now);
+    assert_eq!(live.deliver(&said("user", "[Image #3]i've deployed. then tried to export"), now), Some("sent.3".into()));
+    live.message("sent.4", "/Users/me/.sesh/uploads/pasted-2026-11-01T131800.png", SENT, now);
+    assert_eq!(live.deliver(&said("user", "[Image #4]"), now), Some("sent.4".into()));
 }
 
 #[test]
