@@ -16,7 +16,8 @@ replaced those anyway.
 It follows every Agent herdr runs on the machine, Unfiled ones included, so adopting a
 session brings its whole log, and the sidebar marks and background work come from it too.
 An idle session costs a watched file; the screen is read every 100 ms only while its Agent
-works.
+works. The follower asks sesh-mux over its socket, and lists the panes again only when sesh-mux
+announces a change (ADR 0019).
 
 ## Considered options
 
