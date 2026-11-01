@@ -14,6 +14,7 @@ pub(crate) const CLAUDE_CONFIG_DIR_ENV_VAR: &str = "CLAUDE_CONFIG_DIR";
 pub(crate) const CODEX_HOME_ENV_VAR: &str = "CODEX_HOME";
 
 pub(crate) fn apply_pane_base_env(cmd: &mut CommandBuilder) {
+    cmd.env("SESH_MUX_ENV", "1");
     cmd.env(crate::api::SOCKET_PATH_ENV_VAR, crate::api::socket_path());
     if let Ok(executable) = crate::platform::launch_executable() {
         cmd.env("SESH_MUX_BIN_PATH", executable);

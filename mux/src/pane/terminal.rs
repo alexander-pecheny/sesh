@@ -12,7 +12,6 @@ use unicode_width::UnicodeWidthStr;
 
 use crate::layout::PaneId;
 
-
 use super::cursor::{CursorPositionSettleState, DecscusrTracker};
 use super::{
     input::{

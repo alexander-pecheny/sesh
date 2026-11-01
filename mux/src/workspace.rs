@@ -20,9 +20,7 @@ mod tab;
 
 use self::git::git_status_cache_key_for_space;
 pub use self::{
-    git::{
-        fallback_label_from_cwd, git_branch, git_space_metadata, GitSpaceMetadata,
-        },
+    git::{fallback_label_from_cwd, git_branch, git_space_metadata, GitSpaceMetadata},
     tab::Tab,
 };
 
@@ -34,8 +32,6 @@ pub struct WorktreeSpaceMembership {
     pub checkout_path: PathBuf,
     pub is_linked_worktree: bool,
 }
-
-
 
 pub(crate) fn discover_workspace_git_identity(
     cwd: &std::path::Path,

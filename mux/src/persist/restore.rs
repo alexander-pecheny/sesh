@@ -524,6 +524,7 @@ fn restore_tab(
             .and_then(|pane| pane.managed_agent_kind.as_deref())
             .and_then(crate::detect::parse_canonical_agent_label);
         let saved_launch_argv = saved_pane.and_then(|p| p.launch_argv.clone());
+        let saved_legacy_agent_pid = saved_pane.and_then(|p| p.legacy_agent_pid);
         let saved_agent_session = saved_pane.and_then(|p| p.agent_session.as_ref());
         let saved_history =
             old_id.and_then(|old_id| history.and_then(|history| history.panes.get(old_id)));
@@ -667,6 +668,9 @@ fn restore_tab(
                 }
                 if let Some(session) = restored_agent_session {
                     terminal.set_persisted_agent_session(session);
+                }
+                if was_imported {
+                    terminal.legacy_agent_pid = saved_legacy_agent_pid;
                 }
                 match (saved_agent_name, saved_managed_agent) {
                     (Some(agent_name), Some(agent)) if was_imported => {
@@ -1174,23 +1178,6 @@ mod tests {
     }
 
     #[test]
-    fn restore_rehydrates_agent_session_metadata() {
-        let session = super::super::snapshot::PaneAgentSessionSnapshot {
-            source: "sesh-mux:hermes".into(),
-            agent: "hermes".into(),
-            kind: crate::agent_resume::AgentSessionRefKind::Id,
-            value: "hermes-session".into(),
-            path: None,
-        };
-
-        let preserved = restored_terminal_agent_session(Some(&session), false)
-            .expect("restore should preserve metadata");
-        assert_eq!(preserved.source, "sesh-mux:hermes");
-        assert_eq!(preserved.agent, "hermes");
-        assert_eq!(preserved.session_ref.value, "hermes-session");
-    }
-
-    #[test]
     fn restore_does_not_rehydrate_duplicate_agent_session_metadata() {
         let session = super::super::snapshot::PaneAgentSessionSnapshot {
             source: "sesh-mux:pi".into(),
@@ -1204,87 +1191,6 @@ mod tests {
         assert!(take_restore_plan_for_snapshot(&session, true, &mut resumed).is_none());
 
         assert!(restored_terminal_agent_session(Some(&session), true).is_none());
-    }
-
-    #[tokio::test]
-    async fn restore_carries_persisted_agent_session_metadata() {
-        let cwd = std::env::current_dir().unwrap();
-        let snapshot = SessionSnapshot {
-            version: super::super::snapshot::SNAPSHOT_VERSION,
-            workspaces: vec![WorkspaceSnapshot {
-                id: Some("workspace".into()),
-                custom_name: None,
-                identity_cwd: cwd.clone(),
-                worktree_space: None,
-                public_pane_numbers: HashMap::new(),
-                next_public_pane_number: 0,
-                public_tab_numbers: Vec::new(),
-                next_public_tab_number: 0,
-                tabs: vec![TabSnapshot {
-                    custom_name: None,
-                    layout: LayoutSnapshot::Pane(0),
-                    panes: HashMap::from([(
-                        0,
-                        super::super::snapshot::PaneSnapshot {
-                            cwd,
-                            label: Some("reviewer".into()),
-                            agent_name: Some("reviewer".into()),
-                            managed_agent_kind: Some("opencode".into()),
-                            agent_session: Some(super::super::snapshot::PaneAgentSessionSnapshot {
-                                source: "sesh-mux:opencode".into(),
-                                agent: "opencode".into(),
-                                kind: crate::agent_resume::AgentSessionRefKind::Id,
-                                value: "opencode-session".into(),
-                                path: None,
-                            }),
-                            launch_argv: None,
-                        },
-                    )]),
-                    zoomed: false,
-                    focused: Some(0),
-                    root_pane: Some(0),
-                }],
-                active_tab: 0,
-            }],
-            active: Some(0),
-            selected: 0,
-            sidebar_width: None,
-            sidebar_section_split: None,
-            collapsed_space_keys: Default::default(),
-        };
-        let (events, _event_rx) = mpsc::channel(4);
-
-        let (_workspaces, terminals, _runtimes) = restore(
-            &snapshot,
-            None,
-            24,
-            80,
-            0,
-            test_restore_shell(),
-            crate::config::ShellModeConfig::NonLogin,
-            false,
-            events,
-            Arc::new(Notify::new()),
-            Arc::new(RenderSignal::new()),
-        );
-
-        let terminal = terminals
-            .values()
-            .next()
-            .expect("restored terminal should exist");
-        assert!(
-            !terminal.respawn_shell_on_exit,
-            "agent sessions should not use native restore lifecycle when resume_agents_on_restore is disabled"
-        );
-        assert_eq!(terminal.agent_name, None);
-        assert_eq!(terminal.manual_label.as_deref(), Some("reviewer"));
-        let session = terminal
-            .persisted_agent_session
-            .as_ref()
-            .expect("persisted agent session should survive restore");
-        assert_eq!(session.source, "sesh-mux:opencode");
-        assert_eq!(session.agent, "opencode");
-        assert_eq!(session.session_ref.value, "opencode-session");
     }
 
     #[tokio::test]
@@ -1313,6 +1219,7 @@ mod tests {
                         (
                             10,
                             super::super::snapshot::PaneSnapshot {
+                                legacy_agent_pid: None,
                                 cwd: cwd.clone(),
                                 label: None,
                                 agent_name: None,
@@ -1324,6 +1231,7 @@ mod tests {
                         (
                             20,
                             super::super::snapshot::PaneSnapshot {
+                                legacy_agent_pid: None,
                                 cwd: cwd.clone(),
                                 label: None,
                                 agent_name: None,
@@ -1426,6 +1334,7 @@ mod tests {
                     panes: HashMap::from([(
                         0,
                         super::super::snapshot::PaneSnapshot {
+                            legacy_agent_pid: None,
                             cwd,
                             label: None,
                             agent_name: None,
@@ -1635,6 +1544,7 @@ mod tests {
         panes.insert(
             0,
             super::super::snapshot::PaneSnapshot {
+                legacy_agent_pid: None,
                 cwd: cwd.clone(),
                 label: None,
                 agent_name: None,

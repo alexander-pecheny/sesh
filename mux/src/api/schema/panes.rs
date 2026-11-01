@@ -200,6 +200,10 @@ pub struct PaneInfo {
     pub permission: Option<PanePermissionInfo>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub scroll: Option<PaneScrollInfo>,
+    /// Whether the pane still runs the agent it held when imported from the server Sesh ran
+    /// before sesh-mux, whose hooks report to that server's socket.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub legacy: bool,
     pub revision: u64,
 }
 

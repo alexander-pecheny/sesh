@@ -67,6 +67,11 @@ fn run_handoff_import_server(socket_path: &Path, token: &str) -> io::Result<()> 
     let mut received = crate::server::handoff::receive(socket_path, token)?;
     crate::server::handoff::log_import_result(received.manifest.panes.len());
     let from_legacy = crate::server::handoff::is_legacy_manifest(&received.manifest);
+    let legacy = if from_legacy {
+        legacy::LegacyListener::beside_handoff_socket(socket_path)
+    } else {
+        legacy::LegacyListener::at(received.manifest.legacy_socket.take())
+    };
 
     let (api_tx, api_rx) = tokio::sync::mpsc::unbounded_channel();
     let event_hub = api::EventHub::default();
@@ -114,6 +119,7 @@ fn run_handoff_import_server(socket_path: &Path, token: &str) -> io::Result<()> 
         )?;
         let mut server =
             HeadlessServer::new(app, Some(api_tx.clone()), Some(api_server), should_quit)?;
+        server.legacy = legacy;
         crate::server::handoff::report_ready(&mut received.stream)?;
         crate::server::handoff::wait_committed(&mut received.stream)?;
         server.app.assume_handoff_ownership();

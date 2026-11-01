@@ -3715,7 +3715,6 @@ mod tests {
             .unwrap());
     }
 
-
     #[test]
     fn kitty_graphics_unicode_placeholder_placement_is_queryable() {
         let mut terminal = Terminal::new(10, 5, 0).unwrap();

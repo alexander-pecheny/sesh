@@ -90,7 +90,7 @@ pub struct HeadlessServer {
     shutting_down: bool,
     handoff_in_progress: bool,
     pub(super) pending_handoff_repaint_nudge: bool,
-    legacy: legacy::LegacyListener,
+    pub(super) legacy: legacy::LegacyListener,
     should_quit: Arc<AtomicBool>,
     host_shutdown_requested: Arc<AtomicBool>,
     server_event_rx: mpsc::Receiver<ServerEvent>,

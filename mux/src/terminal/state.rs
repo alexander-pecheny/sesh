@@ -141,6 +141,9 @@ pub struct TerminalState {
     pub terminal_title: Option<String>,
     pub manual_label: Option<String>,
     pub agent_name: Option<String>,
+    /// Process group of an agent this pane held when it was imported from the server Sesh ran
+    /// before sesh-mux; cleared once that process exits or leaves the foreground.
+    pub legacy_agent_pid: Option<u32>,
     agent_name_owner: Option<AgentNameOwner>,
     managed_agent: Option<ManagedAgent>,
     managed_agent_launch_session: Option<crate::agent_resume::PersistedAgentSession>,
@@ -180,6 +183,7 @@ impl TerminalState {
             terminal_title: None,
             manual_label: None,
             agent_name: None,
+            legacy_agent_pid: None,
             agent_name_owner: None,
             managed_agent: None,
             managed_agent_launch_session: None,

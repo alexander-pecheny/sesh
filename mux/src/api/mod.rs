@@ -7,8 +7,8 @@ mod subscriptions;
 mod wait;
 
 pub use event_hub::EventHub;
-pub(crate) use server::start_server_with_stop_control;
 pub use server::ServerHandle;
+pub(crate) use server::{start_legacy_server, start_server_with_stop_control};
 pub use status::RuntimeStatus;
 
 use std::path::PathBuf;

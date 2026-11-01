@@ -109,10 +109,13 @@ pub struct PaneSnapshot {
     pub agent_session: Option<PaneAgentSessionSnapshot>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub launch_argv: Option<Vec<String>>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub legacy_agent_pid: Option<u32>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct PaneAgentSessionSnapshot {
+    #[serde(deserialize_with = "crate::agent_resume::deserialize_canonical_source")]
     pub source: String,
     pub agent: String,
     pub kind: crate::agent_resume::AgentSessionRefKind,
@@ -343,6 +346,7 @@ fn capture_tab(
             })
             .unwrap_or_default();
         let launch_argv = terminal.and_then(|terminal| terminal.launch_argv.clone());
+        let legacy_agent_pid = terminal.and_then(|terminal| terminal.legacy_agent_pid);
         let agent_session = terminal.and_then(|terminal| {
             if let Some(authority) = terminal.hook_authority.as_ref() {
                 if let Some(session_ref) = authority.session_ref.as_ref() {
@@ -375,6 +379,7 @@ fn capture_tab(
                 managed_agent_kind,
                 agent_session,
                 launch_argv,
+                legacy_agent_pid,
             },
         );
     }
@@ -674,6 +679,7 @@ mod tests {
                 managed_agent_kind: None,
                 agent_session: None,
                 launch_argv: None,
+                legacy_agent_pid: None,
             },
         );
         panes.insert(
@@ -685,6 +691,7 @@ mod tests {
                 managed_agent_kind: None,
                 agent_session: None,
                 launch_argv: None,
+                legacy_agent_pid: None,
             },
         );
 
@@ -1009,6 +1016,7 @@ mod tests {
                 managed_agent_kind: None,
                 agent_session: None,
                 launch_argv: None,
+                legacy_agent_pid: None,
             },
         );
         panes.insert(
@@ -1022,6 +1030,7 @@ mod tests {
                 managed_agent_kind: None,
                 agent_session: None,
                 launch_argv: None,
+                legacy_agent_pid: None,
             },
         );
 

@@ -437,7 +437,6 @@ impl TerminalRuntime {
 
 #[cfg(test)]
 impl TerminalRuntime {
-
     pub(crate) fn test_with_channel_capacity(
         cols: u16,
         rows: u16,
@@ -471,5 +470,4 @@ impl TerminalRuntime {
             bytes,
         ))
     }
-
 }

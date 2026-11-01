@@ -62,7 +62,48 @@ pub(crate) fn start_server_with_stop_control(
     event_hub: EventHub,
     server_stop: Arc<AtomicBool>,
 ) -> std::io::Result<ServerHandle> {
-    start_server_inner(api_tx, event_hub, default_capabilities(), Some(server_stop))
+    start_server_inner(
+        socket_path(),
+        false,
+        api_tx,
+        event_hub,
+        default_capabilities(),
+        Some(server_stop),
+    )
+}
+
+/// Serves the API on the socket of the server Sesh ran before sesh-mux, for agents that outlived
+/// the handoff and still report there with that server's hook sources.
+pub(crate) fn start_legacy_server(
+    path: PathBuf,
+    api_tx: ApiRequestSender,
+    event_hub: EventHub,
+) -> std::io::Result<ServerHandle> {
+    start_server_inner(path, true, api_tx, event_hub, default_capabilities(), None)
+}
+
+fn canonicalize_legacy_sources(method: &mut Method) {
+    let canonical = |source: &mut String| {
+        *source = crate::agent_resume::canonical_source(source).into_owned();
+    };
+    match method {
+        Method::PaneReportAgent(params) => canonical(&mut params.source),
+        Method::PaneReportAgentSession(params) => canonical(&mut params.source),
+        Method::PaneReportPermission(params) => canonical(&mut params.source),
+        Method::PaneReportMetadata(params) => {
+            canonical(&mut params.source);
+            if let Some(source) = params.applies_to_source.as_mut() {
+                canonical(source);
+            }
+        }
+        Method::PaneClearAgentAuthority(params) => {
+            if let Some(source) = params.source.as_mut() {
+                canonical(source);
+            }
+        }
+        Method::PaneReleaseAgent(params) => canonical(&mut params.source),
+        _ => {}
+    }
 }
 
 fn default_capabilities() -> Option<ServerCapabilities> {
@@ -74,12 +115,13 @@ fn default_capabilities() -> Option<ServerCapabilities> {
 }
 
 fn start_server_inner(
+    path: PathBuf,
+    legacy: bool,
     api_tx: ApiRequestSender,
     event_hub: EventHub,
     capabilities: Option<ServerCapabilities>,
     server_stop: Option<Arc<AtomicBool>>,
 ) -> std::io::Result<ServerHandle> {
-    let path = socket_path();
     prepare_socket_path(&path)?;
 
     let listener = bind_local_listener(&path)?;
@@ -106,6 +148,7 @@ fn start_server_inner(
                             &connection_running,
                             capabilities,
                             server_stop.as_ref(),
+                            legacy,
                         ) {
                             warn!(err = %err, "api connection failed");
                         }
@@ -149,7 +192,15 @@ fn handle_connection(
     running: &Arc<AtomicBool>,
     capabilities: Option<ServerCapabilities>,
 ) -> std::io::Result<()> {
-    handle_connection_with_stop(stream, api_tx, event_hub, running, capabilities, None)
+    handle_connection_with_stop(
+        stream,
+        api_tx,
+        event_hub,
+        running,
+        capabilities,
+        None,
+        false,
+    )
 }
 
 fn handle_connection_with_stop(
@@ -159,6 +210,7 @@ fn handle_connection_with_stop(
     running: &Arc<AtomicBool>,
     capabilities: Option<ServerCapabilities>,
     server_stop: Option<&Arc<AtomicBool>>,
+    legacy: bool,
 ) -> std::io::Result<()> {
     if let Err(err) = stream.set_send_timeout(Some(STREAM_WRITE_TIMEOUT)) {
         debug!(err = %err, "api connection write timeout unavailable");
@@ -173,7 +225,7 @@ fn handle_connection_with_stop(
         return Ok(());
     }
 
-    let request = match serde_json::from_str::<Request>(line) {
+    let mut request = match serde_json::from_str::<Request>(line) {
         Ok(request) => request,
         Err(request_error) => {
             // Recover correlation without relaxing typed request validation or accepting
@@ -203,6 +255,9 @@ fn handle_connection_with_stop(
         }
     };
 
+    if legacy {
+        canonicalize_legacy_sources(&mut request.method);
+    }
     let request_id = request.id.clone();
     let method = api_method_name(&request.method);
     let changes_ui = false;

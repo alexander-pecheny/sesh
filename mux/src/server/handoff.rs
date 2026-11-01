@@ -31,6 +31,9 @@ pub(crate) struct HandoffManifest {
     /// "sesh-mux"; absent from manifests written by older servers.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub source_name: Option<String>,
+    /// The old socket legacy agents report to, while any remain.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub legacy_socket: Option<PathBuf>,
 }
 
 pub(crate) struct ReceivedHandoff {
@@ -272,6 +275,7 @@ pub(crate) fn manifest_for(
     panes: Vec<crate::handoff_runtime::HandoffRuntimeState>,
     expected_protocol: Option<u32>,
     expected_version: Option<String>,
+    legacy_socket: Option<PathBuf>,
 ) -> HandoffManifest {
     HandoffManifest {
         version: HANDOFF_VERSION,
@@ -282,6 +286,7 @@ pub(crate) fn manifest_for(
         snapshot,
         panes,
         source_name: Some(SOURCE_NAME.to_owned()),
+        legacy_socket,
     }
 }
 
@@ -499,7 +504,7 @@ mod tests {
 
     #[test]
     fn manifests_say_whether_an_older_server_wrote_them() {
-        let manifest = manifest_for(empty_snapshot(), Vec::new(), None, None);
+        let manifest = manifest_for(empty_snapshot(), Vec::new(), None, None, None);
         assert!(!is_legacy_manifest(&manifest));
         let mut value = serde_json::to_value(&manifest).expect("manifest should serialize");
         let object = value

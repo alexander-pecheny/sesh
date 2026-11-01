@@ -352,6 +352,7 @@ impl App {
                     input: permission.input.clone(),
                 }),
             scroll,
+            legacy: terminal.legacy_agent_pid.is_some(),
             revision: terminal.revision,
         })
     }

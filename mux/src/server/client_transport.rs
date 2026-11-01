@@ -34,7 +34,6 @@ pub(crate) struct ClientWriter {
     pub(crate) render: ClientRenderWriter,
 }
 
-
 #[derive(Debug)]
 pub(crate) struct ClientControlWriter {
     queue: Arc<ClientWriterQueue>,
