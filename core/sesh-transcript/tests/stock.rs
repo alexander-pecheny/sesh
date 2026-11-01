@@ -1,9 +1,9 @@
-//! The helper against a stand-in for upstream herdr, which reports Claude's session id but no
+//! The helper against a stand-in for sesh-mux's socket that reports Claude's session id but no
 //! Transcript path and no permission prompts.
 
 use std::io::{BufRead, BufReader, Write};
 use std::path::{Path, PathBuf};
-use std::os::unix::net::UnixStream;
+use std::os::unix::net::{UnixListener, UnixStream};
 use std::process::{Child, Command, Stdio};
 use std::sync::mpsc;
 use std::time::Duration;
@@ -19,24 +19,14 @@ impl Host {
         // Short, as the follower's socket path under it must be.
         let root = PathBuf::from(format!("/tmp/sesh-{name}-{}", std::process::id()));
         std::fs::create_dir_all(root.join("claude/projects/-work")).unwrap();
-        std::fs::create_dir_all(root.join(".sesh/bin")).unwrap();
-        let mux = root.join(".sesh/bin/sesh-mux");
-        // Answers what it is asked of the pane from files, and notes every input it is given;
-        // while a `hold` file exists, an input waits, having said in `playing` that it started.
-        let script = r#"#!/bin/sh
-dir="$(dirname "$0")/../.."
-case "$1 $2" in
-'pane get') exec cat "$dir/pane.json" ;;
-'pane list') exec cat "$dir/panes.json" ;;
-'agent list') echo '{"result":{"agents":[]}}' ;;
-'pane read') exec cat "$dir/screen.txt" ;;
-'pane send-keys'|'pane send-text'|'pane close'|'agent prompt') echo "$*" >> "$dir/playing"; while [ -e "$dir/hold" ]; do sleep 0.01; done; echo "$*" >> "$dir/inputs" ;;
-*) exit 1 ;;
-esac
-"#;
-        std::fs::write(&mux, script).unwrap();
-        let executable = std::os::unix::fs::PermissionsExt::from_mode(0o755);
-        std::fs::set_permissions(&mux, executable).unwrap();
+        let mux = UnixListener::bind(root.join("mux.sock")).unwrap();
+        let dir = root.clone();
+        std::thread::spawn(move || {
+            for stream in mux.incoming() {
+                let dir = dir.clone();
+                std::thread::spawn(move || answer(&dir, stream.unwrap()));
+            }
+        });
         Self { root }
     }
 
@@ -74,6 +64,7 @@ esac
         command
             .args(args)
             .env("HOME", &self.root)
+            .env("SESH_MUX_SOCKET_PATH", self.root.join("mux.sock"))
             .env("CLAUDE_CONFIG_DIR", self.root.join("claude"));
         command
     }
@@ -124,6 +115,45 @@ esac
     fn inputs(&self) -> String {
         std::fs::read_to_string(self.root.join("inputs")).unwrap_or_default()
     }
+}
+
+/// Answers one request on the stand-in's socket from the files in `dir`, and notes every input
+/// it is given; while a `hold` file exists, an input waits, having said in `playing` that it started.
+fn answer(dir: &Path, stream: UnixStream) {
+    let mut line = String::new();
+    if BufReader::new(&stream).read_line(&mut line).is_err() {
+        return;
+    }
+    let request: Value = serde_json::from_str(&line).unwrap_or_default();
+    let params = &request["params"];
+    let read = |file: &str| std::fs::read_to_string(dir.join(file)).unwrap_or_default();
+    let pane = params["pane_id"].as_str().or(params["target"].as_str()).unwrap_or_default();
+    let input = match request["method"].as_str().unwrap_or_default() {
+        "pane.send_keys" => Some(format!("pane send-keys {pane} {}", params["keys"].as_array().unwrap().iter().map(|key| key.as_str().unwrap()).collect::<Vec<_>>().join(" "))),
+        "pane.send_text" => Some(format!("pane send-text {pane} {}", params["text"].as_str().unwrap())),
+        "pane.close" => Some(format!("pane close {pane}")),
+        "agent.prompt" => Some(format!("agent prompt {pane} {}", params["text"].as_str().unwrap())),
+        _ => None,
+    };
+    let reply = match (request["method"].as_str().unwrap_or_default(), input) {
+        (_, Some(input)) => {
+            let note = |file: &str| writeln!(std::fs::OpenOptions::new().create(true).append(true).open(dir.join(file)).unwrap(), "{input}").unwrap();
+            note("playing");
+            while dir.join("hold").exists() {
+                std::thread::sleep(Duration::from_millis(10));
+            }
+            note("inputs");
+            json!({"result": {"type": "ok"}}).to_string()
+        }
+        ("pane.get", _) => read("pane.json"),
+        ("pane.list", _) => read("panes.json"),
+        ("agent.start", _) => json!({"result": {"type": "ok"}}).to_string(),
+        ("agent.get", _) => json!({"result": {"agent": serde_json::from_str::<Value>(&read("agent.json")).unwrap()}}).to_string(),
+        ("agent.list", _) => json!({"result": {"agents": []}}).to_string(),
+        ("pane.read", _) => json!({"result": {"read": {"text": read("screen.txt")}}}).to_string(),
+        (method, _) => json!({"error": {"code": "unknown_method", "message": method}}).to_string(),
+    };
+    let _ = writeln!(&stream, "{}", reply.trim());
 }
 
 impl Drop for Host {
