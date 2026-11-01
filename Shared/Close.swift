@@ -23,7 +23,7 @@ struct Close {
         /// Every folder the Task's Agent sessions work in apart from a repository's own, the
         /// Task's own first.
         let worktrees: [Worktree]
-        /// The Task's herdr Workspace on its own machine, closed with its Worktree.
+        /// The Task's sesh-mux Workspace on its own machine, closed with its Worktree.
         let workspace: String?
         /// The Agent sessions whose Transcripts are copied one last time.
         let sessions: [Record]
@@ -45,7 +45,7 @@ struct Close {
     let sessions: [Record]
     let runner: (String?) -> Runner
     let copy: ([Record]) async -> Void
-    /// Whether a session's pane may still hold its own Agent, not another herdr put there since.
+    /// Whether a session's pane may still hold its own Agent, not another sesh-mux put there since.
     var holdsPane: (Record) -> Bool = { $0.body.pane != nil }
 
     func plan() async -> Plan {
@@ -56,7 +56,7 @@ struct Close {
         }
         var seen = Set<String>()
         let wanted = (own + others).filter { seen.insert("\(machine($0.0)):\($0.2)").inserted }
-        async let open = Herdr.workspaces(on: runner(task.body.machine))
+        async let open = Mux.workspaces(on: runner(task.body.machine))
         let found = await withTaskGroup(of: (String, [String: String]).self) { group in
             for machine in Set(wanted.map { machine($0.0) }) {
                 let paths = wanted.filter { self.machine($0.0) == machine }.map(\.2)
@@ -85,8 +85,8 @@ struct Close {
             _ = await runner(session.body.machine).follower.stop(session.body.pane ?? "")
         }
         let own = { (worktree: Worktree) in worktree.machine == task.body.machine && worktree.path == task.body.path }
-        // herdr closes a Workspace with its last pane, so stopping the Agents may have closed it.
-        let open = await Herdr.workspaces(on: runner(task.body.machine))
+        // sesh-mux closes a Workspace with its last pane, so stopping the Agents may have closed it.
+        let open = await Mux.workspaces(on: runner(task.body.machine))
         let workspace = plan.workspace.flatMap { open[$0] != nil ? $0 : nil }
         var failures: [Failure] = []
         for worktree in plan.removed {
@@ -95,14 +95,14 @@ struct Close {
             // git refuses any worktree with a submodule checked out unless forced, however clean.
             let force = await Git.clean(worktree.path, on: runner) || discard
             let ran = if own(worktree), let workspace {
-                await Herdr.removeWorktree(of: workspace, force: force, on: runner)
+                await Mux.removeWorktree(of: workspace, force: force, on: runner)
             } else {
                 await Git.removeWorktree(worktree.path, of: worktree.repo, force: force, on: runner)
             }
             if !ran.ok { failures.append(Failure(worktree: worktree, problem: ran.problem)) }
         }
         if !plan.removed.contains(where: own), let workspace {
-            await Herdr.closeWorkspace(workspace, on: runner(task.body.machine))
+            await Mux.closeWorkspace(workspace, on: runner(task.body.machine))
         }
         // A Task closes once its work is merged, which the main checkout should then show.
         var updated = Set<String>()

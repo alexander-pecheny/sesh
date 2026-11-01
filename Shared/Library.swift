@@ -73,7 +73,7 @@ final class Library: ObservableObject {
         var current: [String: TabItem]
     }
 
-    /// What was open survives a restart, Terminals included: their shells run in herdr.
+    /// What was open survives a restart, Terminals included: their shells run in sesh-mux.
     private func keep() {
         UserDefaults.standard.set(try? JSONEncoder().encode(Kept(selection: selection, tabs: tabs, current: current)), forKey: "tabs")
     }
@@ -194,7 +194,7 @@ final class Library: ObservableObject {
     /// Whether the session's pane still runs its Agent; a pane whose Agent exited is a bare shell.
     private func runs(_ session: Record, on machine: Machine) async -> Bool {
         _ = await machine.prepare()
-        if case .found(let pane) = await Herdr.look(for: session.body.pane ?? "", on: machine) { return pane.agent != nil }
+        if case .found(let pane) = await Mux.look(for: session.body.pane ?? "", on: machine) { return pane.agent != nil }
         return false
     }
 
@@ -235,7 +235,7 @@ final class Library: ObservableObject {
         let agent: Agent
         let cwd: String
         let name: String
-        /// herdr's name for the Agent, which its session keeps once adopted.
+        /// sesh-mux's name for the Agent, which its session keeps once adopted.
         let named: String?
         var id: String { "\(machine ?? ""):\(pane)" }
     }
@@ -296,6 +296,32 @@ final class Library: ObservableObject {
         }
     }
 
+    /// Each machine's panes herdr-sesh handed over whose Agent still carries herdr's names, asked
+    /// once per run: the set only shrinks, as each Agent is started afresh.
+    private var legacy: [String: Set<String>] = [:]
+    private var renewing = false
+
+    /// Starts each idle Agent herdr-sesh handed over afresh on its Transcript, so it carries
+    /// sesh-mux's names and its hook reports to sesh-mux. A Task on screen is left alone.
+    private func renew() async {
+        guard !renewing else { return }
+        renewing = true
+        defer { renewing = false }
+        let sessions = vaults.flatMap { $0.all(.session) }.filter(holdsPane)
+        let holding = Set(sessions.map { $0.body.machine ?? "" })
+        for id in listed where !holding.contains(id) && legacy[id] == nil { legacy[id] = [] }
+        for machine in Set(sessions.map { TaskActions.machine($0.body.machine) }) where listed.contains(machine.id) {
+            if legacy[machine.id] == nil { legacy[machine.id] = await Mux.legacyPanes(on: machine) }
+            for session in sessions where TaskActions.machine(session.body.machine) == machine && session.body.task != selection {
+                guard let pane = session.body.pane, legacy[machine.id]?.contains(pane) == true,
+                      let mark = mark(of: session), mark < .background else { continue }
+                legacy[machine.id]?.remove(pane)
+                await end(session)
+                await resume(session)
+            }
+        }
+    }
+
     private func summarize(_ text: String, on machine: String) {
         guard let summary = try? JSONDecoder().decode(Summary.self, from: Data(text.utf8)) else { return }
         guard summary.t == "session", let pane = summary.session else { return }
@@ -338,11 +364,13 @@ final class Library: ObservableObject {
         if busy != counts { busy = counts }
         turnOver = over
         markSeen()
+        // An Agent going idle is the moment one handed over can be started afresh.
+        if listed.contains(where: { legacy[$0] == nil }) || legacy.values.contains(where: { !$0.isEmpty }) { Task { await renew() } }
     }
 
     // MARK: Marks
 
-    /// What herdr last said of a pane: its status, and how many turns its Agent has finished.
+    /// What sesh-mux last said of a pane: its status, and how many turns its Agent has finished.
     struct Live: Equatable {
         let status: String
         let done: UInt64
@@ -356,7 +384,7 @@ final class Library: ObservableObject {
     @Published private(set) var live: [String: Live] = [:]
     /// How much each idle Claude pane left running in the background, by `machine:pane`.
     @Published private(set) var busy: [String: Int] = [:]
-    /// Claude panes whose turn is over, so herdr's "working" there is only background work.
+    /// Claude panes whose turn is over, so sesh-mux's "working" there is only background work.
     private var turnOver: Set<String> = []
 
     /// When each pane's Transcript last had a message, in milliseconds since 1970.
@@ -415,7 +443,7 @@ final class Library: ObservableObject {
     /// they looked elsewhere, or while the app was closed, still shows.
     private var seen: [String: UInt64] = UserDefaults.standard.dictionary(forKey: "seen") as? [String: UInt64] ?? [:]
 
-    /// `machine:pane` while the pane runs the session's own Agent. herdr gives a closed pane's id
+    /// `machine:pane` while the pane runs the session's own Agent. sesh-mux gives a closed pane's id
     /// to the next, so a session whose pane holds another Agent keys nothing live.
     private func key(_ session: Record) -> String {
         let key = "\(session.body.machine ?? ""):\(session.body.pane ?? "")"
@@ -423,11 +451,17 @@ final class Library: ObservableObject {
         return key + "#replaced"
     }
 
-    /// Whether `occupant` is the session's own Agent: by herdr's name for it, or, for a session
+    /// Whether `occupant` is the session's own Agent: by sesh-mux's name for it, or, for a session
     /// recorded before Sesh kept names, by its folder.
     private static func owns(_ session: Record, _ occupant: Occupant) -> Bool {
-        if let name = session.body.name { return occupant.name == name }
-        guard let path = session.body.path, let cwd = occupant.cwd else { return true }
+        owns(session, name: occupant.name, cwd: occupant.cwd)
+    }
+
+    /// Whether the Agent named `name`, working in `cwd`, is the session's own rather than one
+    /// sesh-mux put in its pane later.
+    static func owns(_ session: Record, name: String?, cwd: String?) -> Bool {
+        if let mine = session.body.name { return name == mine }
+        guard let path = session.body.path, let cwd else { return true }
         return (path as NSString).lastPathComponent == (cwd as NSString).lastPathComponent
     }
 
@@ -543,8 +577,8 @@ final class Library: ObservableObject {
 
     // MARK: Terminals
 
-    /// Attached views of herdr panes, by Terminal record or by Agent session; an attach is a
-    /// view only, and the pane keeps running in herdr when it goes.
+    /// Attached views of sesh-mux panes, by Terminal record or by Agent session; an attach is a
+    /// view only, and the pane keeps running in sesh-mux when it goes.
     let terminals = Terminals()
     /// Which Agent sessions show their own terminal rather than their Conversation.
     @Published var terminalFace: Set<String> = []
@@ -553,7 +587,7 @@ final class Library: ObservableObject {
 
     /// The machines whose Agents the last poll listed, by alias, "" for the Mac.
     @Published private(set) var listed: Set<String> = []
-    /// Agent sessions being started again, which herdr lists only once their Agent is up.
+    /// Agent sessions being started again, which sesh-mux lists only once their Agent is up.
     @Published private(set) var resuming: Set<String> = []
     /// Bumped when a session's Conversation must be loaded afresh, from its pane or its copy.
     @Published private(set) var reloads: [String: Int] = [:]
@@ -611,7 +645,7 @@ final class Library: ObservableObject {
         reloads[id, default: 0] += 1
     }
 
-    /// A shell in a new herdr pane of the Task's Workspace, recorded so it reopens after a
+    /// A shell in a new sesh-mux pane of the Task's Workspace, recorded so it reopens after a
     /// restart: in the Worktree when the machine has it, else at home.
     func openTerminal(in task: Record, on machine: Machine) async -> String? {
         guard let vault = vault(of: task.id) else { return nil }
@@ -633,7 +667,7 @@ final class Library: ObservableObject {
         guard let vault = vault(of: id), let record = vault.records[id] else { return }
         if let pane = record.body.pane {
             let machine = TaskActions.machine(record.body.machine)
-            Task { await Herdr.close(pane, on: machine) }
+            Task { await Mux.close(pane, on: machine) }
         }
         vault.delete(record)
     }

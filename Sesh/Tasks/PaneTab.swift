@@ -1,6 +1,6 @@
 import SwiftUI
 
-/// A herdr pane's own screen, attached over an ordinary Session to its Host, with the keys
+/// A sesh-mux pane's own screen, attached over an ordinary Session to its Host, with the keys
 /// row, the Editor and Uploads as in any terminal. When the attach ends because the pane is
 /// gone, the Tab goes too; when only the connection went, Reconnect attaches again.
 struct PaneTab: View {
@@ -57,8 +57,8 @@ private struct Attached: View {
         SessionTab(session: session)
             .onChange(of: session.ended) { _, ended in
                 guard ended else { return }
-                // Only a pane herdr says is gone closes the Tab; a dropped connection reconnects.
-                Task { if case .gone = await Herdr.look(for: pane, on: machine) { gone() } }
+                // Only a pane sesh-mux says is gone closes the Tab; a dropped connection reconnects.
+                Task { if case .gone = await Mux.look(for: pane, on: machine) { gone() } }
             }
     }
 }

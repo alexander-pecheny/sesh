@@ -1,24 +1,25 @@
 import Foundation
 
-/// What Sesh asks of herdr on any machine, through whichever Runner reaches it.
+/// What Sesh asks of sesh-mux, its terminal server, on any machine, through whichever Runner
+/// reaches it.
 @MainActor
-enum Herdr {
-    /// The herdr fork as Sesh installs it, with a server of its own apart from any herdr the
-    /// user runs (ADR 0009).
-    nonisolated static let command = "~/.sesh/bin/herdr-sesh --session sesh"
+enum Mux {
+    nonisolated static let command = "~/.sesh/bin/sesh-mux"
+    /// The herdr fork Sesh ran before sesh-mux, which a Host may still run with live Agents.
+    nonisolated static let old = "~/.sesh/bin/herdr-sesh --session sesh"
 
-    /// Starts herdr-sesh in place of a running server, keeping its panes; installed with it.
+    /// Starts sesh-mux in place of a running server, keeping its panes; installed with it.
     nonisolated static let importer = """
-        cat > ~/.sesh/bin/herdr-sesh-import <<'EOF'
+        cat > ~/.sesh/bin/sesh-mux-import <<'EOF'
         #!/bin/sh
-        unset HERDR_SOCKET_PATH HERDR_CLIENT_SOCKET_PATH
-        HERDR_SESSION=sesh exec "$HOME/.sesh/bin/herdr-sesh" "$@"
+        unset SESH_MUX_SOCKET_PATH
+        exec "$HOME/.sesh/bin/sesh-mux" "$@"
         EOF
-        chmod 755 ~/.sesh/bin/herdr-sesh-import
+        chmod 755 ~/.sesh/bin/sesh-mux-import
         """
 
-    /// Installs herdr's hooks for each Agent configured on the machine that lacks them. Without
-    /// them herdr never learns a Claude or Codex session id, and the helper cannot find its Transcript.
+    /// Installs sesh-mux's hooks for each Agent configured on the machine that lacks them. Without
+    /// them sesh-mux never learns a Claude or Codex session id, and the helper cannot find its Transcript.
     nonisolated static let integrations = """
         hooks=$(\(command) integration status 2>/dev/null)
         for agent in claude codex pi; do
@@ -29,37 +30,30 @@ enum Herdr {
         true
         """
 
-    /// Shell lines that start Sesh's herdr server where it is down, or fail saying why they
-    /// could not. Where it has never run, the user's own herdr server becomes it, panes and
-    /// all, so Agents started before herdr-sesh carry on; `upgrade` hands a running one over to
-    /// the herdr-sesh just installed the same way.
+    /// Shell lines that start sesh-mux where it is down, or fail saying why they could not. A
+    /// Host still running herdr-sesh hands its panes over, Agents and all, and keeps a herdr-sesh
+    /// that is sesh-mux for older apps; `upgrade` hands a running sesh-mux over to the one just
+    /// installed the same way.
     nonisolated static func wake(upgrade: Bool) -> String {
-        let handoff = "server live-handoff --import-exe ~/.sesh/bin/herdr-sesh-import"
-        let user = "env -u HERDR_SOCKET_PATH -u HERDR_SESSION herdr"
+        let handoff = "server live-handoff --import-exe ~/.sesh/bin/sesh-mux-import"
+        let up = "\(command) workspace list >/dev/null 2>&1"
+        let wait = "for i in 1 2 3 4 5 6 7 8 9 10; do \(up) && break; sleep 1; done"
         return """
-            if \(command) workspace list >/dev/null 2>&1; then
-                \(upgrade ? "\(command) \(handoff) >/dev/null 2>&1" : ":")
+            if \(up); then
+                \(upgrade ? "\(command) \(handoff) >/dev/null 2>&1; \(wait)" : ":")
+            elif [ -x ~/.sesh/bin/herdr-sesh ] && [ ! -L ~/.sesh/bin/herdr-sesh ] && \(old) workspace list >/dev/null 2>&1; then
+                failed=$(\(old) \(handoff) 2>&1) || { echo "herdr-sesh would not hand its panes to sesh-mux: $failed" >&2; exit 1; }
+                \(wait)
+                # Left in place, the old layout would come back if herdr-sesh ever started again.
+                layout=${XDG_CONFIG_HOME:-$HOME/.config}/herdr/sessions/sesh/session.json
+                [ ! -e "$layout" ] || mv "$layout" "$layout.moved-to-sesh-mux"
             else
-                if [ ! -e ~/.sesh/herdr-moved ] && \(user) workspace list >/dev/null 2>&1; then
-                    if moved=$(\(user) \(handoff) 2>&1); then
-                        # Left in place, the old layout would come back in the user's herdr, its
-                        # Agents resumed a second time.
-                        for i in 1 2 3 4 5; do \(user) workspace list >/dev/null 2>&1 || break; sleep 1; done
-                        layout=${XDG_CONFIG_HOME:-$HOME/.config}/herdr/session.json
-                        [ ! -e "$layout" ] || mv "$layout" "$layout.moved-to-sesh"
-                    else
-                        failed=$moved
-                    fi
-                fi
-                if [ -z "${failed-}" ]; then
-                    touch ~/.sesh/herdr-moved
-                    if ! \(command) workspace list >/dev/null 2>&1; then
-                        nohup \(command) server </dev/null >/dev/null 2>&1 &
-                    fi
-                    for i in 1 2 3 4 5; do \(command) workspace list >/dev/null 2>&1 && break; sleep 1; done
-                fi
-                \(command) workspace list >/dev/null 2>&1 || { echo "${failed:-herdr-sesh did not start}" >&2; exit 1; }
+                nohup \(command) server </dev/null >/dev/null 2>&1 &
+                \(wait)
             fi
+            \(up) || { echo "sesh-mux did not start" >&2; exit 1; }
+            # Older apps and helpers still call herdr-sesh.
+            [ -L ~/.sesh/bin/herdr-sesh ] || ln -sf sesh-mux ~/.sesh/bin/herdr-sesh
             """
     }
 
@@ -77,7 +71,7 @@ enum Herdr {
                        config: String? = nil, remote: Bool = true, on runner: Runner) async -> String? {
         if agent == .claude, let config, !config.isEmpty {
             let dir = shellPath(config)
-            _ = await runner.run("[ -e \(dir)/hooks/herdr-agent-state.sh ] || CLAUDE_CONFIG_DIR=\(dir) \(command) integration install claude")
+            _ = await runner.run("[ -e \(dir)/hooks/sesh-mux-agent-state.sh ] || CLAUDE_CONFIG_DIR=\(dir) \(command) integration install claude")
             _ = await runner.run("\(command) pane run \(quote(pane)) \(quote("export CLAUDE_CONFIG_DIR=\(shellPath(config))"))")
         }
         var ran = await runner.run(
@@ -116,7 +110,7 @@ enum Herdr {
         let pane: String
         var path: String?
         var branch: String?
-        /// herdr already had a Workspace on this worktree, whose pane may hold an Agent.
+        /// sesh-mux already had a Workspace on this worktree, whose pane may hold an Agent.
         var reused = false
     }
 
@@ -140,7 +134,7 @@ enum Herdr {
         guard ran.ok else { return .failure(Failure(ran.problem)) }
         guard let result = try? JSONDecoder().decode(Response.self, from: Data(ran.out.utf8)).result,
               let pane = result.root_pane?.pane_id
-        else { return .failure(Failure("herdr said something Sesh cannot read")) }
+        else { return .failure(Failure("sesh-mux said something Sesh cannot read")) }
         return .success(Opened(
             workspace: result.workspace?.workspace_id ?? "", pane: pane,
             path: result.worktree?.path, branch: result.worktree?.branch, reused: result.already_open == true))
@@ -151,7 +145,7 @@ enum Herdr {
         init(_ message: String) { self.message = message }
     }
 
-    /// `branch` of `repo` in its own worktree, as a herdr Workspace labelled `label`: the worktree
+    /// `branch` of `repo` in its own worktree, as a sesh-mux Workspace labelled `label`: the worktree
     /// the branch already has, or else a new one.
     static func worktree(_ repo: String, branch: String, label: String, on runner: Runner) async -> Result<Opened, Failure> {
         let args = "--cwd \(quote(repo)) --branch \(quote(branch)) --label \(quote(label)) --no-focus"
@@ -175,21 +169,24 @@ enum Herdr {
         return opened(ran).map { Opened(workspace: workspace, pane: $0.pane) }
     }
 
-    /// What herdr says of a pane.
+    /// What sesh-mux says of a pane.
     struct Pane: Decodable {
         struct Session: Decodable { let path: String? }
-        /// The id `herdr terminal attach` takes.
+        /// The id `sesh-mux terminal attach` takes.
         let terminal_id: String
         /// The Agent running in it; a pane whose Agent exited is a bare shell.
         let agent: String?
         let agent_session: Session?
+        /// The Agent's name, and the folder the pane works in.
+        var name: String?
+        var cwd: String?
     }
 
     enum Lookup {
         case found(Pane)
-        /// herdr answered that it has no such pane.
+        /// sesh-mux answered that it has no such pane.
         case gone
-        /// The machine or herdr did not answer, which says nothing of the pane.
+        /// The machine or sesh-mux did not answer, which says nothing of the pane.
         case unreachable(String)
     }
 
@@ -228,7 +225,25 @@ enum Herdr {
         _ = await runner.run("\(command) workspace close \(quote(workspace))")
     }
 
-    /// The names herdr's running Agents go by.
+    /// The panes whose Agent herdr-sesh started and handed over, which still carries herdr's
+    /// names and so reports through its hook to herdr-sesh's socket.
+    static func legacyPanes(on runner: Runner) async -> Set<String> {
+        struct List: Decodable {
+            struct Result: Decodable {
+                struct Pane: Decodable {
+                    let pane_id: String
+                    let legacy: Bool?
+                }
+                let panes: [Pane]
+            }
+            let result: Result
+        }
+        let ran = await runner.run("\(command) pane list")
+        let list = try? JSONDecoder().decode(List.self, from: Data(ran.out.utf8))
+        return Set(list?.result.panes.filter { $0.legacy == true }.map(\.pane_id) ?? [])
+    }
+
+    /// The names sesh-mux's running Agents go by.
     static func agentNames(on runner: Runner) async -> Set<String> {
         struct List: Decodable {
             struct Result: Decodable {
@@ -242,7 +257,7 @@ enum Herdr {
         return Set(list?.result.agents.compactMap(\.name) ?? [])
     }
 
-    /// The Workspaces herdr has open right now, by id, with their labels.
+    /// The Workspaces sesh-mux has open right now, by id, with their labels.
     static func workspaces(on runner: Runner) async -> [String: String] {
         struct List: Decodable {
             struct Result: Decodable {

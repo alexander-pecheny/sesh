@@ -100,7 +100,7 @@ final class Machine: Runner, Identifiable, Hashable {
 
     func claudeLink(for pane: String) async -> URL? {
         if let known = claudeLinks[pane] { return known }
-        claudeLinks[pane] = await Herdr.claudeLink(for: pane, on: self)
+        claudeLinks[pane] = await Mux.claudeLink(for: pane, on: self)
         return claudeLinks[pane]
     }
 

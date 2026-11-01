@@ -37,7 +37,7 @@ pub fn request(op: &str, session: &str, args: &[String]) -> Option<Value> {
     Some(request)
 }
 
-/// Plays `request` into `session`'s pane; `pane` is the pane as herdr last listed it.
+/// Plays `request` into `session`'s pane; `pane` is the pane as sesh-mux last listed it.
 pub fn act(source: &mut dyn Source, session: &str, pane: Option<&Value>, request: &Value) -> Result<()> {
     let strings = |key: &str| -> Option<Vec<String>> {
         request[key].as_array()?.iter().map(|value| value.as_str().map(str::to_string)).collect()
@@ -176,7 +176,7 @@ fn play(
 mod tests {
     use super::*;
 
-    /// herdr as a test sees it: a screen that shows `menu` until a key is pressed, and every
+    /// sesh-mux as a test sees it: a screen that shows `menu` until a key is pressed, and every
     /// input played, in order.
     struct Played {
         menu: &'static str,

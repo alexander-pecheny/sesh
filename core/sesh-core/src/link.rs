@@ -341,7 +341,7 @@ mod tests {
     use russh::{client, Channel, ChannelId, CryptoVec, Sig};
     use tokio::sync::{mpsc, oneshot};
 
-    /// Prints two lines after the mark and then waits, like `herdr agent follow`.
+    /// Prints two lines after the mark and then waits, like `sesh-mux agent follow`.
     struct Follow {
         signals: Arc<Mutex<Vec<Sig>>>,
     }
@@ -405,7 +405,7 @@ mod tests {
         let (chunks, mut arrived) = mpsc::unbounded_channel();
         let (cancel, cancelled) = oneshot::channel();
         let stream = tokio::spawn(async move {
-            super::exec(&handle, "herdr agent follow 1", &[], |bytes| drop(chunks.send(bytes.to_vec())), cancelled).await
+            super::exec(&handle, "sesh-mux agent follow 1", &[], |bytes| drop(chunks.send(bytes.to_vec())), cancelled).await
         });
         let mut seen = Vec::new();
         while !seen.ends_with(b"{\"t\":\"state\"}\n") {

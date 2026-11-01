@@ -42,7 +42,7 @@ extension View {
         confirmationDialog("Stop \(item.agent.title) in \(item.cwd)?", isPresented: isPresented, titleVisibility: .visible) {
             Button("Stop and Close", role: .destructive) { Task { await library.stop(item) } }
         } message: {
-            Text("The Agent is interrupted and its herdr pane closed. Nothing of it is kept in a Vault, as it was never adopted.")
+            Text("The Agent is interrupted and its sesh-mux pane closed. Nothing of it is kept in a Vault, as it was never adopted.")
         }
     }
 }

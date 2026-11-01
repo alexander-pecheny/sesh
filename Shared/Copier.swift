@@ -41,9 +41,9 @@ final class Copier {
         for session in sessions {
             guard let pane = session.body.pane else { continue }
             let machine = TaskActions.machine(session.body.machine)
-            var reported: String?
-            if case .found(let found) = await Herdr.look(for: pane, on: machine) { reported = found.agent_session?.path }
-            if let path = await reported.asyncOr({ await self.found(pane, on: machine) }),
+            // A pane id comes back for a later Agent, whose Transcript is not this session's.
+            if case .found(let found) = await Mux.look(for: pane, on: machine), Library.owns(session, name: found.name, cwd: found.cwd),
+               let path = await found.agent_session?.path.asyncOr({ await self.found(pane, on: machine) }),
                !(session.body.transcripts ?? []).contains(path) {
                 var record = vault.records[session.id] ?? session
                 record.body.transcripts = (record.body.transcripts ?? []) + [path]
@@ -55,7 +55,7 @@ final class Copier {
         }
     }
 
-    /// herdr names Claude's session only by id; the helper finds its Transcript from that, and
+    /// sesh-mux names Claude's session only by id; the helper finds its Transcript from that, and
     /// its first line says where.
     private func found(_ pane: String, on machine: Machine) async -> String? {
         struct Hello: Decodable { let transcript: String? }

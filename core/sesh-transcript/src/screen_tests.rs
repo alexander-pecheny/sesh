@@ -1,4 +1,4 @@
-//! Screens captured from Claude Code 2.1.288 to 2.1.293 with `herdr pane read --format ansi`,
+//! Screens captured from Claude Code 2.1.288 to 2.1.293 with `sesh-mux pane read --format ansi`,
 //! on the Mac (`⏺`) and on Linux (`●`).
 
 use super::*;

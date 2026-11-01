@@ -42,9 +42,9 @@ helpers-release:
 mosh-release:
     ./scripts/release-mosh-server.sh
 
-# Publish the herdr fork as herdr-sesh the same way, pinned in Resources/herdr.json.
-herdr-release:
-    ./scripts/release-herdr.sh
+# Publish sesh-mux the same way, pinned in Resources/sesh-mux.json.
+mux-release:
+    ./scripts/release-mux.sh
 
 # Render every app-icon variant to build/icons; `just icon NAME` installs one.
 icons:

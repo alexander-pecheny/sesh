@@ -1,5 +1,5 @@
 ---
-status: accepted
+status: superseded by 0018
 ---
 
 # Tasks run their Agent sessions in the herdr fork, on every machine

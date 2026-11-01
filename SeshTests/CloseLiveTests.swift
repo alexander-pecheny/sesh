@@ -38,7 +38,7 @@ final class LiveShell: Runner {
     func prepare() async -> String? { nil }
 }
 
-/// Opens real Tasks with herdr and git on the Mac and on a Host, then closes them as the app does.
+/// Opens real Tasks with sesh-mux and git on the Mac and on a Host, then closes them as the app does.
 /// Runs only when SESH_LIVE_HOSTS names the machines, as in `mac,vps-he`.
 @MainActor
 final class CloseLiveTests: XCTestCase {
@@ -53,7 +53,7 @@ final class CloseLiveTests: XCTestCase {
         let sessions: [Record]
     }
 
-    /// A Task on a fresh herdr Worktree, with an Agent session in each of its first `agents` panes.
+    /// A Task on a fresh sesh-mux Worktree, with an Agent session in each of its first `agents` panes.
     private func open(on shell: LiveShell, name: String, agents: Int, submodule: Bool, claude: Bool) async throws -> Opened {
         let repo = "/tmp/sesh-close-live/\(name)"
         let repoMade = await shell.run("""
@@ -63,8 +63,8 @@ final class CloseLiveTests: XCTestCase {
             """)
         XCTAssertTrue(repoMade.ok, repoMade.problem)
         let label = "sesh-close-live \(name)"
-        let made = await Herdr.worktree(repo, branch: "live/\(name)", label: label, on: shell)
-        guard case .success(let opened) = made, let path = opened.path else { throw Failed(message: "herdr made no worktree: \(made)") }
+        let made = await Mux.worktree(repo, branch: "live/\(name)", label: label, on: shell)
+        guard case .success(let opened) = made, let path = opened.path else { throw Failed(message: "sesh-mux made no worktree: \(made)") }
         if submodule {
             let sub = await shell.run("cd \(quote(path)) && git -c protocol.file.allow=always submodule update --init -q")
             XCTAssertTrue(sub.ok, sub.problem)
@@ -72,10 +72,10 @@ final class CloseLiveTests: XCTestCase {
         _ = await shell.run("touch \(quote(path))/ignored")
         var panes = [opened.pane]
         for n in 1..<max(agents, 1) {
-            guard case .success(let tab) = await Herdr.tab(in: opened.workspace, folder: path, label: "agent \(n)", on: shell) else { continue }
+            guard case .success(let tab) = await Mux.tab(in: opened.workspace, folder: path, label: "agent \(n)", on: shell) else { continue }
             panes.append(tab.pane)
         }
-        if claude, let problem = await Herdr.launch(.claude, name: name, pane: panes[0], on: shell) {
+        if claude, let problem = await Mux.launch(.claude, name: name, pane: panes[0], on: shell) {
             throw Failed(message: "Claude did not start: \(problem)")
         }
         var body = Record.Body(title: label, machine: shell.alias, path: path, branch: "live/\(name)", repo: repo)
@@ -105,7 +105,7 @@ final class CloseLiveTests: XCTestCase {
             XCTAssertEqual(failures.map(\.message), [], "on \(shell.title)")
             let left = await shell.run("[ -e \(quote(opened.task.body.path!)) ] && echo left")
             XCTAssertEqual(left.out, "", "the Worktree is gone on \(shell.title)")
-            let workspaces = await Herdr.workspaces(on: shell)
+            let workspaces = await Mux.workspaces(on: shell)
             XCTAssertNil(workspaces[opened.task.body.workspace!], "the Workspace is closed on \(shell.title)")
         }
     }

@@ -31,7 +31,7 @@ final class SeshSession: ObservableObject, Identifiable {
 
     let id = UUID()
     let host: Host
-    /// What runs on the Host: a Terminal Tab's attach to its herdr pane.
+    /// What runs on the Host: a Terminal Tab's attach to its sesh-mux pane.
     let command: String
     /// The mosh-server Sesh put on the Host, which the Host's own PATH need not have.
     let server: String?

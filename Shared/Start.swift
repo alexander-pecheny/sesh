@@ -23,15 +23,15 @@ enum Start {
     }
 
     /// A new Worktree of `repo` on `branch`, for one Agent session working beside the Task's own,
-    /// in the folder herdr would give it. git makes it rather than herdr, which would open it as a
+    /// in the folder sesh-mux would give it. git makes it rather than sesh-mux, which would open it as a
     /// Workspace of its own; its pane goes in the Task's Workspace instead.
-    static func worktree(_ branch: String, of repo: String, after main: String, on runner: Runner) async -> Result<Place, Herdr.Failure> {
+    static func worktree(_ branch: String, of repo: String, after main: String, on runner: Runner) async -> Result<Place, Mux.Failure> {
         let home = (await runner.run("printf %s \"$HOME\"")).out
-        let folder = "\(home)/.herdr/worktrees/\((repo as NSString).lastPathComponent)/\(Names.folder(branch))"
+        let folder = "\(home)/.sesh/worktrees/\((repo as NSString).lastPathComponent)/\(Names.folder(branch))"
         await Git.update(repo, on: runner)
         let base = base(after: main, in: await Git.branches(of: repo, on: runner))
         let ran = await Git.addWorktree(folder, branch: branch, from: base, of: repo, on: runner)
-        return ran.ok ? .success(Place(folder: folder, branch: branch)) : .failure(Herdr.Failure(ran.problem))
+        return ran.ok ? .success(Place(folder: folder, branch: branch)) : .failure(Mux.Failure(ran.problem))
     }
 
     /// What a new Worktree branches from: the Task's `main` branch where the repository has it, so

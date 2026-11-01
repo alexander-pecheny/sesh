@@ -1,6 +1,6 @@
 import Foundation
 
-/// The coding agents Sesh can start and show. Anything else herdr finds stays hidden.
+/// The coding agents Sesh can start and show. Anything else sesh-mux finds stays hidden.
 enum Agent: String, CaseIterable, Identifiable {
     case claude, codex, pi
 
@@ -69,9 +69,9 @@ enum Helper {
     static let moshFile = version(local: "mosh-version", pinned: mosh).map { "mosh-server-\($0)" }
     static let moshServer = moshFile.map { "~/.sesh/bin/\($0)" }
 
-    /// The herdr fork that Tasks run in, installed as herdr-sesh and pinned by its commit.
-    static let herdr = pinned("herdr")
-    static let herdrVersion = version(local: "herdr-version", pinned: herdr)
+    /// sesh-mux, the terminal server Tasks run in, pinned by the commit it was built from.
+    static let mux = pinned("sesh-mux")
+    static let muxVersion = version(local: "mux-version", pinned: mux)
 
     private static func pinned(_ resource: String) -> Published? {
         Bundle.main.url(forResource: resource, withExtension: "json")
@@ -121,16 +121,16 @@ struct Ran {
     /// The Host stopped answering, as it does to a Mac that sleeps.
     var lost: Bool { status == 255 }
 
-    /// herdr prints its errors as JSON on stderr; anything else is shown as it came.
+    /// sesh-mux prints its errors as JSON on stderr; anything else is shown as it came.
     var problem: String {
-        let herdr = err.split(separator: "\n").lazy
-            .compactMap { try? JSONDecoder().decode(HerdrError.self, from: Data($0.utf8)) }.last
-        let text = herdr?.error.message ?? err.trimmingCharacters(in: .whitespacesAndNewlines)
+        let mux = err.split(separator: "\n").lazy
+            .compactMap { try? JSONDecoder().decode(MuxError.self, from: Data($0.utf8)) }.last
+        let text = mux?.error.message ?? err.trimmingCharacters(in: .whitespacesAndNewlines)
         return text.isEmpty ? "the command failed with status \(status)" : text
     }
 }
 
-struct HerdrError: Decodable {
+struct MuxError: Decodable {
     struct Detail: Decodable { let message: String }
     let error: Detail
 }
@@ -152,7 +152,7 @@ protocol Runner: AnyObject {
     func stream(_ command: String, opened: @escaping (@escaping (String) -> Void) -> Void, line: @escaping (String) -> Void) async -> Ran
     /// Writes `data` to `path` on the machine, relative to its home folder unless absolute.
     func put(_ data: Data, to path: String) async -> Ran
-    /// Puts the pinned helper in place and herdr's server up, once a run, as every use of a
+    /// Puts the pinned helper in place and sesh-mux's server up, once a run, as every use of a
     /// machine asks first.
     func prepare() async -> String?
     var follower: FollowerLink { get }
@@ -228,7 +228,7 @@ func exports(fromEnv env: String) -> String? {
 }
 
 enum Names {
-    /// A name herdr accepts as an agent name and git as a branch.
+    /// A name sesh-mux accepts as an agent name and git as a branch.
     static func slug(_ text: String) -> String {
         var slug = ""
         let latin = text.applyingTransform(.toLatin, reverse: false)?.applyingTransform(.stripDiacritics, reverse: false) ?? text
@@ -241,7 +241,7 @@ enum Names {
         return String(slug.prefix(32))
     }
 
-    /// The folder herdr gives a Worktree of `branch`: unlike a slug, it keeps the whole name, so
+    /// The folder sesh-mux gives a Worktree of `branch`: unlike a slug, it keeps the whole name, so
     /// `fix-2` and `fix-3` never share one.
     static func folder(_ branch: String) -> String {
         let folder = branch.lowercased().split { !($0.isASCII && ($0.isLetter || $0.isNumber)) }.joined(separator: "-")

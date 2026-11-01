@@ -13,7 +13,7 @@ struct AuthQuestion: Identifiable {
     let prompts: [(text: String, echo: Bool)]
 }
 
-/// One connection to a Host through the core, shared by everything run there: Vaults, herdr,
+/// One connection to a Host through the core, shared by everything run there: Vaults, sesh-mux,
 /// the helper, Conversations and Terminals. Core callbacks arrive on tokio threads and hop to
 /// main in `LinkBridge`.
 @MainActor

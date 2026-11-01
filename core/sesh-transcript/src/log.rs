@@ -381,7 +381,7 @@ impl Writer {
         self.rows.adopted()
     }
 
-    /// The name herdr gave the session's Agent.
+    /// The name sesh-mux gave the session's Agent.
     pub fn name(&self) -> Option<&str> {
         self.summary["name"].as_str()
     }
@@ -391,7 +391,7 @@ impl Writer {
         self.summary["cursor"].as_str()
     }
 
-    /// Writes `events`, also taking what herdr says of the pane: its folder, the Agent's
+    /// Writes `events`, also taking what sesh-mux says of the pane: its folder, the Agent's
     /// name and how many turns it has finished.
     pub fn apply(&mut self, log: &Log, events: &[Event], pane: Option<&Value>) -> Result<()> {
         let before = self.summary.clone();

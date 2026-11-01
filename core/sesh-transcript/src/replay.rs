@@ -19,7 +19,7 @@ use crate::serve::{Machine, Shared};
 
 type Result<T> = std::result::Result<T, String>;
 
-/// herdr as recorded: each pane's screen as it last was at the replay's time.
+/// sesh-mux as recorded: each pane's screen as it last was at the replay's time.
 struct Recorded {
     screens: HashMap<(String, bool), Vec<(u64, String)>>,
     now: Rc<RefCell<u64>>,
@@ -44,7 +44,7 @@ impl Source for Recorded {
     }
 }
 
-/// herdr's hands in a replay, which play nothing.
+/// sesh-mux's hands in a replay, which play nothing.
 struct Idle;
 
 impl Source for Idle {

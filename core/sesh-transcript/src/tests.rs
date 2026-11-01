@@ -292,7 +292,7 @@ fn transcript_entry_id(transcript: &Transcript, text: &str) -> String {
 
 #[test]
 fn reading_resumes_at_a_cursor_without_repeating_or_missing_entries() {
-    let dir = std::env::temp_dir().join(format!("herdr-conversation-{}", std::process::id()));
+    let dir = std::env::temp_dir().join(format!("sesh-conversation-{}", std::process::id()));
     std::fs::create_dir_all(&dir).unwrap();
     let path = dir.join("t.jsonl");
     let lines: Vec<String> = claude_lines()
@@ -362,7 +362,7 @@ fn results_are_clipped_to_their_ends() {
 }
 
 fn write_transcript(name: &str, lines: &[Value]) -> PathBuf {
-    let dir = std::env::temp_dir().join(format!("herdr-{name}-{}", std::process::id()));
+    let dir = std::env::temp_dir().join(format!("sesh-{name}-{}", std::process::id()));
     std::fs::create_dir_all(&dir).unwrap();
     let path = dir.join("t.jsonl");
     let bytes: String = lines.iter().map(|line| format!("{line}\n")).collect();

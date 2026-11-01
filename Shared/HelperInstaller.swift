@@ -1,8 +1,8 @@
 import CryptoKit
 import Foundation
 
-/// Puts the pinned transcript helper, mosh-server and herdr-sesh on a machine (ADR 0006, 0009)
-/// unless those versions are there, and starts Sesh's herdr server there if it is down; once a
+/// Puts the pinned transcript helper, mosh-server and sesh-mux on a machine (ADR 0006, 0009)
+/// unless those versions are there, and starts Sesh's sesh-mux server there if it is down; once a
 /// run, however the machine is reached.
 @MainActor
 final class HelperInstaller {
@@ -18,7 +18,7 @@ final class HelperInstaller {
 
     static let probe = "uname -sm\n\(Helper.path) --version 2>/dev/null || echo"
         + "\ntest -x ~/.sesh/bin/\(Helper.moshFile ?? "-") && echo mosh || echo"
-        + "\ncat ~/.sesh/bin/herdr-sesh.version 2>/dev/null || echo"
+        + "\ncat ~/.sesh/bin/sesh-mux.version 2>/dev/null || echo"
 
     static func plan(_ probed: Ran, on title: String, version: String? = Helper.version, local: Bool = Helper.local != nil,
                      published: Helper.Published? = Helper.published) -> Plan {
@@ -61,15 +61,14 @@ final class HelperInstaller {
         let name = Helper.name(lines[0])
         if let file = Helper.moshFile, lines[2] != "mosh",
            let problem = await install("mosh-server", as: file, for: name, from: Helper.mosh) { return problem }
-        let herdr = lines[3]
-        if let version = Helper.herdrVersion, herdr != version {
-            if let problem = await install("herdr-sesh", as: "herdr-sesh", for: name, from: Helper.herdr) { return problem }
-            let noted = await run(Herdr.importer + "\nprintf '%s\\n' \(quote(version)) > ~/.sesh/bin/herdr-sesh.version")
-            guard noted.ok else { return "Sesh could not install herdr-sesh on \(title): \(noted.problem)" }
+        let mux = lines[3]
+        if let version = Helper.muxVersion, mux != version {
+            if let problem = await install("sesh-mux", as: "sesh-mux", for: name, from: Helper.mux) { return problem }
+            let noted = await run(Mux.importer + "\nprintf '%s\\n' \(quote(version)) > ~/.sesh/bin/sesh-mux.version")
+            guard noted.ok else { return "Sesh could not install sesh-mux on \(title): \(noted.problem)" }
         }
-        let woke = await run(Herdr.wake(upgrade: !herdr.isEmpty && herdr != Helper.herdrVersion) + "\n" + Herdr.integrations)
-        return woke.ok ? nil : "Sesh could not start its herdr server on \(title): \(woke.problem). If herdr's own server there"
-            + " could not be moved into it, `herdr server stop` ends that server's Agents and lets Sesh start afresh."
+        let woke = await run(Mux.wake(upgrade: !mux.isEmpty && mux != Helper.muxVersion) + "\n" + Mux.integrations)
+        return woke.ok ? nil : "Sesh could not start sesh-mux on \(title): \(woke.problem)"
     }
 
     /// Puts `program`'s build for platform `name` in `~/.sesh/bin` as `file`: the local one under

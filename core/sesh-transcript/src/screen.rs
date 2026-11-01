@@ -62,7 +62,7 @@ struct Span {
 #[derive(Clone, Debug, Default)]
 pub(crate) struct Row(Vec<Span>);
 
-/// herdr gives a space next to a styled word either style, so only ink is compared.
+/// sesh-mux gives a space next to a styled word either style, so only ink is compared.
 impl PartialEq for Row {
     fn eq(&self, other: &Self) -> bool {
         let ink = |row: &Row| -> Vec<(char, Style)> {

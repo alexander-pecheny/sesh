@@ -41,10 +41,10 @@ _Avoid_: terminal, connection
 **Tab**:
 One thing open at a time in Sesh. Inside a Task a Tab is the Journal, a Document, a
 Terminal or an Agent session, and every Tab but the Journal can move to another Task. A
-Terminal is a shell in a herdr pane of the Task's Workspace: it outlives the app, and
+Terminal is a shell in a sesh-mux pane of the Task's Workspace: it outlives the app, and
 closing its Tab ends it. An Agent session Tab shows the Conversation or the Agent's own
 terminal. The phone has the same Tabs; its Terminal is an ordinary Session whose remote
-command attaches the herdr pane. A Task's open Tabs are kept in its Vault, so every device
+command attaches the sesh-mux pane. A Task's open Tabs are kept in its Vault, so every device
 shows the same ones, though each shows its own in front and a subagent's stays where it opened.
 _Avoid_: pane, page
 
@@ -73,7 +73,7 @@ Vault's copy, and Resume starts the Agent again on the same conversation.
 _Avoid_: closed, killed, dead
 
 **Workspace**:
-herdr's group of Agent sessions, usually one per folder or branch copy. Each Task is one
+sesh-mux's group of Agent sessions, usually one per folder or branch copy. Each Task is one
 Workspace named after its title.
 _Avoid_: project, group
 
@@ -132,7 +132,7 @@ A git worktree a Task works in, on a Vault Host or on the Mac, usually on its ow
 branch. A Task has one main Worktree, where its new Tabs start by default, and may have
 more, each made for an Agent session that works in parallel on its own branch. The main
 one's branch and folder are suggested from the Task's title; no Worktree is ever renamed.
-The main one's herdr Workspace carries the title itself, and a session's own Worktree
+The main one's sesh-mux Workspace carries the title itself, and a session's own Worktree
 opens its Tab in that Workspace too.
 _Avoid_: branch copy, checkout, project
 

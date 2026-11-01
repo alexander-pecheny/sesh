@@ -1,5 +1,5 @@
-//! herdr's pane list, asked for again only when herdr says something changed. Listing every
-//! few ticks kept herdr's server busy enough on a slow Host to delay a shell's echo.
+//! sesh-mux's pane list, asked for again only when sesh-mux says something changed. Listing every
+//! few ticks kept sesh-mux's server busy enough on a slow Host to delay a shell's echo.
 
 use std::io::{BufRead as _, BufReader, Write as _};
 use std::net::Shutdown;
@@ -13,19 +13,18 @@ use serde_json::{json, Value};
 
 use crate::follower::{Input, Source};
 
-/// How long a list stands without an event. herdr tells no one of a session id a hook
+/// How long a list stands without an event. sesh-mux tells no one of a session id a hook
 /// reported, so that waits for this.
 const STALE: Duration = Duration::from_secs(2);
 
-/// The socket of Sesh's herdr server.
+/// The socket of the sesh-mux server.
 pub fn socket() -> PathBuf {
-    let config = std::env::var_os("XDG_CONFIG_HOME")
+    std::env::var_os("SESH_MUX_SOCKET_PATH")
         .map(PathBuf::from)
-        .unwrap_or_else(|| std::env::var_os("HOME").map(PathBuf::from).unwrap_or_default().join(".config"));
-    config.join("herdr/sessions/sesh/herdr.sock")
+        .unwrap_or_else(|| std::env::var_os("HOME").map(PathBuf::from).unwrap_or_default().join(".sesh/mux/sesh-mux.sock"))
 }
 
-/// `inner`, with its pane list kept until herdr reports a change. Where herdr cannot be
+/// `inner`, with its pane list kept until sesh-mux reports a change. Where sesh-mux cannot be
 /// listened to, every call lists afresh, as before.
 pub struct Listening<S: Source> {
     inner: S,
@@ -67,10 +66,10 @@ impl<S: Source> Source for Listening<S> {
     }
 }
 
-/// One subscription to herdr's events, which ends with the connection.
+/// One subscription to sesh-mux's events, which ends with the connection.
 struct Events {
     stream: UnixStream,
-    /// The panes whose Agents' state changes it hears of; herdr names each one.
+    /// The panes whose Agents' state changes it hears of; sesh-mux names each one.
     panes: Vec<String>,
     alive: Arc<AtomicBool>,
 }
@@ -115,7 +114,7 @@ mod tests {
 
     use super::*;
 
-    /// herdr with one pane, counting how often it is listed.
+    /// sesh-mux with one pane, counting how often it is listed.
     struct Counted(Arc<Mutex<usize>>);
 
     impl Source for Counted {
@@ -141,15 +140,15 @@ mod tests {
     }
 
     #[test]
-    fn the_list_is_asked_for_again_only_once_herdr_says_something_changed() {
+    fn the_list_is_asked_for_again_only_once_sesh_mux_says_something_changed() {
         let socket = std::env::temp_dir().join(format!("sesh-listen-{}.sock", std::process::id()));
         let _ = std::fs::remove_file(&socket);
-        let herdr = UnixListener::bind(&socket).unwrap();
+        let mux = UnixListener::bind(&socket).unwrap();
         let listed = Arc::new(Mutex::new(0));
         let mut listening = Listening::new(Counted(listed.clone()), socket.clone());
 
         listening.panes().unwrap();
-        let (mut client, _) = herdr.accept().unwrap();
+        let (mut client, _) = mux.accept().unwrap();
         let mut subscribed = String::new();
         BufReader::new(client.try_clone().unwrap()).read_line(&mut subscribed).unwrap();
         writeln!(client, r#"{{"id":"sesh-transcript","result":{{"type":"subscribed"}}}}"#).unwrap();
@@ -171,7 +170,7 @@ mod tests {
     }
 
     #[test]
-    fn without_herdrs_events_every_call_lists_afresh() {
+    fn without_sesh_mux_events_every_call_lists_afresh() {
         let listed = Arc::new(Mutex::new(0));
         let mut listening = Listening::new(Counted(listed.clone()), std::env::temp_dir().join("sesh-listen-nobody.sock"));
         for _ in 0..3 {

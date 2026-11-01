@@ -48,7 +48,7 @@ enum Git {
     }
 
     /// Starts git's file monitor in `folder` when the user's config wants one. Started by a
-    /// prompt's `git status` instead, it stays in the pane's process group, and herdr then takes
+    /// prompt's `git status` instead, it stays in the pane's process group, and sesh-mux then takes
     /// the shell for busy and will not start an Agent there.
     static func watch(_ folder: String, on runner: Runner) async {
         let git = "git -C \(shellPath(folder))"

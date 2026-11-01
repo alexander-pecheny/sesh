@@ -170,7 +170,7 @@ private struct TabContent: View {
     }
 }
 
-/// A herdr pane's own screen, attached; it attaches again after its connection drops.
+/// A sesh-mux pane's own screen, attached; it attaches again after its connection drops.
 private struct PaneView: View {
     @EnvironmentObject private var library: Library
     let key: String

@@ -49,7 +49,7 @@ targets:
         buildPhase: resources
       - path: Resources/licenses.json
       - path: Resources/helpers.json
-      - path: Resources/herdr.json
+      - path: Resources/sesh-mux.json
       - path: Resources/mosh-server.json
     dependencies:
       - framework: Frameworks/GhosttyKit.xcframework
@@ -84,7 +84,7 @@ targets:
       - path: Resources/Icons.xcassets
       - path: Resources/helpers.json
       - path: Resources/mosh-server.json
-      - path: Resources/herdr.json
+      - path: Resources/sesh-mux.json
       - path: Resources/Fonts
         type: folder
         buildPhase: resources
@@ -142,7 +142,7 @@ targets:
       - path: Shared/SessionLog.swift
       - path: Shared/ChatScroll.swift
       - path: Shared/Shell.swift
-      - path: Shared/Herdr.swift
+      - path: Shared/Mux.swift
       - path: Shared/FollowerLink.swift
       - path: Shared/HelperInstaller.swift
       - path: Shared/Record.swift

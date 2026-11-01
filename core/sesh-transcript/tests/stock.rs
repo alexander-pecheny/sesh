@@ -1,4 +1,4 @@
-//! The helper against a stand-in for stock herdr, which reports Claude's session id but no
+//! The helper against a stand-in for upstream herdr, which reports Claude's session id but no
 //! Transcript path and no permission prompts.
 
 use std::io::{BufRead, BufReader, Write};
@@ -20,12 +20,11 @@ impl Host {
         let root = PathBuf::from(format!("/tmp/sesh-{name}-{}", std::process::id()));
         std::fs::create_dir_all(root.join("claude/projects/-work")).unwrap();
         std::fs::create_dir_all(root.join(".sesh/bin")).unwrap();
-        let herdr = root.join(".sesh/bin/herdr-sesh");
+        let mux = root.join(".sesh/bin/sesh-mux");
         // Answers what it is asked of the pane from files, and notes every input it is given;
         // while a `hold` file exists, an input waits, having said in `playing` that it started.
         let script = r#"#!/bin/sh
 dir="$(dirname "$0")/../.."
-[ "$1 $2" = "--session sesh" ] && shift 2
 case "$1 $2" in
 'pane get') exec cat "$dir/pane.json" ;;
 'pane list') exec cat "$dir/panes.json" ;;
@@ -35,15 +34,15 @@ case "$1 $2" in
 *) exit 1 ;;
 esac
 "#;
-        std::fs::write(&herdr, script).unwrap();
+        std::fs::write(&mux, script).unwrap();
         let executable = std::os::unix::fs::PermissionsExt::from_mode(0o755);
-        std::fs::set_permissions(&herdr, executable).unwrap();
+        std::fs::set_permissions(&mux, executable).unwrap();
         Self { root }
     }
 
     fn session(&self, id: &str, status: &str) {
         let pane = json!({"pane_id": "w1:p1", "agent": "claude", "agent_status": status,
-            "agent_session": {"source": "herdr:claude", "agent": "claude", "kind": "id", "value": id}});
+            "agent_session": {"source": "sesh-mux:claude", "agent": "claude", "kind": "id", "value": id}});
         for (name, reply) in [("pane.json", json!({"result": {"pane": pane}})), ("panes.json", json!({"result": {"panes": [pane]}}))] {
             std::fs::write(self.root.join("new.json"), reply.to_string()).unwrap();
             std::fs::rename(self.root.join("new.json"), self.root.join(name)).unwrap();
@@ -287,7 +286,7 @@ fn history_pages_back_through_a_transcript_found_by_id() {
 }
 
 #[test]
-fn the_follower_plays_a_devices_messages_keys_answers_and_stops_into_herdr() {
+fn the_follower_plays_a_devices_messages_keys_answers_and_stops_into_sesh_mux() {
     let host = Host::new("act");
     host.session("s1", "blocked");
     let mut follower = host.follower(0);

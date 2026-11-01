@@ -1,4 +1,4 @@
-//! The follower (ADR 0011): one process per machine that follows every Agent herdr runs
+//! The follower (ADR 0011): one process per machine that follows every Agent sesh-mux runs
 //! there into the Session log, and serves devices over a local socket (ADR 0012).
 
 use std::cell::RefCell;
@@ -18,14 +18,14 @@ use std::time::{Duration, Instant};
 use serde_json::{json, Value};
 
 use crate::agent::{transcript_path, Agent};
-use crate::follower::{Event, Follower, Herdr, Input, Source};
+use crate::follower::{Event, Follower, Mux, Input, Source};
 use crate::log::{Log, Writer};
 use crate::reconcile::{HANDED, LOST, QUEUED, SENT};
 use crate::Transcript;
 
 pub const PROTOCOL: u64 = 5;
 const TICK: Duration = Duration::from_millis(100);
-/// herdr's panes are listed less often than the screens of working Agents are read.
+/// sesh-mux's panes are listed less often than the screens of working Agents are read.
 const LIST_EVERY: u32 = 2;
 const GONE_AFTER: Duration = Duration::from_secs(2);
 /// With no device attached this long, the follower leaves; the Transcript fills the gap later.
@@ -102,7 +102,7 @@ pub struct Machine {
     pub log: Log,
     source: Shared,
     sessions: HashMap<String, Followed>,
-    /// The panes as herdr last listed them, which answers and permissions are checked against.
+    /// The panes as sesh-mux last listed them, which answers and permissions are checked against.
     panes: Vec<Value>,
     hands: Hands,
     /// Each pane's queue of acts, played in order on the pane's own thread.
@@ -121,7 +121,7 @@ pub struct Machine {
 
 impl Machine {
     pub fn new(log: Log, source: Shared) -> Self {
-        let (hands, failed): (Hands, _) = (Arc::new(|| Box::new(Herdr)), mpsc::channel());
+        let (hands, failed): (Hands, _) = (Arc::new(|| Box::new(Mux)), mpsc::channel());
         Machine { log, source, sessions: HashMap::new(), panes: Vec::new(), hands, acts: HashMap::new(), playing: Arc::default(), leaving: None, failed, now: Instant::now(), taken: VecDeque::new() }
     }
 
@@ -200,7 +200,7 @@ impl Machine {
         Ok(())
     }
 
-    /// Whether `pane` runs another Agent than the one its Session log is of. herdr gives a closed
+    /// Whether `pane` runs another Agent than the one its Session log is of. sesh-mux gives a closed
     /// pane's id to the next, and Sesh names each Agent it starts apart from the others there.
     fn replaced(&self, key: &str, pane: &Value) -> Result<bool> {
         let Some(name) = pane["name"].as_str() else { return Ok(false) };
@@ -398,7 +398,7 @@ fn run(record: Option<(PathBuf, String)>) -> Result<i32> {
     listener.set_nonblocking(true).map_err(|err| err.to_string())?;
     let source: Rc<RefCell<dyn Source>> = match record {
         Some((dir, pane)) => Rc::new(RefCell::new(Recorder::new(&dir, pane)?)),
-        None => Rc::new(RefCell::new(crate::listen::Listening::new(Herdr, crate::listen::socket()))),
+        None => Rc::new(RefCell::new(crate::listen::Listening::new(Mux, crate::listen::socket()))),
     };
     let mut machine = Machine::new(log, Shared(source.clone()));
     let mut clients: Vec<Client> = Vec::new();
@@ -771,7 +771,7 @@ fn connect() -> Result<UnixStream> {
 
 // MARK: recording
 
-/// One pane's share of herdr's answers and its Transcript's growth, timed, for replaying the
+/// One pane's share of sesh-mux's answers and its Transcript's growth, timed, for replaying the
 /// session in a test; other panes are left out, since they hold other conversations.
 pub struct Recorder {
     file: File,
@@ -841,14 +841,14 @@ fn parsed(line: &str) -> bool {
 
 impl Source for Recorder {
     fn panes(&mut self) -> Result<Vec<Value>> {
-        let panes = Herdr.panes()?;
+        let panes = Mux.panes()?;
         let mine: Vec<&Value> = panes.iter().filter(|pane| pane["pane_id"] == self.pane.as_str()).collect();
         self.write(json!({"panes": mine}));
         Ok(panes)
     }
 
     fn read(&mut self, pane_id: &str, ansi: bool) -> Result<String> {
-        let screen = Herdr.read(pane_id, ansi)?;
+        let screen = Mux.read(pane_id, ansi)?;
         if pane_id == self.pane {
             self.write(json!({"read": pane_id, "ansi": ansi, "screen": screen}));
         }
@@ -856,7 +856,7 @@ impl Source for Recorder {
     }
 
     fn input(&mut self, pane_id: &str, input: &Input) -> Result<()> {
-        Herdr.input(pane_id, input)
+        Mux.input(pane_id, input)
     }
 
     fn recorder(&mut self) -> Option<&mut Recorder> {
@@ -871,7 +871,7 @@ mod tests {
     use super::*;
     use crate::follower::Input;
 
-    /// herdr with nothing to list or read; the test hands it the panes itself.
+    /// sesh-mux with nothing to list or read; the test hands it the panes itself.
     struct Quiet;
 
     impl Source for Quiet {
@@ -888,7 +888,7 @@ mod tests {
         }
     }
 
-    /// herdr taking its time over every input.
+    /// sesh-mux taking its time over every input.
     struct Slow(Arc<Mutex<Vec<Input>>>);
 
     impl Source for Slow {
@@ -907,7 +907,7 @@ mod tests {
         }
     }
 
-    /// herdr refusing every input.
+    /// sesh-mux refusing every input.
     struct Broken;
 
     impl Source for Broken {
@@ -924,7 +924,7 @@ mod tests {
         }
     }
 
-    /// herdr noting every input at once.
+    /// sesh-mux noting every input at once.
     struct Noted(Arc<Mutex<Vec<Input>>>);
 
     impl Source for Noted {

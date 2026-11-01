@@ -1,6 +1,6 @@
 import Foundation
 
-/// The Mac's attached views of herdr panes, by Terminal record or by Agent session.
+/// The Mac's attached views of sesh-mux panes, by Terminal record or by Agent session.
 @MainActor
 final class Terminals {
     var surfaces: [String: Ghostty.TerminalSurface] = [:]
@@ -9,14 +9,14 @@ final class Terminals {
 }
 
 extension Library {
-    /// The live view of a pane: `herdr terminal attach`, on the Mac itself or on a Host's Link,
+    /// The live view of a pane: `sesh-mux terminal attach`, on the Mac itself or on a Host's Link,
     /// over mosh where the Host is reached directly.
     func surface(for key: String, pane: String, on machine: Machine, gone: @escaping () -> Void) async -> Ghostty.TerminalSurface? {
         if let known = terminals.surfaces[key] { return known }
-        // Only herdr saying the pane is gone closes its Tab; an unreachable machine is asked again.
+        // Only sesh-mux saying the pane is gone closes its Tab; an unreachable machine is asked again.
         var terminal: String?
         while terminal == nil, !Task.isCancelled {
-            switch await Herdr.look(for: pane, on: machine) {
+            switch await Mux.look(for: pane, on: machine) {
             case .found(let found): terminal = found.terminal_id
             case .gone:
                 gone()
@@ -25,7 +25,7 @@ extension Library {
             }
         }
         guard let terminal else { return nil }
-        let attach = Herdr.attach(terminal)
+        let attach = Mux.attach(terminal)
         if let known = terminals.surfaces[key] { return known }
         let surface: Ghostty.TerminalSurface
         if let link = machine.link {
@@ -45,7 +45,7 @@ extension Library {
         surface.onClose = { [weak self] in
             self?.terminals.surfaces[key] = nil
             Task {
-                if case .gone = await Herdr.look(for: pane, on: machine) { gone() }
+                if case .gone = await Mux.look(for: pane, on: machine) { gone() }
                 self?.objectWillChange.send()
             }
         }

@@ -1,4 +1,4 @@
-//! The helper serving a Vault and showing a Transcript file without herdr.
+//! The helper serving a Vault and showing a Transcript file without sesh-mux.
 
 use std::io::BufRead;
 use std::path::PathBuf;
@@ -83,7 +83,7 @@ fn until(lines: &mpsc::Receiver<Value>, until: &str) -> Vec<Value> {
 }
 
 #[test]
-fn a_transcript_file_is_followed_paged_and_read_without_herdr() {
+fn a_transcript_file_is_followed_paged_and_read_without_sesh_mux() {
     let scratch = Scratch::new("file");
     for n in 0..4 {
         scratch.say("t.jsonl", "user", &format!("message {n}"));

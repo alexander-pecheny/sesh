@@ -29,7 +29,7 @@ impl Agent {
         }
     }
 
-    /// The Agent herdr says runs in `pane`, if it is one Sesh shows.
+    /// The Agent sesh-mux says runs in `pane`, if it is one Sesh shows.
     pub fn of(pane: &Value) -> Option<Self> {
         Self::named(pane["agent"].as_str()?)
     }
@@ -119,7 +119,7 @@ impl Agent {
     }
 }
 
-/// The path herdr reports: the fork's `path`, or stock herdr's value of kind `path` (pi).
+/// The path sesh-mux reports: the fork's `path`, or upstream herdr's value of kind `path` (pi).
 fn reported_path(pane: &Value) -> Option<&str> {
     let session = &pane["agent_session"];
     let value = (session["kind"] == "path").then(|| session["value"].as_str()).flatten();
@@ -127,13 +127,13 @@ fn reported_path(pane: &Value) -> Option<&str> {
 }
 
 /// The Transcript of the session in `pane`. Claude and Codex report only their session id to
-/// stock herdr, so the file is found by it.
+/// upstream herdr, so the file is found by it.
 pub fn transcript_path(pane: &Value) -> Option<String> {
     if let Some(path) = reported_path(pane) {
         return Some(path.to_string());
     }
     let session = &pane["agent_session"];
-    // A herdr that names no session gets no guess: the newest Transcript in the pane's
+    // A sesh-mux that names no session gets no guess: the newest Transcript in the pane's
     // folder is as often an older session's as the one running.
     if session["kind"] != "id" {
         let config = Agent::Claude.folder()?.parent()?.to_path_buf();
@@ -144,7 +144,7 @@ pub fn transcript_path(pane: &Value) -> Option<String> {
     Some(agent.locate(session["value"].as_str()?)?.to_string_lossy().into_owned())
 }
 
-/// The Transcript of a Claude that started before herdr's hook was installed, from the record
+/// The Transcript of a Claude that started before sesh-mux's hook was installed, from the record
 /// Claude keeps of each running session: the one started in the pane's folder, or, of several,
 /// the one whose process runs in the pane.
 fn running_claude(config: &Path, pane: &Value) -> Option<PathBuf> {
@@ -157,10 +157,12 @@ fn running_claude(config: &Path, pane: &Value) -> Option<PathBuf> {
         .filter(|session: &Value| session["cwd"].as_str().is_some_and(|cwd| folders.contains(&Some(cwd))))
         .filter(|session| !proc.exists() || session["pid"].as_u64().is_some_and(|pid| proc.join(pid.to_string()).exists()))
         .collect();
-    let marker = format!("HERDR_PANE_ID={}", pane["pane_id"].as_str()?);
+    // An Agent started before sesh-mux took over the pane still carries sesh-mux's name for it.
+    let markers = ["SESH_MUX_PANE_ID", "HERDR_PANE_ID"].map(|name| format!("{name}={}", pane["pane_id"].as_str().unwrap_or_default()));
     let in_pane = |session: &&Value| {
         let pid = session["pid"].as_u64().unwrap_or_default();
-        std::fs::read(proc.join(format!("{pid}/environ"))).is_ok_and(|env| env.split(|byte| *byte == 0).any(|var| var == marker.as_bytes()))
+        std::fs::read(proc.join(format!("{pid}/environ")))
+            .is_ok_and(|env| env.split(|byte| *byte == 0).any(|var| markers.iter().any(|marker| var == marker.as_bytes())))
     };
     let session = running.iter().find(in_pane).or(match running.as_slice() {
         [one] => Some(one),

@@ -1,7 +1,7 @@
 import XCTest
 
-/// A machine holding a few git worktrees and herdr Workspaces, answering the commands Close runs
-/// as git and herdr would.
+/// A machine holding a few git worktrees and sesh-mux Workspaces, answering the commands Close runs
+/// as git and sesh-mux would.
 @MainActor
 private final class Box: Runner {
     let title: String
@@ -33,12 +33,12 @@ private final class Box: Runner {
         if command.contains(" worktree add ") { linked.insert(args[2]) }
         if command.contains(" for-each-ref ") { return Ran(status: 0, out: branches.joined(separator: "\n"), err: "") }
         if command.hasSuffix("status --porcelain") { return Ran(status: 0, out: dirty[args[0]] ?? "", err: "") }
-        if command == "\(Herdr.command) workspace list" {
+        if command == "\(Mux.command) workspace list" {
             let list = workspaces.keys.map { #"{"workspace_id":"\#($0)","label":"Fix it"}"# }.joined(separator: ",")
             return Ran(status: 0, out: #"{"result":{"workspaces":[\#(list)]}}"#, err: "")
         }
-        if command.hasPrefix("\(Herdr.command) workspace close") { workspaces[args[0]] = nil }
-        if command.hasPrefix("\(Herdr.command) worktree remove") {
+        if command.hasPrefix("\(Mux.command) workspace close") { workspaces[args[0]] = nil }
+        if command.hasPrefix("\(Mux.command) worktree remove") {
             let ran = remove(workspaces[args[0]] ?? "", force: force)
             if ran.ok { workspaces[args[0]] = nil }
             return ran
@@ -92,7 +92,7 @@ final class CloseTests: XCTestCase {
         let failures = await close.perform(plan, discard: false)
         XCTAssertEqual(failures, [])
         XCTAssertEqual(removals, [])
-        XCTAssertTrue(mac.commands.contains("\(Herdr.command) workspace close 'w1'"))
+        XCTAssertTrue(mac.commands.contains("\(Mux.command) workspace close 'w1'"))
         XCTAssertEqual(copied, [["s1"]])
         XCTAssertTrue(mac.commands.contains { $0.hasSuffix(" stop 's1:p1'") }, "the Agent is stopped")
     }
@@ -108,8 +108,8 @@ final class CloseTests: XCTestCase {
         XCTAssertTrue(plan.dirty.isEmpty)
         let failures = await close.perform(plan, discard: false)
         XCTAssertEqual(failures, [])
-        XCTAssertEqual(removals, ["\(Herdr.command) worktree remove --workspace 'w1' --force"], "only a clean Worktree is forced, for its submodules")
-        XCTAssertFalse(mac.commands.contains("\(Herdr.command) workspace close 'w1'"))
+        XCTAssertEqual(removals, ["\(Mux.command) worktree remove --workspace 'w1' --force"], "only a clean Worktree is forced, for its submodules")
+        XCTAssertFalse(mac.commands.contains("\(Mux.command) workspace close 'w1'"))
     }
 
     func testUncommittedWorkIsFlaggedAndKeptUntilTheUserDiscardsIt() async {
@@ -148,15 +148,15 @@ final class CloseTests: XCTestCase {
         box.branches = ["main", "me/fix-it"]
         guard case .success(let place) = await Start.worktree("me/fix-it-2", of: "/src/app", after: "me/fix-it", on: box) else { return XCTFail() }
         XCTAssertEqual(box.commands.last,
-                       "git -C '/src/app' worktree add -b 'me/fix-it-2' '/home/me/.herdr/worktrees/app/me-fix-it-2' 'me/fix-it'",
+                       "git -C '/src/app' worktree add -b 'me/fix-it-2' '/home/me/.sesh/worktrees/app/me-fix-it-2' 'me/fix-it'",
                        "a parallel session carries the Task's work on")
         let session = Start.session(.claude, for: "t1", on: "box", at: place, repo: "/src/app", in: vault)
         XCTAssertEqual(vault.records["t1"], main)
-        XCTAssertEqual(session.body.path, "/home/me/.herdr/worktrees/app/me-fix-it-2")
+        XCTAssertEqual(session.body.path, "/home/me/.sesh/worktrees/app/me-fix-it-2")
         XCTAssertEqual(session.body.branch, "me/fix-it-2")
         XCTAssertEqual(session.body.machine, "box")
         let plan = await close(main, [session]).plan()
-        XCTAssertEqual(plan.removed.map(\.path), ["/src/app-fix", "/home/me/.herdr/worktrees/app/me-fix-it-2"])
+        XCTAssertEqual(plan.removed.map(\.path), ["/src/app-fix", "/home/me/.sesh/worktrees/app/me-fix-it-2"])
         XCTAssertEqual(plan.removed.map(\.branch), ["me/fix-it", "me/fix-it-2"])
     }
 
@@ -179,7 +179,7 @@ final class CloseTests: XCTestCase {
         let second = await close.perform(plan, discard: false)
         XCTAssertEqual(first + second, [])
         XCTAssertEqual(removals, [
-            "\(Herdr.command) worktree remove --workspace 'w1' --force", "git -C '/src/lib' worktree remove '/src/lib-fix' --force",
+            "\(Mux.command) worktree remove --workspace 'w1' --force", "git -C '/src/lib' worktree remove '/src/lib-fix' --force",
         ])
     }
 
@@ -195,6 +195,6 @@ final class CloseTests: XCTestCase {
     func testANewWorktreeOfARepositoryWithoutTheTasksBranchStartsFromItsCheckout() async {
         box.branches = ["main"]
         _ = await Start.worktree("me/fix-it-2", of: "/src/lib", after: "me/fix-it", on: box)
-        XCTAssertEqual(box.commands.last, "git -C '/src/lib' worktree add -b 'me/fix-it-2' '/home/me/.herdr/worktrees/lib/me-fix-it-2'")
+        XCTAssertEqual(box.commands.last, "git -C '/src/lib' worktree add -b 'me/fix-it-2' '/home/me/.sesh/worktrees/lib/me-fix-it-2'")
     }
 }

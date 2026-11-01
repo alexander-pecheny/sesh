@@ -237,7 +237,7 @@ pub fn in_login_shell(command: &str) -> String {
 mod login_shell_tests {
     #[test]
     fn quotes_the_command_for_the_login_shell() {
-        assert_eq!(super::in_login_shell("herdr"), r#"exec "$SHELL" -lic herdr"#);
+        assert_eq!(super::in_login_shell("sesh-mux"), r#"exec "$SHELL" -lic sesh-mux"#);
         assert_eq!(
             super::in_login_shell("tmux new -A -s main"),
             r#"exec "$SHELL" -lic 'tmux new -A -s main'"#

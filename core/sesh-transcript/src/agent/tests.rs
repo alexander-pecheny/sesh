@@ -76,7 +76,7 @@ fn a_session_id_finds_claudes_and_codexs_transcripts_but_never_pis() {
 }
 
 #[test]
-fn a_claude_herdr_never_heard_from_is_found_by_its_folder_alone() {
+fn a_claude_sesh_mux_never_heard_from_is_found_by_its_folder_alone() {
     let scratch = Scratch::new("running");
     let transcript = scratch.write("projects/-home-u-walrus/abc.jsonl", &[]);
     scratch.write("projects/-home-u-seal/def.jsonl", &[]);

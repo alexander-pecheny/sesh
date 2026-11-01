@@ -5,7 +5,7 @@ enum TabItem: Hashable, Identifiable, Codable {
     case journal
     case session(String)
     case document(String)
-    /// A shell in a herdr pane, recorded in the Vault so it reopens after a restart.
+    /// A shell in a sesh-mux pane, recorded in the Vault so it reopens after a restart.
     case terminal(String)
     /// A Claude subagent's own Transcript, read-only, opened from its parent's Conversation.
     case subagent(session: String, path: String, title: String)

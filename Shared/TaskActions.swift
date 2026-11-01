@@ -1,6 +1,6 @@
 import Foundation
 
-/// What a Task does on its machines: make its Worktree, find its herdr Workspace, start
+/// What a Task does on its machines: make its Worktree, find its sesh-mux Workspace, start
 /// Agent sessions in it (ADR 0009).
 @MainActor
 enum TaskActions {
@@ -31,17 +31,17 @@ enum TaskActions {
         session.body.remote ?? vault.settings.body.remote ?? true
     }
 
-    /// The branch a title suggests, under the user's name as herdr's own branches are.
+    /// The branch a title suggests, under the user's name as sesh-mux's own branches are.
     static func branch(for title: String, user: String) -> String {
         let slug = Names.slug(title)
         return "\(user)/\(slug.isEmpty ? "task" : slug)"
     }
 
-    /// The Task's Workspace on `machine`, made if herdr has none, and a fresh pane in it.
-    static func pane(for task: Record, on machine: Machine, label: String, folder wanted: String? = nil) async -> Result<(Herdr.Opened, String), Herdr.Failure> {
+    /// The Task's Workspace on `machine`, made if sesh-mux has none, and a fresh pane in it.
+    static func pane(for task: Record, on machine: Machine, label: String, folder wanted: String? = nil) async -> Result<(Mux.Opened, String), Mux.Failure> {
         let title = task.body.title ?? "Task"
-        let open = await Herdr.workspaces(on: machine)
-        // herdr gives a closed Workspace's id to the next, so one labelled otherwise is another Task's.
+        let open = await Mux.workspaces(on: machine)
+        // sesh-mux gives a closed Workspace's id to the next, so one labelled otherwise is another Task's.
         let known = task.body.workspace.flatMap { open[$0] == title && machine.alias == task.body.machine ? $0 : nil }
         let workspace = known ?? open.first { $0.value == title }?.key
         let folder: String
@@ -52,8 +52,8 @@ enum TaskActions {
         } else {
             folder = (await machine.run("printf %s \"$HOME\"")).out
         }
-        guard let workspace else { return await Herdr.workspace(folder, label: title, on: machine).map { ($0, folder) } }
-        return await Herdr.tab(in: workspace, folder: folder, label: label, on: machine).map { ($0, folder) }
+        guard let workspace else { return await Mux.workspace(folder, label: title, on: machine).map { ($0, folder) } }
+        return await Mux.tab(in: workspace, folder: folder, label: label, on: machine).map { ($0, folder) }
     }
 
     /// Starts `agent` for the Task, in a Worktree of `repo` when one is given: the Task's, or a
@@ -61,12 +61,12 @@ enum TaskActions {
     /// The session is made, and `made` told, once its pane is; an Agent that then fails to start
     /// takes its session with it.
     static func startSession(_ agent: Agent, for task: Record, on machine: Machine, repo given: String?, branch: String? = nil,
-                             remote: Bool? = nil, in vault: Vault, made: (Record) -> Void) async -> Result<Record, Herdr.Failure> {
-        if let problem = await machine.prepare() { return .failure(Herdr.Failure(problem)) }
+                             remote: Bool? = nil, in vault: Vault, made: (Record) -> Void) async -> Result<Record, Mux.Failure> {
+        if let problem = await machine.prepare() { return .failure(Mux.Failure(problem)) }
         var place = Start.Place(), repo = given
         if task.scratchpad {
             let made = await machine.run("mkdir -p ~/.sesh/scratch && mktemp -d ~/.sesh/scratch/XXXXXX")
-            guard made.ok else { return .failure(Herdr.Failure(made.problem)) }
+            guard made.ok else { return .failure(Mux.Failure(made.problem)) }
             place.folder = made.out.trimmingCharacters(in: .whitespacesAndNewlines)
         }
         let home = given == nil ? "" : (await machine.run("printf %s \"$HOME\"")).out
@@ -90,13 +90,13 @@ enum TaskActions {
             case .success(let value): (place.pane, place.folder) = (value.0.pane, value.1)
             }
         }
-        let name = Names.free(Names.slug("\(current.body.title ?? "task")-\(agent.rawValue)"), taken: await Herdr.agentNames(on: machine))
+        let name = Names.free(Names.slug("\(current.body.title ?? "task")-\(agent.rawValue)"), taken: await Mux.agentNames(on: machine))
         let session = Start.session(agent, for: task.id, on: machine.alias, at: place, repo: repo, remote: remote, name: name, in: vault)
         made(session)
-        if let problem = await Herdr.launch(agent, name: name, pane: place.pane ?? "", config: claudeConfig(vault, on: machine),
+        if let problem = await Mux.launch(agent, name: name, pane: place.pane ?? "", config: claudeConfig(vault, on: machine),
                                                remote: Self.remote(of: session, in: vault), on: machine) {
             vault.delete(vault.records[session.id] ?? session)
-            return .failure(Herdr.Failure(problem))
+            return .failure(Mux.Failure(problem))
         }
         return .success(vault.records[session.id] ?? session)
     }
@@ -109,7 +109,7 @@ enum TaskActions {
 
     /// The Task's Worktree of `repo` on `machine`, made on first use with the Task's branch, and
     /// the fresh Workspace's own pane when it was made just now.
-    static func worktree(for task: Record, repo: String, home: String, on machine: Machine, in vault: Vault) async -> Result<Start.Place, Herdr.Failure> {
+    static func worktree(for task: Record, repo: String, home: String, on machine: Machine, in vault: Vault) async -> Result<Start.Place, Mux.Failure> {
         let current = vault.records[task.id] ?? task
         if let path = current.body.path, current.body.repo == repo, current.body.machine == machine.alias {
             return .success(Start.Place(folder: path, branch: current.body.branch))
@@ -135,9 +135,9 @@ enum TaskActions {
                 + "command git -C \(folder) rev-parse --verify -q HEAD").ok
         if born { await Git.update(repo, on: machine) } else { await Git.watch(repo, on: machine) }
         let made = born
-            ? await Herdr.worktree(repo, branch: branch, label: title, on: machine)
-            : await Herdr.workspace(repo, label: title, on: machine)
-        let place = { (opened: Herdr.Opened) in
+            ? await Mux.worktree(repo, branch: branch, label: title, on: machine)
+            : await Mux.workspace(repo, label: title, on: machine)
+        let place = { (opened: Mux.Opened) in
             Start.Place(folder: opened.path ?? repo, pane: opened.pane, branch: born ? opened.branch ?? branch : nil)
         }
         guard current.body.path == nil else { return made.map(place) }
@@ -217,7 +217,7 @@ enum TaskActions {
         return branch
     }
 
-    /// The user herdr's own branches are named for: the Mac's, or the Host's ssh user.
+    /// The user sesh-mux's own branches are named for: the Mac's, or the Host's ssh user.
     static func user(on machine: Machine) -> String {
         #if os(macOS)
         return NSUserName()
@@ -235,20 +235,20 @@ enum TaskActions {
         let machine = machine(session.body.machine)
         if let problem = await machine.prepare() { return problem }
         var pane = ""
-        if let left = session.body.pane, case .found(let found) = await Herdr.look(for: left, on: machine), found.agent == nil {
+        if let left = session.body.pane, case .found(let found) = await Mux.look(for: left, on: machine), found.agent == nil {
             pane = left
-            // A shell from the user's own herdr, taken over with its panes, still names that
-            // herdr's socket, where Claude's hooks would report its questions to no one.
-            let socket = "export HERDR_SOCKET_PATH=\"$HOME/.config/herdr/sessions/sesh/herdr.sock\" HERDR_SESSION=sesh"
-            _ = await machine.run("\(Herdr.command) pane run \(quote(pane)) \(quote(socket))")
+            // A shell herdr-sesh started knows its pane only by herdr's name, which sesh-mux's hooks
+            // do not read, so Claude's questions would reach no one.
+            let names = "[ -n \"$SESH_MUX_PANE_ID\" ] || export SESH_MUX_PANE_ID=\"$HERDR_PANE_ID\" SESH_MUX_SOCKET_PATH=\"$HOME/.sesh/mux/sesh-mux.sock\""
+            _ = await machine.run("\(Mux.command) pane run \(quote(pane)) \(quote(names))")
         } else {
             switch await self.pane(for: task, on: machine, label: agent.title, folder: session.body.path) {
             case .failure(let failure): return failure.message
             case .success(let value): pane = value.0.pane
             }
         }
-        let name = Names.free(Names.slug("\(task.body.title ?? "task")-\(agent.rawValue)"), taken: await Herdr.agentNames(on: machine))
-        if let problem = await Herdr.launch(
+        let name = Names.free(Names.slug("\(task.body.title ?? "task")-\(agent.rawValue)"), taken: await Mux.agentNames(on: machine))
+        if let problem = await Mux.launch(
             agent, name: name, pane: pane, resuming: transcript, config: claudeConfig(vault, on: machine),
             remote: remote(of: session, in: vault), on: machine) { return problem }
         var record = vault.records[session.id] ?? session

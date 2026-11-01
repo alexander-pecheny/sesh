@@ -5,7 +5,7 @@ use std::time::{Duration, Instant};
 
 use serde_json::{json, Value};
 use sesh_transcript::agent::{transcript_path, Agent};
-use sesh_transcript::follower::{entry_line, herdr, Event, Follower, Herdr};
+use sesh_transcript::follower::{entry_line, mux, Event, Follower, Mux};
 use sesh_transcript::act;
 use sesh_transcript::vault::{self, Vault};
 use sesh_transcript::{replay, serve, version, Transcript, PROTOCOL};
@@ -135,7 +135,7 @@ enum Target<'a> {
 }
 
 impl Target<'_> {
-    /// The pane as herdr reports it; a file's is made up to name its Agent and path.
+    /// The pane as sesh-mux reports it; a file's is made up to name its Agent and path.
     fn pane(&self) -> Result<Value, String> {
         match self {
             Self::Pane(pane_id) => pane_info(pane_id),
@@ -175,10 +175,10 @@ fn parse_last(options: &HashMap<&str, &str>) -> Option<usize> {
         .map_or(Some(DEFAULT_LAST), |value| value.parse().ok())
 }
 
-// MARK: herdr
+// MARK: sesh-mux
 fn pane_info(pane_id: &str) -> Result<Value, String> {
-    let reply: Value = serde_json::from_str(&herdr(&["pane", "get", pane_id])?)
-        .map_err(|err| format!("herdr said something sesh-transcript cannot read: {err}"))?;
+    let reply: Value = serde_json::from_str(&mux(&["pane", "get", pane_id])?)
+        .map_err(|err| format!("sesh-mux said something sesh-transcript cannot read: {err}"))?;
     Ok(reply["result"]["pane"].clone())
 }
 
@@ -210,7 +210,7 @@ fn follow(args: &[String]) -> Exit {
         return usage();
     };
     let (pane, agent) = agent_pane(&target)?;
-    let mut follower = Follower::new(agent, last, Box::new(Herdr));
+    let mut follower = Follower::new(agent, last, Box::new(Mux));
     follower.start(&pane, options.get("since").copied())?;
     print_events(&follower.drain())?;
     let mut agent_seen = Instant::now();

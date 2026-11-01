@@ -41,7 +41,7 @@ pub(super) struct Parser {
     started: HashMap<String, String>,
     /// What to call each command still in the foreground, in case it is moved to the background.
     commands: HashMap<String, String>,
-    /// Whether Claude's last reply ended its turn, so what herdr calls working is only Claude
+    /// Whether Claude's last reply ended its turn, so what sesh-mux calls working is only Claude
     /// waiting on its background work.
     turn_over: bool,
     /// The last prompt typed, which Claude writes again wrapped when it is a slash command.

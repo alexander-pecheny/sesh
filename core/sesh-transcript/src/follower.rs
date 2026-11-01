@@ -1,4 +1,4 @@
-//! Follows one Agent session: its Transcript, its herdr pane and, if Sesh reads it, its screen,
+//! Follows one Agent session: its Transcript, its sesh-mux pane and, if Sesh reads it, its screen,
 //! as Conversation lines. `follow` prints them; the follower writes them to the Session log.
 
 use std::hash::{Hash as _, Hasher as _};
@@ -21,17 +21,17 @@ const KEEP: usize = 500;
 /// What the follower plays into a pane for a device (ADR 0012).
 #[derive(Clone, Debug, PartialEq)]
 pub enum Input {
-    /// Key names, as herdr spells them.
+    /// Key names, as sesh-mux spells them.
     Keys(Vec<String>),
     /// Literal text, typed.
     Text(String),
-    /// A message, which herdr submits as the Agent's next prompt.
+    /// A message, which sesh-mux submits as the Agent's next prompt.
     Prompt(String),
     Close,
 }
 
-/// What a follower asks of herdr: the panes, a pane's screen, and input for a pane. A
-/// recording stands in for herdr when a session is replayed.
+/// What a follower asks of sesh-mux: the panes, a pane's screen, and input for a pane. A
+/// recording stands in for sesh-mux when a session is replayed.
 pub trait Source {
     fn panes(&mut self) -> Result<Vec<Value>, String>;
     fn read(&mut self, pane_id: &str, ansi: bool) -> Result<String, String>;
@@ -43,14 +43,14 @@ pub trait Source {
     }
 }
 
-/// herdr itself.
-pub struct Herdr;
+/// sesh-mux itself.
+pub struct Mux;
 
-impl Source for Herdr {
+impl Source for Mux {
     /// Every pane, with the Agent's name and finished turns, which only `agent list` gives.
     fn panes(&mut self) -> Result<Vec<Value>, String> {
         let read = |args: &[&str]| -> Result<Value, String> {
-            serde_json::from_str(&herdr(args)?).map_err(|err| format!("herdr said something sesh-transcript cannot read: {err}"))
+            serde_json::from_str(&mux(args)?).map_err(|err| format!("sesh-mux said something sesh-transcript cannot read: {err}"))
         };
         let mut panes = read(&["pane", "list"])?["result"]["panes"].as_array().cloned().unwrap_or_default();
         let agents = read(&["agent", "list"])?["result"]["agents"].as_array().cloned().unwrap_or_default();
@@ -65,29 +65,28 @@ impl Source for Herdr {
 
     fn read(&mut self, pane_id: &str, ansi: bool) -> Result<String, String> {
         let format = if ansi { "ansi" } else { "text" };
-        herdr(&["pane", "read", pane_id, "--source", "visible", "--format", format])
+        mux(&["pane", "read", pane_id, "--source", "visible", "--format", format])
     }
 
     fn input(&mut self, pane_id: &str, input: &Input) -> Result<(), String> {
         match input {
-            Input::Keys(keys) => herdr(&[&["pane", "send-keys", pane_id][..], &keys.iter().map(String::as_str).collect::<Vec<_>>()].concat()),
-            Input::Text(text) => herdr(&["pane", "send-text", pane_id, text]),
-            Input::Prompt(text) => herdr(&["agent", "prompt", pane_id, text]),
-            Input::Close => herdr(&["pane", "close", pane_id]),
+            Input::Keys(keys) => mux(&[&["pane", "send-keys", pane_id][..], &keys.iter().map(String::as_str).collect::<Vec<_>>()].concat()),
+            Input::Text(text) => mux(&["pane", "send-text", pane_id, text]),
+            Input::Prompt(text) => mux(&["agent", "prompt", pane_id, text]),
+            Input::Close => mux(&["pane", "close", pane_id]),
         }
         .map(drop)
     }
 }
 
 
-/// Runs Sesh's own herdr, herdr-sesh, with `args` and returns its stdout, or the message it failed with.
-pub fn herdr(args: &[&str]) -> Result<String, String> {
+/// Runs sesh-mux with `args` and returns its stdout, or the message it failed with.
+pub fn mux(args: &[&str]) -> Result<String, String> {
     let home = std::env::var("HOME").unwrap_or_default();
-    let output = Command::new(format!("{home}/.sesh/bin/herdr-sesh"))
-        .args(["--session", "sesh"])
+    let output = Command::new(format!("{home}/.sesh/bin/sesh-mux"))
         .args(args)
         .output()
-        .map_err(|err| format!("herdr-sesh: {err}"))?;
+        .map_err(|err| format!("sesh-mux: {err}"))?;
     if output.status.success() {
         return Ok(String::from_utf8_lossy(&output.stdout).into_owned());
     }
@@ -150,7 +149,7 @@ pub struct Follower {
     /// The pending permission's id, and whether it was Claude's question menu.
     permission: Option<(String, bool)>,
     transcript: Option<Transcript>,
-    /// herdr's `agent_session` when its Transcript was last looked for.
+    /// sesh-mux's `agent_session` when its Transcript was last looked for.
     session: Value,
     /// While the session's Transcript is not found, polls since it was last looked for.
     lost: Option<u32>,
@@ -158,7 +157,7 @@ pub struct Follower {
     /// The background work last reported, so only a change is sent; nothing at first, so a
     /// new follower overwrites what the one before it left in the Session log.
     background: Value,
-    /// What herdr last said the Agent was doing.
+    /// What sesh-mux last said the Agent was doing.
     reported: Option<String>,
     /// What the screen shows beyond the Transcript.
     pub(crate) live: Reconciler,
@@ -311,7 +310,7 @@ impl Follower {
         Ok(())
     }
 
-    /// The Transcript the session has moved to. One is looked for when herdr's session
+    /// The Transcript the session has moved to. One is looked for when sesh-mux's session
     /// changes, then every few polls until found, since Claude writes a session's file only
     /// once it is first prompted.
     fn moved(&mut self, pane: &Value) -> Option<String> {
@@ -469,8 +468,8 @@ impl Follower {
         self.emit(event)
     }
 
-    /// herdr's state, except that an Agent with its turn over is only waiting on background
-    /// work, and can take a message, though herdr's screen rules call that working.
+    /// sesh-mux's state, except that an Agent with its turn over is only waiting on background
+    /// work, and can take a message, though sesh-mux's screen rules call that working.
     fn emit_state(&mut self) -> Result<(), String> {
         let Some(reported) = self.reported.clone() else {
             return Ok(());
@@ -562,13 +561,13 @@ mod tests {
             json!({"type":"user","timestamp":at,"origin":{"kind":"human"},"message":{"role":"user","content":"Tabulate calc.py"}}),
             json!({"type":"assistant","timestamp":at,"message":{"content":[{"type":"text","text":reply}]}}),
         ];
-        let dir = std::env::temp_dir().join(format!("herdr-resume-{}", std::process::id()));
+        let dir = std::env::temp_dir().join(format!("sesh-mux-resume-{}", std::process::id()));
         std::fs::create_dir_all(&dir).unwrap();
         let path = dir.join("t.jsonl");
         let bytes: String = lines.iter().map(|line| format!("{line}\n")).collect();
         std::fs::write(&path, &bytes).unwrap();
         let pane = json!({"agent": "claude", "agent_session": {"kind": "path", "value": path}});
-        let mut follower = Follower::new(Agent::Claude, 20, Box::new(Herdr));
+        let mut follower = Follower::new(Agent::Claude, 20, Box::new(Mux));
         follower.start(&pane, Some(&format!("{}:{}", bytes.len(), path.display()))).unwrap();
         let screen = std::fs::read_to_string(format!("{}/tests/screens/table.ansi", env!("CARGO_MANIFEST_DIR"))).unwrap();
         let now = Instant::now();
