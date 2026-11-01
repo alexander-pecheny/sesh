@@ -2,3 +2,6 @@
 	path = vendor/rmosh
 	url = git@code.pecheny.me:pecheny/rmosh.git
 	branch = main
+[submodule "mux/vendor/ghostty"]
+	path = mux/vendor/ghostty
+	url = https://github.com/ghostty-org/ghostty.git

@@ -1,0 +1,2 @@
+# sesh-mux is imported from the herdr fork and keeps its style.
+exclude = ["mux/**"]

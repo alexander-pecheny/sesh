@@ -1,0 +1,90 @@
+use std::io::{self, Write};
+
+const DISABLE_HOST_MOUSE_REPORTING_SEQUENCE: &[u8] =
+    b"\x1b[?1006l\x1b[?1016l\x1b[?1015l\x1b[?1005l\x1b[?1003l\x1b[?1002l\x1b[?1000l\x1b[?9l";
+
+pub(crate) fn clear_host_mouse_reporting<W: Write>(writer: &mut W) -> io::Result<()> {
+    writer.write_all(DISABLE_HOST_MOUSE_REPORTING_SEQUENCE)?;
+    writer.flush()
+}
+
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct DirectHostKeyboardState {
+    kitty_flags: Option<u16>,
+    modify_other_keys_level: u8,
+}
+
+pub(crate) fn set_direct_host_keyboard_protocol<W: Write>(
+    writer: &mut W,
+    active: &mut DirectHostKeyboardState,
+    next_flags: u16,
+    next_modify_other_keys_level: u8,
+) -> io::Result<()> {
+    let next_kitty_flags = (next_flags != 0).then_some(next_flags);
+    if active.kitty_flags == next_kitty_flags
+        && active.modify_other_keys_level == next_modify_other_keys_level
+    {
+        return Ok(());
+    }
+
+    if active.kitty_flags != next_kitty_flags {
+        if active.kitty_flags.is_some() {
+            writer.write_all(b"\x1b[<1u")?;
+        }
+        if next_flags != 0 {
+            write!(writer, "\x1b[>{next_flags}u")?;
+        }
+    }
+    if active.modify_other_keys_level != next_modify_other_keys_level {
+        write!(writer, "\x1b[>4;{next_modify_other_keys_level}m")?;
+    }
+    writer.flush()?;
+    *active = DirectHostKeyboardState {
+        kitty_flags: next_kitty_flags,
+        modify_other_keys_level: next_modify_other_keys_level,
+    };
+    Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn direct_modify_other_keys_works_without_kitty_flags() {
+        let mut output = Vec::new();
+        let mut active = DirectHostKeyboardState::default();
+
+        set_direct_host_keyboard_protocol(&mut output, &mut active, 0, 1).unwrap();
+        set_direct_host_keyboard_protocol(&mut output, &mut active, 0, 2).unwrap();
+        set_direct_host_keyboard_protocol(&mut output, &mut active, 0, 0).unwrap();
+
+        assert_eq!(output, b"\x1b[>4;1m\x1b[>4;2m\x1b[>4;0m");
+        assert_eq!(active, DirectHostKeyboardState::default());
+    }
+
+    #[test]
+    fn direct_legacy_keyboard_mode_does_not_pop_the_host_stack() {
+        let mut output = Vec::new();
+        let mut active = DirectHostKeyboardState::default();
+
+        set_direct_host_keyboard_protocol(&mut output, &mut active, 0, 0).unwrap();
+
+        assert!(output.is_empty());
+        assert_eq!(active, DirectHostKeyboardState::default());
+    }
+
+    #[test]
+    fn clears_all_known_host_mouse_modes() {
+        let mut output = Vec::new();
+        clear_host_mouse_reporting(&mut output).unwrap();
+        let sequence = std::str::from_utf8(&output).unwrap();
+
+        for mode in ["9", "1000", "1002", "1003", "1005", "1006", "1015", "1016"] {
+            assert!(
+                sequence.contains(&format!("\x1b[?{mode}l")),
+                "missing mouse mode {mode}"
+            );
+        }
+    }
+}
