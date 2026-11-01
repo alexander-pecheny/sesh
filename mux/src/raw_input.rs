@@ -1617,17 +1617,6 @@ mod tests {
         assert!(framer.flush_timeout().is_empty());
     }
 
-    #[cfg(not(target_os = "macos"))]
-    #[test]
-    fn non_macos_host_input_splits_lone_escape_from_arrow() {
-        let mut framer = RawInputByteFramer::for_host_input();
-
-        assert_eq!(
-            framer.push(b"\x1b\x1b[D"),
-            vec![b"\x1b".to_vec(), b"\x1b[D".to_vec()]
-        );
-    }
-
     #[test]
     fn sgr_mouse_sequence_split_after_button_prefix_is_reassembled_before_timeout() {
         let mut framer = RawInputFramer::default();

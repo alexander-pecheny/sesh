@@ -7,15 +7,9 @@ use std::{
     sync::OnceLock,
 };
 
-use super::{
-    read_limited_reader, ClipboardCommand, ForegroundJob, ForegroundProcess, LimitedRead, Signal,
-};
+use super::{ClipboardCommand, ForegroundJob, ForegroundProcess, Signal};
 
-pub(crate) use super::unix_common::{
-    configure_status_command, hostname, local_datetime, set_default_plugin_pane_pwd,
-    shutdown_client_stream, status_commands_supported, wait_client_stream_readable,
-    write_client_stream, ClientStreamReader, StatusCommandGuard,
-};
+pub(crate) use super::unix_common::{write_client_stream, ClientStreamReader};
 
 #[cfg(test)]
 mod config_file_tests;
@@ -234,14 +228,6 @@ fn copy_config_xattrs(source: RawFd, destination: RawFd) -> std::io::Result<()> 
 
 pub fn raise_server_nofile_limit() {}
 
-pub(crate) fn should_draw_host_cursor_by_default() -> bool {
-    running_inside_wsl()
-}
-
-pub(crate) fn should_query_host_terminal_palette() -> bool {
-    !running_inside_wsl()
-}
-
 fn running_inside_wsl() -> bool {
     static RUNNING_INSIDE_WSL: OnceLock<bool> = OnceLock::new();
     *RUNNING_INSIDE_WSL.get_or_init(detect_running_inside_wsl)
@@ -288,31 +274,6 @@ fn process_detection_mode() -> ProcessDetectionMode {
             ProcessDetectionMode::Native
         })
     })
-}
-
-fn raw_command_argv(command: &str, flag: &str) -> Vec<std::ffi::OsString> {
-    vec!["/bin/sh".into(), flag.into(), command.into()]
-}
-
-pub(crate) fn detached_custom_command_process_platform(command: &str) -> std::process::Command {
-    let argv = raw_command_argv(command, "-lc");
-    let mut command = std::process::Command::new(&argv[0]);
-    command.args(&argv[1..]);
-    command
-}
-
-pub(crate) fn pane_custom_command_pty_builder_platform(
-    command: &str,
-) -> portable_pty::CommandBuilder {
-    portable_pty::CommandBuilder::from_argv(raw_command_argv(command, "-c"))
-}
-
-pub(crate) fn scrollback_editor_argv(path: &std::path::Path) -> std::io::Result<Vec<String>> {
-    let quoted_path = shell_quote(&path.display().to_string());
-    let command = format!(
-        r#"scrollback_file={quoted_path}; eval "${{EDITOR:-vi}} \"\$scrollback_file\""; status=$?; rm -f "$scrollback_file"; exit $status"#
-    );
-    Ok(vec!["/bin/sh".to_string(), "-c".to_string(), command])
 }
 
 pub(crate) fn interactive_shell_command(argv: &[String], shell_name: &str) -> Option<String> {
@@ -780,62 +741,6 @@ pub fn write_clipboard(bytes: &[u8]) -> bool {
     false
 }
 
-pub fn read_clipboard_text() -> Option<String> {
-    for command in read_clipboard_text_commands() {
-        if let Some(text) = read_clipboard_text_with_command(&command) {
-            return Some(text);
-        }
-    }
-    None
-}
-
-pub fn open_url(url: &str) -> std::io::Result<Option<std::process::Child>> {
-    Command::new("xdg-open")
-        .arg(url)
-        .stdin(Stdio::null())
-        .stdout(Stdio::null())
-        .stderr(Stdio::null())
-        .spawn()
-        .map(Some)
-}
-
-/// Show a native desktop notification through libnotify's command-line helper.
-pub fn show_desktop_notification(title: &str, body: Option<&str>) -> std::io::Result<bool> {
-    show_desktop_notification_with_command(title, body, |program| Command::new(program))
-}
-
-fn show_desktop_notification_with_command(
-    title: &str,
-    body: Option<&str>,
-    mut command: impl FnMut(&str) -> Command,
-) -> std::io::Result<bool> {
-    if std::env::var_os("DISPLAY").is_none() && std::env::var_os("WAYLAND_DISPLAY").is_none() {
-        return Ok(false);
-    }
-
-    let mut cmd = command("notify-send");
-    cmd.arg("--app-name").arg("sesh-mux").arg("--").arg(title);
-    if let Some(body) = body.filter(|body| !body.is_empty()) {
-        cmd.arg(body);
-    }
-    run_notification_command(cmd)
-}
-
-fn run_notification_command(mut command: Command) -> std::io::Result<bool> {
-    let status = match command
-        .stdin(Stdio::null())
-        .stdout(Stdio::null())
-        .stderr(Stdio::null())
-        .status()
-    {
-        Ok(status) => status,
-        Err(err) if err.kind() == std::io::ErrorKind::NotFound => return Ok(false),
-        Err(err) => return Err(err),
-    };
-
-    Ok(status.success())
-}
-
 fn clipboard_commands() -> Vec<ClipboardCommand> {
     let mut commands = Vec::new();
 
@@ -858,72 +763,6 @@ fn clipboard_commands() -> Vec<ClipboardCommand> {
     }
 
     commands
-}
-
-fn read_clipboard_text_commands() -> Vec<ClipboardCommand> {
-    let mut commands = Vec::new();
-
-    if std::env::var_os("WAYLAND_DISPLAY").is_some() {
-        commands.push(ClipboardCommand {
-            program: "wl-paste",
-            args: &["--type", "text/plain;charset=utf-8"],
-        });
-        commands.push(ClipboardCommand {
-            program: "wl-paste",
-            args: &["--type", "text/plain"],
-        });
-    }
-
-    if std::env::var_os("DISPLAY").is_some() {
-        commands.push(ClipboardCommand {
-            program: "xclip",
-            args: &["-selection", "clipboard", "-out"],
-        });
-        commands.push(ClipboardCommand {
-            program: "xsel",
-            args: &["--clipboard", "--output"],
-        });
-    }
-
-    commands
-}
-
-fn read_clipboard_text_with_command(command: &ClipboardCommand) -> Option<String> {
-    const MAX_CLIPBOARD_TEXT_BYTES: usize = 1024 * 1024;
-
-    let mut child = Command::new(command.program)
-        .args(command.args)
-        .stdin(Stdio::null())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::null())
-        .spawn()
-        .ok()?;
-
-    let stdout = child.stdout.take()?;
-    let read = match read_limited_reader(stdout, MAX_CLIPBOARD_TEXT_BYTES) {
-        Ok(LimitedRead::Oversized) => {
-            let _ = child.kill();
-            let _ = child.wait();
-            return None;
-        }
-        Ok(read) => read,
-        Err(_) => {
-            let _ = child.kill();
-            let _ = child.wait();
-            return None;
-        }
-    };
-
-    let status = child.wait().ok()?;
-    if !status.success() {
-        return None;
-    }
-
-    match read {
-        LimitedRead::Complete(bytes) => String::from_utf8(bytes).ok(),
-        LimitedRead::Empty => None,
-        LimitedRead::Oversized => unreachable!("oversized clipboard text is handled before wait"),
-    }
 }
 
 fn run_clipboard_command(command: &ClipboardCommand, bytes: &[u8]) -> bool {
@@ -1753,81 +1592,5 @@ mod tests {
         assert_eq!(commands.len(), 2);
         assert_eq!(commands[0].program, "xclip");
         assert_eq!(commands[1].program, "xsel");
-    }
-
-    #[test]
-    fn read_clipboard_text_commands_include_session_backends() {
-        let _guard = env_lock().lock().unwrap();
-        unsafe {
-            std::env::set_var("WAYLAND_DISPLAY", "wayland-0");
-            std::env::set_var("DISPLAY", ":0");
-        }
-
-        let commands = read_clipboard_text_commands();
-        assert_eq!(commands[0].program, "wl-paste");
-        assert_eq!(commands[1].program, "wl-paste");
-        assert_eq!(commands[2].program, "xclip");
-        assert_eq!(commands[3].program, "xsel");
-    }
-
-    #[test]
-    fn read_clipboard_text_with_command_reads_utf8() {
-        let command = ClipboardCommand {
-            program: "printf",
-            args: &["feature/linear-302"],
-        };
-
-        assert_eq!(
-            read_clipboard_text_with_command(&command).as_deref(),
-            Some("feature/linear-302")
-        );
-    }
-
-    #[test]
-    fn read_clipboard_text_with_command_rejects_oversized_output() {
-        let command = ClipboardCommand {
-            program: "sh",
-            args: &["-c", "yes x | head -c 1048578"],
-        };
-
-        assert_eq!(read_clipboard_text_with_command(&command), None);
-    }
-
-    #[test]
-    fn desktop_notification_sets_app_name_and_separates_option_like_titles() {
-        let _guard = env_lock().lock().unwrap();
-        unsafe {
-            std::env::remove_var("WAYLAND_DISPLAY");
-            std::env::set_var("DISPLAY", ":0");
-        }
-
-        let path =
-            std::env::temp_dir().join(format!("sesh-mux-notify-send-args-{}", std::process::id()));
-        let script = "printf '%s\\n' \"$@\" > \"$SESH_MUX_NOTIFY_ARGS\"";
-        let shown = show_desktop_notification_with_command("-danger", Some("body"), |_| {
-            let mut cmd = Command::new("sh");
-            cmd.arg("-c")
-                .arg(script)
-                .arg("notify-send")
-                .env("SESH_MUX_NOTIFY_ARGS", &path);
-            cmd
-        })
-        .expect("notification command should run");
-
-        assert!(shown);
-        let args = std::fs::read_to_string(&path).expect("args file");
-        let _ = std::fs::remove_file(&path);
-        assert_eq!(args, "--app-name\nSeshMux\n--\n-danger\nbody\n");
-    }
-
-    #[test]
-    fn scrollback_editor_argv_preserves_unix_editor_shell_semantics() {
-        let path = std::path::Path::new("/tmp/sesh-mux scrollback.txt");
-        let argv = scrollback_editor_argv(path).unwrap();
-
-        assert_eq!(argv[0], "/bin/sh");
-        assert_eq!(argv[1], "-c");
-        assert!(argv[2].contains("EDITOR:-vi"));
-        assert!(argv[2].contains("/tmp/sesh-mux scrollback.txt"));
     }
 }
