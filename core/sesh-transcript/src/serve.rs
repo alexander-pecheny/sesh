@@ -302,6 +302,31 @@ impl Machine {
         let _ = queue.send((request, pane, reply));
     }
 
+    /// Copies Transcripts for a device (ADR 0019) off the follower's loop, since a Vault indexes
+    /// what it takes; `reply` gets the `done` line with the answer, or the `error` line.
+    pub fn copy(&mut self, request: Value, reply: mpsc::Sender<Value>) {
+        if self.leaving.is_some() {
+            return drop(reply.send(json!({"t": "leaving", "op": request["op"]})));
+        }
+        let (panes, playing) = (self.panes.clone(), self.playing.clone());
+        playing.fetch_add(1, Ordering::SeqCst);
+        std::thread::spawn(move || {
+            let answer = match request["op"].as_str() {
+                Some("store") => crate::copy::store(&request),
+                _ => crate::copy::transcripts(&panes, &request),
+            };
+            let line = match answer {
+                Ok(mut line) => {
+                    (line["t"], line["op"]) = ("done".into(), request["op"].clone());
+                    line
+                }
+                Err(err) => json!({"t": "error", "op": request["op"], "message": err}),
+            };
+            let _ = reply.send(line);
+            playing.fetch_sub(1, Ordering::SeqCst);
+        });
+    }
+
     /// Whether this follower was asked to leave and every act it took is answered.
     fn left(&self) -> bool {
         self.leaving.is_some() && self.playing.load(Ordering::SeqCst) == 0
@@ -600,6 +625,7 @@ impl Client {
                 self.send(&json!({"t": "page_done", "session": session, "before": before, "more": more}));
             }
             op if crate::act::OPS.contains(&op) => machine.act(&session, request.clone(), self.replies.0.clone()),
+            "transcripts" | "store" => machine.copy(request.clone(), self.replies.0.clone()),
             other => return Err(format!("unknown op {other:?}")),
         }
         Ok(())
