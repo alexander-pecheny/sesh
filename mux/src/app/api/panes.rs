@@ -644,9 +644,9 @@ impl App {
     }
 }
 
-#[cfg(test)]
-mod tests {}
-
 fn invalid_agent(id: String) -> String {
     encode_error(id, "invalid_agent", "agent label must not be empty")
 }
+
+#[cfg(test)]
+mod tests {}

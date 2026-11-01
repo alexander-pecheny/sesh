@@ -67,11 +67,7 @@ pub enum ChildExitReason {
 
 impl ChildExitReason {
     pub(crate) fn requires_session_checkpoint(self) -> bool {
-        match self {
-            Self::Interrupted => true,
-            Self::Handoff => true,
-            _ => false,
-        }
+        matches!(self, Self::Interrupted | Self::Handoff)
     }
 }
 

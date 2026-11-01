@@ -8,11 +8,9 @@ pub(crate) struct AgentVersionRequirement {
 }
 
 pub(crate) fn agent_version_requirement(
-    target: crate::api::schema::IntegrationTarget,
+    _target: crate::api::schema::IntegrationTarget,
 ) -> Option<AgentVersionRequirement> {
-    match target {
-        _ => None,
-    }
+    None
 }
 
 pub(crate) fn extract_version_triple(text: &str) -> Option<(u64, u64, u64)> {

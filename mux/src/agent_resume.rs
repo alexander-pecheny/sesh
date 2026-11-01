@@ -235,12 +235,8 @@ mod tests {
         )
         .unwrap();
         assert_eq!(snapshot.source, "sesh-mux:pi");
-        assert!(plan(
-            &snapshot.source,
-            "pi",
-            &AgentSessionRef::path("/tmp/s.jsonl").unwrap()
-        )
-        .is_some());
+        let session = AgentSessionRef::path("/tmp/s.jsonl").unwrap();
+        assert!(plan(&snapshot.source, "pi", &session).is_some());
     }
 
     fn absolute_test_path(name: &str) -> String {

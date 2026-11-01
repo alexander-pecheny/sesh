@@ -123,12 +123,6 @@ pub fn identify_agent_in_job(job: &crate::platform::ForegroundJob) -> Option<(Ag
     best.map(|(_, agent, name)| (agent, name))
 }
 
-/// Detect state and whether a visible blocker is present on the current screen.
-#[allow(dead_code)] // shim for existing callers; detect_agent_with_osc is the real path
-pub fn detect_agent(agent: Option<Agent>, screen_content: &str) -> AgentDetection {
-    detect_agent_with_osc(agent, screen_content, "", "")
-}
-
 /// Detect state using screen content plus OSC title/progress strings.
 pub fn detect_agent_with_osc(
     agent: Option<Agent>,

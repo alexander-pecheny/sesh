@@ -59,7 +59,6 @@ pub enum RawInputEvent {
     },
     HostColorSchemeChanged(HostAppearance),
     // The dimensions are only read by the Unix client.
-    #[cfg_attr(not(any(unix, test)), allow(dead_code))]
     HostCellSizeReport {
         width_px: u32,
         height_px: u32,

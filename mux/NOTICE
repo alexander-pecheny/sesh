@@ -1,0 +1,8 @@
+sesh-mux
+Copyright 2026 Alexander Pecheny
+
+sesh-mux is derived from herdr (https://github.com/herdrdev/herdr), licensed under the
+Apache License, Version 2.0, as forked at commit 1c11f385 of the fork Sesh used before
+sesh-mux. The libghostty-vt sources it builds come from ghostty
+(https://github.com/ghostty-org/ghostty), MIT licensed, with the patches in
+vendor/ghostty-patches applied at build time.

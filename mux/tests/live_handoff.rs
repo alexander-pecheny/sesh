@@ -454,7 +454,7 @@ fn live_server_holds_one_pty_master_fd_per_pane() {
             "params": {"cwd": "/tmp", "focus": true}
         }),
     );
-    let pane_id = created["result"]["root_pane"]["pane_id"]
+    let _pane_id = created["result"]["root_pane"]["pane_id"]
         .as_str()
         .unwrap()
         .to_string();

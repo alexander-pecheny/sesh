@@ -948,9 +948,6 @@ fn print_pane_help() {
     eprintln!("  sesh-mux pane run <pane_id> <command>");
 }
 
-#[cfg(test)]
-mod tests {}
-
 fn parse_optional_current_pane_args_from_env(args: &[String]) -> Result<Option<String>, String> {
     let env_pane_id = caller_pane_id();
     parse_optional_current_pane_args(args, env_pane_id.as_deref())
@@ -980,3 +977,6 @@ fn parse_optional_current_pane_args(
     }
     Ok(pane_id)
 }
+
+#[cfg(test)]
+mod tests {}

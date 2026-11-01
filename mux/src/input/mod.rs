@@ -4,9 +4,7 @@ pub(crate) mod mouse;
 mod parse;
 
 #[allow(unused_imports)]
-pub use encode::{
-    encode_cursor_key, encode_key, encode_mouse_button, encode_mouse_scroll, encode_terminal_key,
-};
+pub use encode::encode_terminal_key;
 #[cfg(any(unix, test))]
 pub use model::MouseProtocolMode;
 pub use model::WindowsKeyRecord;

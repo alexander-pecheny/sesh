@@ -1234,11 +1234,11 @@ fn agent_methods_round_trip_over_socket() {
             workspace_id
         ),
     );
-    let second_tab_id = tab_created["result"]["tab"]["tab_id"].as_str().unwrap();
+    let _second_tab_id = tab_created["result"]["tab"]["tab_id"].as_str().unwrap();
     let second_pane_id = tab_created["result"]["root_pane"]["pane_id"]
         .as_str()
         .unwrap();
-    let second_terminal_id = tab_created["result"]["root_pane"]["terminal_id"]
+    let _second_terminal_id = tab_created["result"]["root_pane"]["terminal_id"]
         .as_str()
         .unwrap();
 
