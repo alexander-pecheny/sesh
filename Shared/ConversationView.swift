@@ -144,10 +144,11 @@ struct ConversationView: View {
             hasher.combine(conversation.opened.contains(row.id))
             hasher.combine(conversation.focus.map(row.contains))
             hasher.combine(today)
+            hasher.combine(row.entries.contains { conversation.answered.contains($0.id) })
             items.append(item(row.id, hasher.finalize(), rowView(row)))
         }
         for permission in conversation.permissions {
-            items.append(item("permission." + permission.id, permission.hashValue, PermissionCard(permission: permission, conversation: conversation)))
+            items.append(item("permission." + permission.id, permission.hashValue ^ conversation.answered.contains(permission.id).hashValue, PermissionCard(permission: permission, conversation: conversation)))
         }
         for message in conversation.queued {
             var hasher = Hasher()
@@ -502,7 +503,6 @@ private struct BackgroundLine: View {
     @ObservedObject var conversation: Conversation
     @State private var listing = false
 
-
     var body: some View {
         if let first = conversation.background.first {
             Button { listing = true } label: {
@@ -584,7 +584,6 @@ private struct RowView: View {
     let row: SessionLog.Row
     @ObservedObject var conversation: Conversation
 
-
     var body: some View {
         switch row.content {
         case .lookups(let entries): Lookups(entries: entries, open: conversation.isOpen(entries[0].id), openPath: conversation.openPath)
@@ -626,7 +625,6 @@ private struct UserBubble: View {
     @Environment(\.flavour) private var flavour
     let entry: SessionLog.Entry
     let conversation: Conversation
-
 
     var body: some View {
         VStack(alignment: .trailing, spacing: Bubble.spacing) {
@@ -760,7 +758,6 @@ private struct Composer: View {
     @StateObject private var field = PlainField()
     @State private var picking = false
 
-
     var body: some View {
         NavigationStack {
             PlainText(field: field, text: $text)
@@ -880,7 +877,6 @@ private struct RemoteImage: View {
     private static let tallest: CGFloat = 200
     private static let loading: CGFloat = 120
 
-
     var body: some View {
         Group {
             if let image {
@@ -905,7 +901,6 @@ private struct RemoteImage: View {
 struct Markdown: View {
     @Environment(\.flavour) private var flavour
     let text: String
-
 
     var body: some View {
         MarkdownUI.Markdown(Cmark.linked(text))
@@ -964,7 +959,6 @@ private struct Thinking: View {
     let entry: SessionLog.Entry
     @Binding var open: Bool
 
-
     var body: some View {
         VStack(alignment: .leading, spacing: 6) {
             Button { open.toggle() } label: {
@@ -991,7 +985,6 @@ private struct EndedBar: View {
     let agent: String
     let resume: () async -> Void
     @State private var resuming = false
-
 
     var body: some View {
         HStack(spacing: Metric.gap) {
@@ -1061,7 +1054,6 @@ private struct WorkingRow: View {
     ]
     private static let sweep = 1.6
     private static let band = 0.3
-
 
     var body: some View {
         TimelineView(.animation) { context in
@@ -1133,7 +1125,6 @@ private struct SwitchDivider: View {
     @Environment(\.flavour) private var flavour
     let reason: String
 
-
     private var label: String {
         switch reason {
         case "clear": "Cleared"
@@ -1169,7 +1160,6 @@ private struct Card<Header: View, Detail: View>: View {
     @ViewBuilder let header: () -> Header
     @ViewBuilder let detail: () -> Detail
     var opened: () -> Void = {}
-
 
     var body: some View {
         VStack(alignment: .leading, spacing: Metric.pad) {
@@ -1297,7 +1287,6 @@ private struct Output: View {
     let failed: Bool
     let truncated: Bool
 
-
     var body: some View {
         VStack(alignment: .leading, spacing: 6) {
             Text(text.isEmpty ? "No output" : PathLinks.link(plain: text.trimmingCharacters(in: .newlines)))
@@ -1316,7 +1305,6 @@ private struct Diff: View {
     @Environment(\.flavour) private var flavour
     let text: String
     let truncated: Bool
-
 
     private var lines: [String] {
         let lines = text.trimmingCharacters(in: .newlines).components(separatedBy: "\n")
@@ -1354,7 +1342,6 @@ private struct Lookups: View {
     let entries: [SessionLog.Entry]
     @Binding var open: Bool
     let openPath: ((String) -> Void)?
-
 
     private var line: String {
         let count = { (tool: String) in entries.filter { $0.tool == tool }.count }
@@ -1401,7 +1388,6 @@ private struct QuestionCard: View {
     let conversation: Conversation
     @State private var picked: [Int: Set<String>]
     @State private var typed: [Int: String]
-    @State private var sending = false
     @State private var problem: String?
 
     init(entry: SessionLog.Entry, result: SessionLog.Entry?, conversation: Conversation) {
@@ -1441,11 +1427,11 @@ private struct QuestionCard: View {
             } else {
                 if let problem { Text(problem).font(.system(size: Metric.small, design: .monospaced)).foregroundStyle(flavour(.red)) }
                 Button { Task { await send() } } label: {
-                    Text(sending ? "Sending…" : "Send").frame(maxWidth: .infinity)
+                    Text(sent ? "Sending…" : "Send").frame(maxWidth: .infinity)
                 }
                 .buttonStyle(.borderedProminent)
                 .tint(flavour(.mauve))
-                .disabled(sending || !complete)
+                .disabled(sent || !complete)
             }
         }
         .padding(Metric.pad)
@@ -1497,13 +1483,13 @@ private struct QuestionCard: View {
         .accessibilityAddTraits(on ? .isSelected : [])
     }
 
+    /// Sent, the card waits for its answer to show.
+    private var sent: Bool { conversation.answered.contains(entry.id) }
+
     private func send() async {
-        sending = true
         problem = await conversation.answer(questions.indices.map {
             (Array(picked[$0, default: []]), typed[$0, default: ""])
-        })
-        // Sent, the card waits for its answer to show; a second tap would answer twice.
-        if problem != nil { sending = false }
+        }, to: entry.id)
     }
 }
 
@@ -1511,8 +1497,9 @@ private struct PermissionCard: View {
     @Environment(\.flavour) private var flavour
     let permission: SessionLog.Permission
     let conversation: Conversation
-    @State private var answering = false
 
+    /// Answered, the card stays until the Agent moves on.
+    private var answering: Bool { conversation.answered.contains(permission.id) }
 
     var body: some View {
         VStack(alignment: .leading, spacing: Metric.pad) {
@@ -1534,7 +1521,7 @@ private struct PermissionCard: View {
             if let options = permission.options {
                 Text(permission.summary).font(.ui(Metric.note)).foregroundStyle(flavour(.text)).textSelection(.enabled)
                 ForEach(options, id: \.self) { choice in
-                    Button { Task { await pick(choice) } } label: {
+                    Button { Task { await conversation.choose(choice, in: permission) } } label: {
                         HStack {
                             Text(choice.key.allSatisfy(\.isNumber) ? "\(choice.key). \(choice.label)" : choice.label)
                                 .frame(maxWidth: .infinity, alignment: .leading)
@@ -1547,12 +1534,12 @@ private struct PermissionCard: View {
                 .disabled(answering)
             } else {
                 HStack(spacing: Metric.pad) {
-                    Button { Task { await answer(false) } } label: {
+                    Button { Task { await conversation.permit(false, permission) } } label: {
                         HStack { Text("Deny"); hint("⌘.") }.frame(maxWidth: .infinity)
                     }
                     .buttonStyle(.bordered)
                     .tint(flavour(.red))
-                    Button { Task { await answer(true) } } label: {
+                    Button { Task { await conversation.permit(true, permission) } } label: {
                         HStack { Text("Allow"); hint("⌘↩") }.frame(maxWidth: .infinity)
                     }
                     .buttonStyle(.borderedProminent)
@@ -1581,19 +1568,6 @@ private struct PermissionCard: View {
         if permission.options != nil { return "\(agent) is asking" }
         return permission.summary
     }
-
-    /// Answered, the card stays until the Agent moves on; a second tap would land as a keystroke.
-    private func pick(_ choice: SessionLog.Permission.Choice) async {
-        answering = true
-        await conversation.choose(choice)
-        if conversation.problem != nil { answering = false }
-    }
-
-    private func answer(_ allow: Bool) async {
-        answering = true
-        await conversation.permit(allow)
-        if conversation.problem != nil { answering = false }
-    }
 }
 
 #if os(macOS)
@@ -1602,32 +1576,22 @@ private struct PermissionCard: View {
 private struct PermissionKeys: View {
     let permission: SessionLog.Permission
     let conversation: Conversation
-    @State private var answering = false
 
     var body: some View {
         ZStack {
             if let options = permission.options {
                 ForEach(options, id: \.self) { choice in
                     if choice.key.count == 1, let key = choice.key.first {
-                        Button("") { answer { await conversation.choose(choice) } }
+                        Button("") { Task { await conversation.choose(choice, in: permission) } }
                             .keyboardShortcut(KeyEquivalent(key), modifiers: [.command, .option])
                     }
                 }
             } else {
-                Button("") { answer { await conversation.permit(true) } }.keyboardShortcut(.return)
-                Button("") { answer { await conversation.permit(false) } }.keyboardShortcut(".")
+                Button("") { Task { await conversation.permit(true, permission) } }.keyboardShortcut(.return)
+                Button("") { Task { await conversation.permit(false, permission) } }.keyboardShortcut(".")
             }
         }
         .hidden()
-    }
-
-    private func answer(_ send: @escaping () async -> Void) {
-        guard !answering else { return }
-        answering = true
-        Task {
-            await send()
-            if conversation.problem != nil { answering = false }
-        }
     }
 }
 #endif
@@ -1695,7 +1659,6 @@ private struct UploadButton: View {
     @Environment(\.flavour) private var flavour
     @ObservedObject var link: HostLink
     let pick: () -> Void
-
 
     var body: some View {
         Button {

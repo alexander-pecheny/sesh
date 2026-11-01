@@ -381,10 +381,21 @@ final class Conversation: ObservableObject {
         await stop()
     }
 
+    /// The permissions and questions answered, so a click and a key press for the same card send
+    /// one answer; a failed answer can be given again.
+    @Published private(set) var answered: Set<String> = []
+
+    private func once(_ id: String, _ send: (String) async -> String?) async -> String? {
+        guard let pane, answered.insert(id).inserted else { return nil }
+        let failed = await send(pane)
+        if failed != nil { answered.remove(id) }
+        return failed
+    }
+
     /// Picks a choice in a menu read off the Agent's screen.
-    func choose(_ choice: SessionLog.Permission.Choice) async {
-        guard let pane else { return }
-        problem = await follower?.keys(choice.key.split(separator: " ").map(String.init), to: pane)
+    func choose(_ choice: SessionLog.Permission.Choice, in permission: SessionLog.Permission) async {
+        guard !answered.contains(permission.id) else { return }
+        problem = await once(permission.id) { await follower?.keys(choice.key.split(separator: " ").map(String.init), to: $0) }
     }
 
     /// Hands the queue to the Agent at once; Claude takes a message mid-turn, or while it
@@ -400,20 +411,19 @@ final class Conversation: ObservableObject {
     }
 
     /// One answer per question, in order: the labels picked, and any text typed instead.
-    func answer(_ answers: [(options: [String], text: String)]) async -> String? {
-        guard let pane else { return nil }
+    func answer(_ answers: [(options: [String], text: String)], to question: String) async -> String? {
         let json = answers.map { answer -> [String: Any] in
             var object: [String: Any] = ["options": answer.options]
             if !answer.text.isEmpty { object["text"] = answer.text }
             return object
         }
         let data = (try? JSONSerialization.data(withJSONObject: json)) ?? Data("[]".utf8)
-        return await follower?.answer(String(decoding: data, as: UTF8.self), in: pane)
+        return await once(question) { await follower?.answer(String(decoding: data, as: UTF8.self), in: $0) }
     }
 
-    func permit(_ allow: Bool) async {
-        guard let pane else { return }
-        problem = await follower?.permit(allow, in: pane)
+    func permit(_ allow: Bool, _ permission: SessionLog.Permission) async {
+        guard !answered.contains(permission.id) else { return }
+        problem = await once(permission.id) { await follower?.permit(allow, in: $0) }
     }
 
     /// The helper cuts long output down; the whole entry is fetched the first time it is opened.
