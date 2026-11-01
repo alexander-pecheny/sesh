@@ -82,6 +82,10 @@ impl Source for Shared {
     fn input(&mut self, pane_id: &str, input: &Input) -> Result<()> {
         self.0.borrow_mut().input(pane_id, input)
     }
+
+    fn call(&mut self, method: &str, params: Value) -> std::result::Result<Value, Value> {
+        self.0.borrow_mut().call(method, params)
+    }
 }
 
 /// Makes the Source an act plays through on a thread of its own.
@@ -857,6 +861,10 @@ impl Source for Recorder {
 
     fn input(&mut self, pane_id: &str, input: &Input) -> Result<()> {
         Mux.input(pane_id, input)
+    }
+
+    fn call(&mut self, method: &str, params: Value) -> std::result::Result<Value, Value> {
+        Mux.call(method, params)
     }
 
     fn recorder(&mut self) -> Option<&mut Recorder> {

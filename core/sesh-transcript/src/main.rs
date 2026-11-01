@@ -5,8 +5,8 @@ use std::time::{Duration, Instant};
 
 use serde_json::{json, Value};
 use sesh_transcript::agent::{transcript_path, Agent};
-use sesh_transcript::follower::{entry_line, mux, Event, Follower, Mux};
-use sesh_transcript::act;
+use sesh_transcript::follower::{entry_line, Event, Follower, Mux};
+use sesh_transcript::{act, listen};
 use sesh_transcript::vault::{self, Vault};
 use sesh_transcript::{replay, serve, version, Transcript, PROTOCOL};
 
@@ -177,9 +177,8 @@ fn parse_last(options: &HashMap<&str, &str>) -> Option<usize> {
 
 // MARK: sesh-mux
 fn pane_info(pane_id: &str) -> Result<Value, String> {
-    let reply: Value = serde_json::from_str(&mux(&["pane", "get", pane_id])?)
-        .map_err(|err| format!("sesh-mux said something sesh-transcript cannot read: {err}"))?;
-    Ok(reply["result"]["pane"].clone())
+    let result = listen::call("pane.get", json!({"pane_id": pane_id})).map_err(|err| listen::refusal(&err))?;
+    Ok(result["pane"].clone())
 }
 
 /// The pane and its Agent, or why it has none Conversations support.

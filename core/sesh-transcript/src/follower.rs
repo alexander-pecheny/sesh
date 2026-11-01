@@ -3,7 +3,6 @@
 
 use std::hash::{Hash as _, Hasher as _};
 use std::path::PathBuf;
-use std::process::Command;
 use std::time::Instant;
 
 use serde_json::{json, Value};
@@ -37,23 +36,28 @@ pub trait Source {
     fn read(&mut self, pane_id: &str, ansi: bool) -> Result<String, String>;
     fn input(&mut self, pane_id: &str, input: &Input) -> Result<(), String>;
 
+    /// Any other request of sesh-mux's socket API: its result, or its error with a code and a message.
+    fn call(&mut self, method: &str, _params: Value) -> Result<Value, Value> {
+        Err(json!({"code": "unsupported", "message": format!("this Source cannot ask sesh-mux {method}")}))
+    }
+
     /// The recorder, when this Source records what it reads.
     fn recorder(&mut self) -> Option<&mut crate::serve::Recorder> {
         None
     }
 }
 
-/// sesh-mux itself.
+/// sesh-mux itself, over its socket.
 pub struct Mux;
 
 impl Source for Mux {
-    /// Every pane, with the Agent's name and finished turns, which only `agent list` gives.
+    /// Every pane, with the Agent's name and finished turns, which only `agent.list` gives.
     fn panes(&mut self) -> Result<Vec<Value>, String> {
-        let read = |args: &[&str]| -> Result<Value, String> {
-            serde_json::from_str(&mux(args)?).map_err(|err| format!("sesh-mux said something sesh-transcript cannot read: {err}"))
+        let list = |method: &str, key: &str| -> Result<Vec<Value>, String> {
+            Ok(crate::listen::call(method, json!({})).map_err(|err| crate::listen::refusal(&err))?[key].as_array().cloned().unwrap_or_default())
         };
-        let mut panes = read(&["pane", "list"])?["result"]["panes"].as_array().cloned().unwrap_or_default();
-        let agents = read(&["agent", "list"])?["result"]["agents"].as_array().cloned().unwrap_or_default();
+        let mut panes = list("pane.list", "panes")?;
+        let agents = list("agent.list", "agents")?;
         for pane in &mut panes {
             if let Some(agent) = agents.iter().find(|agent| agent["pane_id"] == pane["pane_id"]) {
                 pane["name"] = agent["name"].clone();
@@ -65,36 +69,23 @@ impl Source for Mux {
 
     fn read(&mut self, pane_id: &str, ansi: bool) -> Result<String, String> {
         let format = if ansi { "ansi" } else { "text" };
-        mux(&["pane", "read", pane_id, "--source", "visible", "--format", format])
+        let read = self.call("pane.read", json!({"pane_id": pane_id, "source": "visible", "format": format}));
+        Ok(read.map_err(|err| crate::listen::refusal(&err))?["read"]["text"].as_str().unwrap_or_default().to_string())
     }
 
     fn input(&mut self, pane_id: &str, input: &Input) -> Result<(), String> {
-        match input {
-            Input::Keys(keys) => mux(&[&["pane", "send-keys", pane_id][..], &keys.iter().map(String::as_str).collect::<Vec<_>>()].concat()),
-            Input::Text(text) => mux(&["pane", "send-text", pane_id, text]),
-            Input::Prompt(text) => mux(&["agent", "prompt", pane_id, text]),
-            Input::Close => mux(&["pane", "close", pane_id]),
-        }
-        .map(drop)
+        let (method, params) = match input {
+            Input::Keys(keys) => ("pane.send_keys", json!({"pane_id": pane_id, "keys": keys})),
+            Input::Text(text) => ("pane.send_text", json!({"pane_id": pane_id, "text": text})),
+            Input::Prompt(text) => ("agent.prompt", json!({"target": pane_id, "text": text})),
+            Input::Close => ("pane.close", json!({"pane_id": pane_id})),
+        };
+        self.call(method, params).map(drop).map_err(|err| crate::listen::refusal(&err))
     }
-}
 
-
-/// Runs sesh-mux with `args` and returns its stdout, or the message it failed with.
-pub fn mux(args: &[&str]) -> Result<String, String> {
-    let home = std::env::var("HOME").unwrap_or_default();
-    let output = Command::new(format!("{home}/.sesh/bin/sesh-mux"))
-        .args(args)
-        .output()
-        .map_err(|err| format!("sesh-mux: {err}"))?;
-    if output.status.success() {
-        return Ok(String::from_utf8_lossy(&output.stdout).into_owned());
+    fn call(&mut self, method: &str, params: Value) -> Result<Value, Value> {
+        crate::listen::call(method, params)
     }
-    let err = String::from_utf8_lossy(&output.stderr);
-    let json: Option<Value> = serde_json::from_str(&err).ok();
-    Err(json
-        .and_then(|json| json["error"]["message"].as_str().map(str::to_string))
-        .unwrap_or_else(|| err.trim().to_string()))
 }
 
 
