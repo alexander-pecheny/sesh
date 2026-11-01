@@ -140,6 +140,31 @@ final class FollowerLink {
     /// Interrupts the Agent and closes its pane.
     func stop(_ session: String) async -> String? { await ask("stop", session, []) }
 
+    /// Starts `agent`, named `name`, in a fresh `pane`, and waits on the machine until it can take a
+    /// prompt (ADR 0019). On failure the pane is closed, so no half-started Agent lingers, and the
+    /// reason comes back.
+    func start(_ agent: Agent, name: String, pane: String, resuming transcript: String? = nil,
+               config: String? = nil, remote: Bool = true) async -> String? {
+        var request: [String: Any] = ["op": "start", "session": pane, "name": name, "agent": agent.rawValue,
+                                      "args": agent.args(name, resuming: transcript, remote: remote)]
+        if let config, !config.isEmpty { request["config"] = config }
+        let ran = await ask(request)
+        return ran.ok ? nil : ran.problem
+    }
+
+    /// Bytes of a request that still go on `ask`'s command line; a longer one goes through a file.
+    private static let inline = 64 << 10
+
+    /// A request the follower answers with one line, which `ask` prints.
+    func ask(_ request: [String: Any]) async -> Ran {
+        if let problem = await machine.prepare() { return Ran(status: 1, out: "", err: problem) }
+        let text = Self.request(request)
+        guard text.utf8.count > Self.inline else { return await machine.run("\(Helper.path) ask \(quote(text))") }
+        let staged = ".sesh/request-\(UUID().uuidString.lowercased()).json"
+        let put = await machine.put(Data(text.utf8), to: staged)
+        return put.ok ? await machine.run("\(Helper.path) ask --file ~/\(staged)") : put
+    }
+
     private func ask(_ op: String, _ session: String, _ args: [String]) async -> String? {
         if let problem = await machine.prepare() { return problem }
         let ran = await machine.run(([Helper.path, op] + ([session] + args).map(quote)).joined(separator: " "))

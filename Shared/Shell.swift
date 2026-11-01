@@ -9,13 +9,13 @@ enum Agent: String, CaseIterable, Identifiable {
 
     /// Permissions are always bypassed: she cannot be at the terminal to approve them. With a
     /// Transcript, the Agent picks up the conversation it holds.
-    func flags(_ name: String, resuming transcript: String? = nil, remote: Bool = true) -> String {
+    func args(_ name: String, resuming transcript: String? = nil, remote: Bool = true) -> [String] {
         let id = ((transcript ?? "") as NSString).lastPathComponent.replacingOccurrences(of: ".jsonl", with: "")
         switch self {
-        case .claude: return (remote ? "--remote-control \(quote(name)) " : "") + "--dangerously-skip-permissions" + (transcript == nil ? "" : " --resume \(quote(id))")
+        case .claude: return (remote ? ["--remote-control", name] : []) + ["--dangerously-skip-permissions"] + (transcript == nil ? [] : ["--resume", id])
         // Codex names its files rollout-<time>-<uuid>.
-        case .codex: return (transcript == nil ? "" : "resume \(quote(String(id.suffix(36)))) ") + "--dangerously-bypass-approvals-and-sandbox"
-        case .pi: return transcript.map { "--session \(quote($0))" } ?? ""
+        case .codex: return (transcript == nil ? [] : ["resume", String(id.suffix(36))]) + ["--dangerously-bypass-approvals-and-sandbox"]
+        case .pi: return transcript.map { ["--session", $0] } ?? []
         }
     }
 

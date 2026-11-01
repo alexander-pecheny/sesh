@@ -75,7 +75,7 @@ final class CloseLiveTests: XCTestCase {
             guard case .success(let tab) = await Mux.tab(in: opened.workspace, folder: path, label: "agent \(n)", on: shell) else { continue }
             panes.append(tab.pane)
         }
-        if claude, let problem = await Mux.launch(.claude, name: name, pane: panes[0], on: shell) {
+        if claude, let problem = await shell.follower.start(.claude, name: name, pane: panes[0]) {
             throw Failed(message: "Claude did not start: \(problem)")
         }
         var body = Record.Body(title: label, machine: shell.alias, path: path, branch: "live/\(name)", repo: repo)

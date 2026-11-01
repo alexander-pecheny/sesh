@@ -663,7 +663,7 @@ impl Client {
 }
 
 /// `~/` in a folder a device named, which no shell expanded on its way here.
-fn expand(dir: &str) -> PathBuf {
+pub(crate) fn expand(dir: &str) -> PathBuf {
     match dir.strip_prefix("~/") {
         Some(rest) => std::env::var_os("HOME").map(PathBuf::from).unwrap_or_default().join(rest),
         None => PathBuf::from(dir),
@@ -701,8 +701,8 @@ pub fn attach(requests: &[Value]) -> Result<i32> {
 }
 
 /// One request from a device that runs a command of its own for each, as the phone must
-/// (ADR 0012): `page` prints the page's lines, and an act fails with the follower's error.
-/// An act a leaving follower refuses goes to the newer one once it answers.
+/// (ADR 0012): `page` prints the page's lines, a copy its answer, and an act or a copy fails with
+/// the follower's error. What a leaving follower refuses goes to the newer one once it answers.
 pub fn ask(request: &Value) -> Result<i32> {
     // Asked again after a silent hang-up, the request keeps its id, so it is played once.
     let stamp = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap_or_default().as_nanos();
@@ -736,13 +736,15 @@ fn ask_once(mut stream: UnixStream, request: &Value) -> Result<Option<i32>> {
         return Ok(None);
     }
     let page = request["op"] == "page";
+    // An act's answer is that it was played; any other request's is the lines it prints.
+    let prints = !crate::act::OPS.contains(&request["op"].as_str().unwrap_or_default());
     let mut out = std::io::stdout().lock();
     let mut heard = false;
     for line in BufReader::new(stream).lines() {
         heard = true;
         let line = line.map_err(|err| err.to_string())?;
         let value: Value = serde_json::from_str(&line).unwrap_or_default();
-        if page {
+        if prints && (page || !matches!(value["t"].as_str(), Some("error" | "leaving"))) {
             writeln!(out, "{line}").map_err(|err| err.to_string())?;
         }
         match value["t"].as_str() {

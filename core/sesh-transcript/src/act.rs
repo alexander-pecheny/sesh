@@ -1,6 +1,6 @@
-//! What a device asks of an Agent (ADR 0012): a message, keys, an answer, a permission or a
-//! stop, which the follower plays into the Agent's pane through its Source. Taking back a
-//! queued message, or handing the queue over, the follower does itself (ADR 0015).
+//! What a device asks of an Agent (ADR 0012): a message, keys, an answer, a permission, a stop
+//! or a start (ADR 0019), which the follower plays into the Agent's pane through its Source.
+//! Taking back a queued message, or handing the queue over, the follower does itself (ADR 0015).
 
 use std::time::{Duration, Instant};
 
@@ -18,7 +18,7 @@ const STOP_PAUSE: Duration = Duration::from_secs(1);
 type Result<T> = std::result::Result<T, String>;
 
 /// The ops a device sends the follower to act on a session.
-pub const OPS: [&str; 7] = ["send", "unqueue", "hand", "keys", "answer", "permit", "stop"];
+pub const OPS: [&str; 8] = ["send", "unqueue", "hand", "keys", "answer", "permit", "stop", "start"];
 
 /// The request for `op` with its arguments as a one-shot command takes them: the message's id
 /// and text, key names, answers as JSON, or allow or deny.
@@ -59,6 +59,7 @@ pub fn act(source: &mut dyn Source, session: &str, pane: Option<&Value>, request
             answer(source, session, agent_pane(session, pane)?, &answers)
         }
         "permit" => permit(source, session, agent_pane(session, pane)?, request["allow"] == true),
+        "start" => crate::start::start(source, session, request),
         other => Err(format!("unknown op {other:?}")),
     }
 }

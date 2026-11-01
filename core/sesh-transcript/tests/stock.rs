@@ -337,6 +337,26 @@ fn the_follower_plays_a_devices_messages_keys_answers_and_stops_into_sesh_mux() 
 }
 
 #[test]
+fn the_follower_starts_an_agent_and_closes_its_pane_when_it_exits_on_start() {
+    let host = Host::new("start");
+    host.session("s1", "idle");
+    let mut follower = host.follower(0);
+    let start = json!({"op": "start", "session": "w1:p1", "name": "fix-claude", "agent": "claude", "args": ["--dangerously-skip-permissions"]});
+    let agent = |ready: bool| json!({"agent": "claude", "name": "fix-claude", "agent_status": "idle", "interactive_ready": ready}).to_string();
+    std::fs::write(host.root.join("agent.json"), agent(true)).unwrap();
+    let ready = host.command(&["ask", &start.to_string()]).output().unwrap();
+    std::fs::write(host.root.join("agent.json"), agent(false)).unwrap();
+    std::fs::write(host.root.join("screen.txt"), "Error: no such model\n").unwrap();
+    let exited = host.command(&["ask", &start.to_string()]).output().unwrap();
+    follower.kill().unwrap();
+    follower.wait().unwrap();
+    assert!(ready.status.success(), "{}", String::from_utf8_lossy(&ready.stderr));
+    assert_eq!(exited.status.code(), Some(1));
+    assert_eq!(String::from_utf8_lossy(&exited.stderr), "agent process exited before becoming interactive\nError: no such model\n");
+    assert_eq!(host.inputs(), "pane close w1:p1\n");
+}
+
+#[test]
 fn a_newer_build_takes_over_an_older_follower_and_keeps_its_log() {
     let host = Host::new("newer");
     host.session("s1", "idle");

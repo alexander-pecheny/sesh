@@ -176,8 +176,8 @@ final class TaskCommandTests: XCTestCase {
     }
 
     func testClaudeStartsWithRemoteControlUnlessTheTaskSaysNo() {
-        XCTAssertTrue(Agent.claude.flags("fix").hasPrefix("--remote-control 'fix' "))
-        XCTAssertEqual(Agent.claude.flags("fix", remote: false), "--dangerously-skip-permissions")
+        XCTAssertEqual(Agent.claude.args("fix"), ["--remote-control", "fix", "--dangerously-skip-permissions"])
+        XCTAssertEqual(Agent.claude.args("fix", remote: false), ["--dangerously-skip-permissions"])
     }
 
     func testANewWorktreesBranchTakesTheNextFreeNumber() {
