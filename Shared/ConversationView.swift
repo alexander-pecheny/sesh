@@ -12,14 +12,8 @@ struct ConversationView: View {
     var resume: (() async -> Void)?
     /// The branch and machine the Agent works on, which the phone shows under its Tabs.
     var place: String?
-    @State private var draft = ""
     @State private var notice: String?
-    /// Messages on their way to the follower.
-    @State private var sending = 0
-    @State private var picking = false
     @State private var lost = false
-    @StateObject private var field = PlainField()
-    @State private var composing = false
     /// A message open on its own for selecting part of it, which the phone's list cannot do.
     @State private var selecting: String?
     /// The rows keep their drawing until their version changes, so a time stamped today
@@ -58,7 +52,7 @@ struct ConversationView: View {
                 // A Transcript read from a file, a copy or a subagent's, has no one to send to.
                 if conversation.pane != nil {
                     BackgroundLine(conversation: conversation)
-                    input
+                    MessageBox(conversation: conversation, outbox: conversation.outbox, fresh: fresh, hidden: hidden)
                 } else if let resume {
                     EndedBar(agent: conversation.agent?.title ?? "The Agent", resume: resume)
                 }
@@ -84,19 +78,21 @@ struct ConversationView: View {
         .onAppear { conversation.shown() }
         .onDisappear { conversation.hidden() }
         .environment(\.openURL, links)
-        .onAppear(perform: appeared)
         .onReceive(NotificationCenter.default.publisher(for: .NSCalendarDayChanged).receive(on: RunLoop.main)) { _ in
             today = Calendar.current.startOfDay(for: .now)
         }
-        .onChange(of: draft) { conversation.draft = draft }
         #if os(macOS)
-        .onChange(of: hidden) { field.catchesTyping = !hidden }
         .background {
             if !hidden, let permission = conversation.permissions.first {
                 PermissionKeys(permission: permission, conversation: conversation).id(permission.id)
             }
         }
         #endif
+        .cover(isPresented: Binding(
+            get: { conversation.viewing != nil }, set: { if !$0 { conversation.viewing = nil } }
+        )) {
+            if let image = conversation.viewing { ImageViewer(image: image) }
+        }
         .sheet(isPresented: Binding(get: { selecting != nil }, set: { if !$0 { selecting = nil } })) {
             if let selecting { SelectSheet(text: selecting) }
         }
@@ -154,7 +150,7 @@ struct ConversationView: View {
             var hasher = Hasher()
             hasher.combine(message)
             hasher.combine(conversation.starting)
-            items.append(item(message.id, hasher.finalize(), QueuedBubble(message: message, conversation: conversation, edit: takeBack, resend: resend)))
+            items.append(item(message.id, hasher.finalize(), QueuedBubble(message: message, conversation: conversation)))
         }
         if working || conversation.state == "background" && !conversation.status.isEmpty {
             items.append(item("working", conversation.status.hashValue, WorkingRow(status: conversation.status)))
@@ -210,95 +206,6 @@ struct ConversationView: View {
         return "\(state). Last sync took \(String(format: "%.3g", seconds))s\(over)"
     }
 
-    private var input: some View {
-        HStack(alignment: .bottom, spacing: Metric.gap) {
-            #if os(iOS)
-            if let link = conversation.runner?.uploads {
-                UploadButton(link: link) { picking = true }
-            } else {
-                Image.lucide("image-up", size: 20).foregroundStyle(flavour(.overlay0))
-                    .frame(width: Metric.control, height: Metric.control)
-            }
-            #endif
-            PlainText(field: field, text: $draft, font: .systemFont(ofSize: Metric.title), lines: 6) { if canSend { Task { await send() } } }
-                .overlay(alignment: .leading) {
-                    if draft.isEmpty {
-                        Text("Message").font(.ui(Metric.title)).foregroundStyle(flavour(.overlay0)).allowsHitTesting(false)
-                    }
-                }
-                .padding(.leading, Metric.pad)
-                .padding(.trailing, Metric.control)
-                .padding(.vertical, Metric.gap)
-                .frame(minHeight: Metric.control)
-                .overlay(alignment: .bottomTrailing) {
-                    Button { composing = true } label: {
-                        Image.lucide("maximize-2", size: Metric.label).foregroundStyle(flavour(.overlay1))
-                            .frame(width: Metric.control, height: Metric.control)
-                    }
-                    .accessibilityLabel("Expand")
-                }
-                .background(flavour(.base), in: .rect(cornerRadius: Metric.control / 2))
-                .foregroundStyle(flavour(.text))
-            Button { Task { await sendOrStop() } } label: {
-                Image.lucide(stops ? "square" : "arrow-up", size: 18)
-                    .foregroundStyle(flavour(.base))
-                    .frame(width: Metric.control, height: Metric.control)
-                    .background(flavour(stops ? .red : .mauve).opacity(canSend || stops ? 1 : 0.4), in: .circle)
-            }
-            .disabled(!canSend && !stops)
-            .accessibilityLabel(stops ? "Stop" : "Send")
-            .help(stops ? "Stop the Agent" : "Send")
-        }
-        .padding(.horizontal, Metric.pad)
-        .padding(.vertical, Metric.gap)
-        .background(flavour(.mantle), ignoresSafeAreaEdges: .vertical)
-        #if os(iOS)
-        .sheet(isPresented: $picking) {
-            PhotoPicker { results in
-                picking = false
-                conversation.runner?.uploads?.upload(results) { field.insertPaths($0) }
-            }
-            .ignoresSafeArea()
-        }
-        #endif
-        .cover(isPresented: Binding(
-            get: { conversation.viewing != nil }, set: { if !$0 { conversation.viewing = nil } }
-        )) {
-            if let image = conversation.viewing { ImageViewer(image: image) }
-        }
-        // A send from the full-screen editor jumps while the chat is covered, by sizes that
-        // change as it closes; the jump is made again once it has.
-        .onChange(of: composing) { if !composing, conversation.scroll.atBottom { conversation.scroll.jump() } }
-        .cover(isPresented: $composing) {
-            #if os(iOS)
-            Composer(text: $draft, canSend: canSend, uploads: conversation.runner?.uploads) { Task { await send() } }
-            #else
-            Composer(text: $draft, canSend: canSend) { Task { await send() } }
-            #endif
-        }
-    }
-
-    private func appeared() {
-        if draft.isEmpty { draft = conversation.draft }
-        if fresh { DispatchQueue.main.async { field.focus() } }
-        let conversation = conversation
-        field.recall = { [weak conversation] in
-            conversation?.rows.flatMap(\.entries).last { $0.kind == "user" && $0.text?.isEmpty == false }?.text
-        }
-        #if os(macOS)
-        field.pasteImage = { [weak conversation] data, ext in
-            let path = await conversation?.upload(data, ext: ext)
-            if path == nil { conversation?.problem = "Sesh could not upload the pasted image." }
-            return path
-        }
-        field.escape = { [weak conversation] in
-            guard let conversation, conversation.state == "working" else { return }
-            Task { await conversation.stop() }
-        }
-        field.catchesTyping = !hidden
-        #endif
-    }
-
     /// An action on a message, followed by a word that it happened.
     private func confirmed(_ action: ((SessionLog.Entry) -> Void)?, _ words: String) -> ((SessionLog.Entry) -> Void)? {
         action.map { action in
@@ -320,47 +227,6 @@ struct ConversationView: View {
             try? await Task.sleep(for: .seconds(1.5))
             withAnimation { if notice == "Copied" { notice = nil } }
         }
-    }
-
-    /// A queued message goes back into the box, ahead of anything typed since.
-    /// It goes to the Conversation first, since this view may be gone by the time a send fails.
-    private func takeBack(_ text: String) {
-        conversation.draft = conversation.draft.isEmpty ? text : text + "\n\n" + conversation.draft
-        draft = conversation.draft
-    }
-
-    private var canSend: Bool { !empty }
-    private var empty: Bool { draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
-    /// The button stops the Agent only for an empty box, never while a message is on its way.
-    private var stops: Bool { working && empty && sending == 0 }
-
-    /// While the Agent works, a written message queues and an empty box stops the Agent.
-    private func sendOrStop() async {
-        guard !stops else { return await conversation.stop() }
-        await send()
-    }
-
-    /// The message shows at once and the box empties; a failed one comes back into the box.
-    private func send() async {
-        let text = draft.trimmingCharacters(in: .whitespacesAndNewlines)
-        draft = ""
-        // Whoever sends wants to see the reply, wherever they had scrolled.
-        conversation.scroll.jump()
-        await deliver(text) { await conversation.send(text) }
-    }
-
-    /// Sends a message the Agent did not take again, under its own id.
-    private func resend(_ message: SessionLog.Entry) {
-        Task { await deliver(message.text ?? "") { await conversation.send(message.text ?? "", id: message.id) } }
-    }
-
-    private func deliver(_ text: String, _ send: () async -> String?) async {
-        sending += 1
-        if let problem = await send() {
-            conversation.problem = problem
-            takeBack(text)
-        }
-        sending -= 1
     }
 
     private func openInClaude() async {
@@ -696,8 +562,6 @@ private struct QueuedBubble: View {
     @Environment(\.flavour) private var flavour
     let message: SessionLog.Entry
     @ObservedObject var conversation: Conversation
-    let edit: (String) -> Void
-    let resend: (SessionLog.Entry) -> Void
 
     private var agent: String { conversation.agent?.title ?? "the Agent" }
 
@@ -715,7 +579,7 @@ private struct QueuedBubble: View {
                     Button("Interrupt and send now") { Task { await conversation.interrupt() } }
                 } else if message.state == "lost" {
                     Text("\(agent) did not take it").foregroundStyle(flavour(.overlay1))
-                    Button("Send again") { resend(message) }
+                    Button("Send again") { Task { await conversation.resend(message) } }
                     takeBack
                 } else if conversation.isLocal(message) {
                     Text(conversation.starting ? "Sent once \(agent) is up" : "Not sent").foregroundStyle(flavour(.overlay1))
@@ -738,64 +602,11 @@ private struct QueuedBubble: View {
     }
 
     @ViewBuilder private var takeBack: some View {
-        Button("Edit") { Task { if let text = await conversation.unqueue(message) { edit(text) } } }
+        Button("Edit") { Task { if let text = await conversation.unqueue(message) { conversation.takeBack(text) } } }
         Button("Remove") { Task { _ = await conversation.unqueue(message) } }
     }
 
     private static let dashes = StrokeStyle(lineWidth: 1, dash: [Metric.tiny, 3])
-}
-
-/// The whole screen for a long message, on the same text as the message box.
-private struct Composer: View {
-    @Environment(\.dismiss) private var dismiss
-    @Environment(\.flavour) private var flavour
-    @Binding var text: String
-    let canSend: Bool
-    #if os(iOS)
-    let uploads: HostLink?
-    #endif
-    let send: () -> Void
-    @StateObject private var field = PlainField()
-    @State private var picking = false
-
-    var body: some View {
-        NavigationStack {
-            PlainText(field: field, text: $text)
-                .padding(Metric.gap)
-                #if os(macOS)
-                .frame(minWidth: 640, idealWidth: 760, minHeight: 420, idealHeight: 560)
-                #endif
-                .background(flavour(.base))
-                .navigationTitle("Message")
-                .inlineTitle()
-                .toolbar {
-                    ToolbarItem(placement: .cancellationAction) { Button("Done") { dismiss() } }
-                    #if os(iOS)
-                    if let uploads {
-                        ToolbarItem(placement: .primaryAction) { UploadButton(link: uploads) { picking = true } }
-                    }
-                    #endif
-                    ToolbarItem(placement: .confirmationAction) {
-                        Button("Send") {
-                            send()
-                            dismiss()
-                        }
-                        .disabled(!canSend)
-                    }
-                }
-                .onAppear { field.focus() }
-                #if os(iOS)
-                .sheet(isPresented: $picking) {
-                    PhotoPicker { results in
-                        picking = false
-                        uploads?.upload(results) { field.insertPaths($0) }
-                    }
-                    .ignoresSafeArea()
-                }
-                #endif
-        }
-        .tint(flavour(.mauve))
-    }
 }
 
 /// An image from a message or a Document, whole, with pinch to zoom.
@@ -1653,33 +1464,6 @@ private struct TodoBar: View {
         }
     }
 }
-
-#if os(iOS)
-private struct UploadButton: View {
-    @Environment(\.flavour) private var flavour
-    @ObservedObject var link: HostLink
-    let pick: () -> Void
-
-    var body: some View {
-        Button {
-            if link.uploading != nil { link.cancelUpload() } else { pick() }
-        } label: {
-            Group {
-                if let fraction = link.uploading?.fraction {
-                    UploadRing(fraction: fraction, colour: flavour(.mauve))
-                } else {
-                    Image.lucide("image-up", size: 20)
-                }
-            }
-            .foregroundStyle(flavour(.subtext0))
-            .frame(width: 38, height: 38)
-        }
-        .disabled(link.uploading == nil && !link.canUpload)
-        .accessibilityLabel(link.uploading == nil ? "upload" : "cancel upload")
-        .uploadFailure($link.uploadError)
-    }
-}
-#endif
 
 /// Bars in the shape of a chat, standing in for messages still on their way.
 struct Skeleton: View {

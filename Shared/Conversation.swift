@@ -66,8 +66,15 @@ final class Conversation: ObservableObject {
     var bookmark: ((SessionLog.Entry) -> Void)?
     var copyLink: ((SessionLog.Entry) -> Void)?
     /// What is typed and not sent; it outlives the view, which goes with every switch of Task.
-    var draft = "" { didSet { if draft != oldValue { saveDraft?(draft) } } }
-    var saveDraft: ((String) -> Void)?
+    let outbox = Outbox()
+    var draft: String {
+        get { outbox.text }
+        set { outbox.text = newValue }
+    }
+    var saveDraft: ((String) -> Void)? {
+        get { outbox.save }
+        set { outbox.save = newValue }
+    }
     /// Where the reader is in the chat, kept while the app runs.
     let scroll = ChatScroll()
     /// The entry a link or a search result asked to see, scrolled to and marked.
@@ -339,6 +346,43 @@ final class Conversation: ObservableObject {
         _ = log.drop(id)
         publish()
         return failed
+    }
+
+    /// The button stops the Agent only for an empty box, never while a message is on its way.
+    var stops: Bool { state == "working" && outbox.empty && outbox.sending == 0 }
+
+    /// While the Agent works, a written message queues and an empty box stops the Agent.
+    func sendOrStop() async {
+        if stops { await stop() } else { await sendDraft() }
+    }
+
+    /// The message shows at once and the box empties; a failed one comes back into the box.
+    func sendDraft() async {
+        let text = outbox.text.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !text.isEmpty else { return }
+        outbox.text = ""
+        // Whoever sends wants to see the reply, wherever they had scrolled.
+        scroll.jump()
+        await deliver(text) { await send(text) }
+    }
+
+    /// Sends a message the Agent did not take again, under its own id.
+    func resend(_ message: SessionLog.Entry) async {
+        await deliver(message.text ?? "") { await send(message.text ?? "", id: message.id) }
+    }
+
+    /// A message goes back into the box, ahead of anything typed since.
+    func takeBack(_ text: String) {
+        draft = draft.isEmpty ? text : text + "\n\n" + draft
+    }
+
+    private func deliver(_ text: String, _ send: () async -> String?) async {
+        outbox.sending += 1
+        if let failed = await send() {
+            problem = failed
+            takeBack(text)
+        }
+        outbox.sending -= 1
     }
 
     /// Sends what was written while the Agent started, once it has.
