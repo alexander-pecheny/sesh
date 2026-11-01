@@ -17,6 +17,7 @@ use attach::{write_attach_semantic_action, AttachEscapeState, AttachInputAction}
 
 const MOUSE_SCROLL_LINES: usize = 3;
 const TICK: Duration = Duration::from_millis(100);
+const IDLE_FLUSH: Duration = Duration::from_millis(10);
 const HANDSHAKE_TIMEOUT: Duration = Duration::from_secs(5);
 
 pub(super) trait ClientMessageSink {
@@ -161,10 +162,19 @@ pub fn run_terminal_attach(terminal_id: String, takeover: bool) -> io::Result<()
 
     let mut guard = TerminalGuard::enter()?;
     let mut escape = AttachEscapeState::default();
+    let mut framer = crate::raw_input::RawInputByteFramer::default();
     let outcome = loop {
-        let event = match rx.recv_timeout(TICK) {
+        let wait = if framer.has_pending_input() {
+            IDLE_FLUSH
+        } else {
+            TICK
+        };
+        let event = match rx.recv_timeout(wait) {
             Ok(event) => event,
             Err(mpsc::RecvTimeoutError::Timeout) => {
+                if forward_input(&mut stream, &mut escape, framer.flush_timeout(), rows)? {
+                    break Ok(());
+                }
                 let size = crossterm::terminal::size()?;
                 if size != (cols, rows) {
                     (cols, rows) = size;
@@ -187,27 +197,11 @@ pub fn run_terminal_attach(terminal_id: String, takeover: bool) -> io::Result<()
             Err(mpsc::RecvTimeoutError::Disconnected) => break Ok(()),
         };
         match event {
-            Event::Input(data) => match escape.filter_input(data, rows, MOUSE_SCROLL_LINES) {
-                AttachInputAction::Forward(data) => {
-                    write_to_server(&mut stream, &ClientMessage::Input { data })?
-                }
-                AttachInputAction::ForwardPair(first, second) => {
-                    write_to_server(&mut stream, &ClientMessage::Input { data: first })?;
-                    write_to_server(&mut stream, &ClientMessage::Input { data: second })?;
-                }
-                AttachInputAction::Semantic(action) => {
-                    write_attach_semantic_action(&mut stream, action)?
-                }
-                AttachInputAction::ForwardThenSemantic(prefix, action) => {
-                    write_to_server(&mut stream, &ClientMessage::Input { data: prefix })?;
-                    write_attach_semantic_action(&mut stream, action)?;
-                }
-                AttachInputAction::Detach => {
-                    let _ = write_to_server(&mut stream, &ClientMessage::Detach);
+            Event::Input(data) => {
+                if forward_input(&mut stream, &mut escape, framer.push(&data), rows)? {
                     break Ok(());
                 }
-                AttachInputAction::None => {}
-            },
+            }
             Event::Server(message) => {
                 let mut stdout = io::stdout();
                 match message {
@@ -250,4 +244,36 @@ pub fn run_terminal_attach(terminal_id: String, takeover: bool) -> io::Result<()
     };
     drop(guard);
     outcome
+}
+
+/// Sends the host's input one event at a time, as `filter_input` reads only a lone mouse report as
+/// one; whether the user detached.
+fn forward_input(
+    stream: &mut LocalStream,
+    escape: &mut AttachEscapeState,
+    events: Vec<Vec<u8>>,
+    rows: u16,
+) -> io::Result<bool> {
+    for data in events {
+        match escape.filter_input(data, rows, MOUSE_SCROLL_LINES) {
+            AttachInputAction::Forward(data) => {
+                write_to_server(stream, &ClientMessage::Input { data })?
+            }
+            AttachInputAction::ForwardPair(first, second) => {
+                write_to_server(stream, &ClientMessage::Input { data: first })?;
+                write_to_server(stream, &ClientMessage::Input { data: second })?;
+            }
+            AttachInputAction::Semantic(action) => write_attach_semantic_action(stream, action)?,
+            AttachInputAction::ForwardThenSemantic(prefix, action) => {
+                write_to_server(stream, &ClientMessage::Input { data: prefix })?;
+                write_attach_semantic_action(stream, action)?;
+            }
+            AttachInputAction::Detach => {
+                let _ = write_to_server(stream, &ClientMessage::Detach);
+                return Ok(true);
+            }
+            AttachInputAction::None => {}
+        }
+    }
+    Ok(false)
 }

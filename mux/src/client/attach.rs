@@ -270,6 +270,20 @@ mod tests {
     }
 
     #[test]
+    fn mouse_reports_read_together_reach_the_pane_as_mouse_events() {
+        let mut framer = crate::raw_input::RawInputByteFramer::default();
+        let mut escape = AttachEscapeState::default();
+        let events = framer.push(b"\x1b[<35;32;3M\x1b[<35;31;3M\x1b[<35;30;4M");
+        assert_eq!(events.len(), 3);
+        for data in events {
+            assert!(matches!(
+                escape.filter_input(data, 24, 3),
+                AttachInputAction::Semantic(AttachSemanticAction::Mouse { .. })
+            ));
+        }
+    }
+
+    #[test]
     fn attach_escape_sends_literal_prefix_on_double_prefix() {
         let mut escape = AttachEscapeState::default();
         assert!(matches!(

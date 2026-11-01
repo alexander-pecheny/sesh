@@ -127,6 +127,10 @@ impl RawInputByteFramer {
         self.drain_available_chunks()
     }
 
+    pub(crate) fn has_pending_input(&self) -> bool {
+        !self.buffer.is_empty()
+    }
+
     /// Hold a lone trailing ESC for one idle flush so an OSC 10/11 reply split
     /// at its ESC introducer stitches back together instead of leaking (#549).
     pub(crate) fn host_color_query_sent(&mut self) {
