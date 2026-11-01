@@ -235,7 +235,6 @@ fn wait_for_event(
     wait_for_event_matching(reader, expected, timeout, |_| true)
 }
 
-#[cfg(not(target_os = "macos"))]
 fn wait_for_event_matching<F>(
     reader: &mut JsonLineReader,
     expected: &str,
@@ -1478,6 +1477,64 @@ fn events_subscribe_streams_workspace_tab_and_agent_events() {
     let renamed_event = wait_for_event(&mut reader, "tab_renamed", Duration::from_secs(2));
     assert_eq!(renamed_event["data"]["tab_id"], second_tab_id);
     assert_eq!(renamed_event["data"]["label"], "logs");
+
+    cleanup_spawned_sesh_mux(child, base);
+}
+
+#[test]
+fn a_session_id_a_hook_reports_is_announced_as_a_pane_update() {
+    let _lock = test_lock();
+    let base = unique_test_dir();
+    let config_home = base.join("config");
+    let runtime_dir = base.join("runtime");
+    let socket_path = runtime_dir.join("sesh-mux.sock");
+
+    let child = spawn_sesh_mux(&config_home, &runtime_dir, &socket_path);
+    wait_for_socket(&socket_path, Duration::from_secs(5));
+    let created = send_request(
+        &socket_path,
+        &format!(
+            r#"{{"id":"req_su_1","method":"workspace.create","params":{{"cwd":"{}","focus":true}}}}"#,
+            base.display()
+        ),
+    );
+    let pane_id = created["result"]["root_pane"]["pane_id"]
+        .as_str()
+        .unwrap()
+        .to_string();
+    let mut reader = open_subscription(
+        &socket_path,
+        r#"{"id":"sub_su","method":"events.subscribe","params":{"subscriptions":[{"type":"pane.updated"}]}}"#,
+    );
+    let ack = reader.read_json_line(Duration::from_secs(2));
+    assert_eq!(ack["result"]["type"], "subscription_started");
+
+    let report = |seq: u64| {
+        send_request(
+            &socket_path,
+            &format!(
+                r#"{{"id":"req_su_{seq}","method":"pane.report_agent_session","params":{{"pane_id":"{pane_id}","source":"sesh-mux:claude","agent":"claude","seq":{seq},"agent_session_id":"6f1c0f4e-1d2b-4c3a-9e8f-7a6b5c4d3e2f"}}}}"#
+            ),
+        )
+    };
+    assert_eq!(report(2)["result"]["type"], "ok");
+    let updated = wait_for_event_matching(
+        &mut reader,
+        "pane_updated",
+        Duration::from_secs(2),
+        |value| value["data"]["pane"]["pane_id"] == pane_id,
+    );
+    assert_eq!(
+        updated["data"]["pane"]["agent_session"]["value"],
+        "6f1c0f4e-1d2b-4c3a-9e8f-7a6b5c4d3e2f"
+    );
+    assert_eq!(report(3)["result"]["type"], "ok");
+    assert!(
+        reader
+            .try_read_json_line(Duration::from_millis(250))
+            .is_none(),
+        "the same session id reported again changes nothing"
+    );
 
     cleanup_spawned_sesh_mux(child, base);
 }
