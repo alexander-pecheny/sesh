@@ -37,3 +37,6 @@ An option the core does not act on is read and ignored, as ssh(1) ignores those 
 apply to it; `Match localnetwork` fails the connection with a message instead. A certificate
 whose key only the agent holds is not offered, since russh signs certificates only with keys it
 holds itself.
+
+The phone dials through the same `dial.rs` since ADR 0019, from a spec it builds out of its Host
+record, and its Terminals open on the Link as the Mac's do.
