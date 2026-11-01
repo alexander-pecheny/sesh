@@ -119,15 +119,15 @@ impl Agent {
     }
 }
 
-/// The path sesh-mux reports: the fork's `path`, or upstream herdr's value of kind `path` (pi).
+/// The path sesh-mux reports: its `path`, or a value of kind `path` (pi).
 fn reported_path(pane: &Value) -> Option<&str> {
     let session = &pane["agent_session"];
     let value = (session["kind"] == "path").then(|| session["value"].as_str()).flatten();
     session["path"].as_str().or(value).filter(|path| !path.is_empty())
 }
 
-/// The Transcript of the session in `pane`. Claude and Codex report only their session id to
-/// upstream herdr, so the file is found by it.
+/// The Transcript of the session in `pane`. Claude and Codex may report only their session id,
+/// so the file is found by it.
 pub fn transcript_path(pane: &Value) -> Option<String> {
     if let Some(path) = reported_path(pane) {
         return Some(path.to_string());
@@ -157,7 +157,7 @@ fn running_claude(config: &Path, pane: &Value) -> Option<PathBuf> {
         .filter(|session: &Value| session["cwd"].as_str().is_some_and(|cwd| folders.contains(&Some(cwd))))
         .filter(|session| !proc.exists() || session["pid"].as_u64().is_some_and(|pid| proc.join(pid.to_string()).exists()))
         .collect();
-    // An Agent started before sesh-mux took over the pane still carries sesh-mux's name for it.
+    // A shell herdr-sesh started, and so an Agent run in it, knows its pane by herdr's name.
     let markers = ["SESH_MUX_PANE_ID", "HERDR_PANE_ID"].map(|name| format!("{name}={}", pane["pane_id"].as_str().unwrap_or_default()));
     let in_pane = |session: &&Value| {
         let pid = session["pid"].as_u64().unwrap_or_default();

@@ -268,32 +268,6 @@ final class Library: ObservableObject {
         }
     }
 
-    /// Each machine's panes herdr-sesh handed over whose Agent still carries herdr's names, asked
-    /// once per run: the set only shrinks, as each Agent is started afresh.
-    private var legacy: [String: Set<String>] = [:]
-    private var renewing = false
-
-    /// Starts each idle Agent herdr-sesh handed over afresh on its Transcript, so it carries
-    /// sesh-mux's names and its hook reports to sesh-mux. A Task on screen is left alone.
-    private func renew() async {
-        guard !renewing else { return }
-        renewing = true
-        defer { renewing = false }
-        let sessions = vaults.flatMap { $0.all(.session) }.filter(holdsPane)
-        let holding = Set(sessions.map { $0.body.machine ?? "" })
-        for id in listed where !holding.contains(id) && legacy[id] == nil { legacy[id] = [] }
-        for machine in Set(sessions.map { TaskActions.machine($0.body.machine) }) where listed.contains(machine.id) {
-            if legacy[machine.id] == nil { legacy[machine.id] = await Mux.legacyPanes(on: machine) }
-            for session in sessions where TaskActions.machine(session.body.machine) == machine && session.body.task != selection {
-                guard let pane = session.body.pane, legacy[machine.id]?.contains(pane) == true,
-                      let mark = mark(of: session), mark < .background else { continue }
-                legacy[machine.id]?.remove(pane)
-                await end(session)
-                await resume(session)
-            }
-        }
-    }
-
     private func summarize(_ text: String, on machine: String) {
         guard let summary = Panes.summary(text), let pane = summary.session else { return }
         summaries[machine, default: [:]][pane] = summary
@@ -313,8 +287,6 @@ final class Library: ObservableObject {
         for (key, last) in read.last where active[key] != last { active[key] = last }
         if panes != read { panes = read }
         markSeen()
-        // An Agent going idle is the moment one handed over can be started afresh.
-        if listed.contains(where: { legacy[$0] == nil }) || legacy.values.contains(where: { !$0.isEmpty }) { Task { await renew() } }
     }
 
     // MARK: Marks

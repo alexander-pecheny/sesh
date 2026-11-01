@@ -5,8 +5,6 @@ import Foundation
 @MainActor
 enum Mux {
     nonisolated static let command = "~/.sesh/bin/sesh-mux"
-    /// The herdr fork Sesh ran before sesh-mux, which a Host may still run with live Agents.
-    nonisolated static let old = "~/.sesh/bin/herdr-sesh --session sesh"
 
     /// Starts sesh-mux in place of a running server, keeping its panes; installed with it.
     nonisolated static let importer = """
@@ -30,10 +28,8 @@ enum Mux {
         true
         """
 
-    /// Shell lines that start sesh-mux where it is down, or fail saying why they could not. A
-    /// Host still running herdr-sesh hands its panes over, Agents and all, and keeps a herdr-sesh
-    /// that is sesh-mux for older apps; `upgrade` hands a running sesh-mux over to the one just
-    /// installed the same way.
+    /// Shell lines that start sesh-mux where it is down, or fail saying why they could not;
+    /// `upgrade` hands a running sesh-mux over to the one just installed, panes and all.
     nonisolated static func wake(upgrade: Bool) -> String {
         let handoff = "server live-handoff --import-exe ~/.sesh/bin/sesh-mux-import"
         let up = "\(command) workspace list >/dev/null 2>&1"
@@ -41,19 +37,11 @@ enum Mux {
         return """
             if \(up); then
                 \(upgrade ? "\(command) \(handoff) >/dev/null 2>&1; \(wait)" : ":")
-            elif [ -x ~/.sesh/bin/herdr-sesh ] && [ ! -L ~/.sesh/bin/herdr-sesh ] && \(old) workspace list >/dev/null 2>&1; then
-                failed=$(\(old) \(handoff) 2>&1) || { echo "herdr-sesh would not hand its panes to sesh-mux: $failed" >&2; exit 1; }
-                \(wait)
-                # Left in place, the old layout would come back if herdr-sesh ever started again.
-                layout=${XDG_CONFIG_HOME:-$HOME/.config}/herdr/sessions/sesh/session.json
-                [ ! -e "$layout" ] || mv "$layout" "$layout.moved-to-sesh-mux"
             else
                 nohup \(command) server </dev/null >/dev/null 2>&1 &
                 \(wait)
             fi
             \(up) || { echo "sesh-mux did not start" >&2; exit 1; }
-            # Older apps and helpers still call herdr-sesh.
-            [ -L ~/.sesh/bin/herdr-sesh ] || ln -sf sesh-mux ~/.sesh/bin/herdr-sesh
             """
     }
 
@@ -177,25 +165,6 @@ enum Mux {
         _ = await runner.run("\(command) workspace close \(quote(workspace))")
     }
 
-    /// The panes whose Agent herdr-sesh started and handed over, which still carries herdr's
-    /// names and so reports through its hook to herdr-sesh's socket.
-    static func legacyPanes(on runner: Runner) async -> Set<String> {
-        struct List: Decodable {
-            struct Result: Decodable {
-                struct Pane: Decodable {
-                    let pane_id: String
-                    let legacy: Bool?
-                }
-                let panes: [Pane]
-            }
-            let result: Result
-        }
-        let ran = await runner.run("\(command) pane list")
-        let list = try? JSONDecoder().decode(List.self, from: Data(ran.out.utf8))
-        return Set(list?.result.panes.filter { $0.legacy == true }.map(\.pane_id) ?? [])
-    }
-
-    /// The names sesh-mux's running Agents go by.
     static func agentNames(on runner: Runner) async -> Set<String> {
         struct List: Decodable {
             struct Result: Decodable {
