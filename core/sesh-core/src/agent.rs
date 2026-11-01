@@ -56,15 +56,6 @@ impl Agent {
     }
 }
 
-pub fn decode(keys: &[(String, Option<String>)]) -> Result<Vec<PrivateKey>, String> {
-    keys.iter()
-        .map(|(pem, passphrase)| {
-            russh::keys::decode_secret_key(pem, passphrase.as_deref())
-                .map_err(|e| format!("reading a Key for the agent: {e}"))
-        })
-        .collect()
-}
-
 #[cfg(test)]
 mod tests {
     use russh::keys::ssh_key::rand_core::OsRng;

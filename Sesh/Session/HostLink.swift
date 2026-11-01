@@ -5,8 +5,15 @@ import SwiftUI
 /// carries photo Uploads.
 @MainActor
 final class HostLink: CoreLink {
+    struct Progress {
+        let id: UInt32
+        var done: UInt64
+        var total: UInt64
+        var fraction: Double { total == 0 ? 0 : Double(done) / Double(total) }
+    }
+
     @Published var savePassword = false
-    @Published private(set) var uploading: SeshSession.Progress?
+    @Published private(set) var uploading: Progress?
     @Published var uploadError: String?
 
     let host: Host
@@ -22,15 +29,27 @@ final class HostLink: CoreLink {
         super.init(title: host.title) { callbacks, userdata in
             let key = store.key(host.keyID)
             let strings = CStrings()
-            var config = sesh_link_config_t(
-                host: strings.make(host.address), port: UInt16(host.port), user: strings.make(host.user),
-                password: strings.make(Keychain.read("password.\(host.id)")),
-                key_pem: strings.make(key.flatMap { Keychain.read("key.\($0.id)") }),
-                key_passphrase: strings.make(key.flatMap { Keychain.read("passphrase.\($0.id)") }),
-                known_hosts_path: strings.make(store.knownHostsPath),
-                extra_flags: strings.make(host.transport == .ssh ? host.sshFlags : host.moshFlags),
-                transport: host.transport == .ssh ? SESH_TRANSPORT_SSH : SESH_TRANSPORT_MOSH)
-            return sesh_link_connect(&config, callbacks, userdata)
+            // Every Key, for an agent forwarded by the toggle or by -A in the flags.
+            let held = host.transport == .ssh ? store.keys.compactMap { key in
+                Keychain.read("key.\(key.id)").map { (strings.make($0), strings.make(Keychain.read("passphrase.\(key.id)"))) }
+            } : []
+            let pems = held.map(\.0), passphrases = held.map(\.1)
+            return pems.withUnsafeBufferPointer { pems in
+                passphrases.withUnsafeBufferPointer { passphrases in
+                    var config = sesh_link_config_t(
+                        host: strings.make(host.address), port: UInt16(host.port), user: strings.make(host.user),
+                        password: strings.make(Keychain.read("password.\(host.id)")),
+                        key_pem: strings.make(key.flatMap { Keychain.read("key.\($0.id)") }),
+                        key_passphrase: strings.make(key.flatMap { Keychain.read("passphrase.\($0.id)") }),
+                        known_hosts_path: strings.make(store.knownHostsPath),
+                        extra_flags: strings.make(host.transport == .ssh ? host.sshFlags : host.moshFlags),
+                        transport: host.transport == .ssh ? SESH_TRANSPORT_SSH : SESH_TRANSPORT_MOSH,
+                        agent_forwarding: host.agentForwarding,
+                        agent_keys: pems.baseAddress, agent_key_passphrases: passphrases.baseAddress,
+                        agent_key_count: UInt(held.count))
+                    return sesh_link_connect(&config, callbacks, userdata)
+                }
+            }
         }
         savePassword = Keychain.read("password.\(host.id)") != nil
     }
@@ -54,7 +73,7 @@ final class HostLink: CoreLink {
     /// As in a Terminal Tab, but over the Link: the paths reach `insert` once all have landed.
     func upload(_ results: [PHPickerResult], insert: @escaping (String) -> Void) {
         guard canUpload, !results.isEmpty else { return }
-        uploading = SeshSession.Progress(id: 0, done: 0, total: 1)
+        uploading = Progress(id: 0, done: 0, total: 1)
         Task {
             let files: [PreparedUpload]
             do {
@@ -69,7 +88,7 @@ final class HostLink: CoreLink {
                 uploading = nil
                 return Uploads.discard(files)
             }
-            uploading = SeshSession.Progress(id: id, done: 0, total: 1)
+            uploading = Progress(id: id, done: 0, total: 1)
             uploaded = { [weak self] paths, error in
                 Uploads.discard(files)
                 self?.uploading = nil
@@ -91,7 +110,7 @@ final class HostLink: CoreLink {
 
     override func uploadProgressed(_ id: UInt32, _ done: UInt64, _ total: UInt64) {
         guard uploading?.id == id else { return }
-        uploading = SeshSession.Progress(id: id, done: done, total: total)
+        uploading = Progress(id: id, done: done, total: total)
     }
 
     override func uploadDone(_ id: UInt32, _ paths: [String], _ error: String?) {

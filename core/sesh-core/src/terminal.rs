@@ -7,7 +7,7 @@ use ::mosh::handshake::Handshake;
 use russh::ChannelMsg;
 use tokio::sync::{mpsc, oneshot};
 
-use crate::flags::{Predict, RemoteIp};
+use crate::flags::RemoteIp;
 use crate::link::Lent;
 use crate::mosh;
 use crate::session::{Command, Context, Events, Session, State};
@@ -23,13 +23,17 @@ async fn drive(lent: oneshot::Receiver<Lent>, server: Option<String>, cols: u16,
     let Context { events, mut commands, .. } = context;
     let lent = lent.await.map_err(|_| "the connection to the Host is gone".to_string())?;
     events.state(State::Bootstrapping, "");
-    match (lent.direct, server) {
-        (true, Some(server)) => {
+    match (lent.direct, server, lent.mosh.clone()) {
+        (Some(address), Some(server), Some(flags)) => {
             let mut found = Handshake::default();
-            let line = mosh::server_line(&server, None, RemoteIp::Remote, "", Some(lent.command.clone()));
+            if flags.remote_ip == RemoteIp::Local {
+                found.ip = Some(address.to_string());
+            }
+            let server = flags.server.unwrap_or(server);
+            let line = mosh::server_line(&server, flags.ports, flags.remote_ip, "", Some(lent.command.clone()));
             mosh::bootstrap(&lent.handle, &line, cols, rows, &events, &mut found).await?;
             drop(lent);
-            mosh::run_client(&found, cols, rows, Predict::Adaptive, &events, &mut commands, |_| {}).await
+            mosh::run_client(&found, cols, rows, flags.predict, &events, &mut commands).await
         }
         _ => pty(&lent, cols, rows, &events, &mut commands).await,
     }
@@ -42,6 +46,9 @@ async fn pty(lent: &Lent, cols: u16, rows: u16, events: &Arc<dyn Events>, comman
         .request_pty(true, "xterm-256color", cols.max(1) as u32, rows.max(1) as u32, 0, 0, &[])
         .await
         .map_err(|e| format!("requesting a pty: {e}"))?;
+    if lent.forward {
+        writer.agent_forward(true).await.map_err(|e| format!("requesting agent forwarding: {e}"))?;
+    }
     for (name, value) in &lent.env {
         let _ = writer.set_env(false, name.as_str(), value.as_str()).await;
     }

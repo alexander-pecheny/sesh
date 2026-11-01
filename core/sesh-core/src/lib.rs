@@ -9,6 +9,5 @@ pub mod pipe;
 pub mod servers;
 pub mod session;
 pub mod terminal;
-pub mod ssh;
 pub mod ssh_config;
 pub mod upload;

@@ -1,7 +1,7 @@
 //! The C ABI. The only module with `unsafe`.
 //!
 //! Every callback in `sesh_callbacks_t` is invoked from a tokio worker thread, never from
-//! the thread that called `sesh_ssh_connect`. Pointers handed to a callback are borrowed
+//! the thread that called `sesh_link_connect`. Pointers handed to a callback are borrowed
 //! for the duration of the call only; copy what you keep. Answer `on_host_key` with
 //! `sesh_session_answer_host_key` and `on_auth_prompt` with `sesh_session_answer_prompt`;
 //! until you do, the Session waits. Every function is safe to call from any thread.
@@ -11,12 +11,12 @@ use std::ffi::{c_char, c_void, CStr, CString};
 use std::path::PathBuf;
 use std::sync::Arc;
 
-use crate::flags::{self, Transport};
+use crate::dial;
+use crate::flags::{self, MoshFlags, Transport};
 use crate::link::{self, Ran};
-use crate::mosh;
 use crate::pipe;
 use crate::session::{self, Prompt, Session, State, Upload};
-use crate::ssh;
+use crate::ssh_config::Key;
 use crate::terminal;
 
 #[repr(C)]
@@ -72,48 +72,9 @@ pub struct sesh_upload_t {
     pub remote_name: *const c_char,
 }
 
-/// Optional fields are NULL when unset. `term` defaults to `xterm-256color`.
-#[repr(C)]
-pub struct sesh_ssh_config_t {
-    pub host: *const c_char,
-    pub port: u16,
-    pub user: *const c_char,
-    pub password: *const c_char,
-    pub key_pem: *const c_char,
-    pub key_passphrase: *const c_char,
-    pub known_hosts_path: *const c_char,
-    pub term: *const c_char,
-    pub remote_command: *const c_char,
-    pub extra_flags: *const c_char,
-    pub cols: u16,
-    pub rows: u16,
-    pub agent_forwarding: bool,
-    /// PEM Keys the agent serves, with a matching passphrase array whose entries may be
-    /// NULL. Read only while `sesh_ssh_connect` runs.
-    pub agent_keys: *const *const c_char,
-    pub agent_key_passphrases: *const *const c_char,
-    pub agent_key_count: usize,
-}
-
-/// Optional fields are NULL when unset. `extra_flags` takes the mosh subset, whose
-/// `--ssh=` value carries the ssh one.
-#[repr(C)]
-pub struct sesh_mosh_config_t {
-    pub host: *const c_char,
-    pub port: u16,
-    pub user: *const c_char,
-    pub password: *const c_char,
-    pub key_pem: *const c_char,
-    pub key_passphrase: *const c_char,
-    pub known_hosts_path: *const c_char,
-    pub remote_command: *const c_char,
-    pub extra_flags: *const c_char,
-    pub cols: u16,
-    pub rows: u16,
-}
-
-/// A Link runs commands for Projects and has no terminal. `extra_flags` takes the subset
-/// of `transport`; a mosh Host is still reached over plain SSH.
+/// A Host from the phone's list. Optional fields are NULL when unset; `extra_flags` takes
+/// the subset of `transport`. `agent_keys` are the PEM Keys a forwarded agent serves, with a
+/// matching passphrase array whose entries may be NULL, read only while the call runs.
 #[repr(C)]
 pub struct sesh_link_config_t {
     pub host: *const c_char,
@@ -125,6 +86,10 @@ pub struct sesh_link_config_t {
     pub known_hosts_path: *const c_char,
     pub extra_flags: *const c_char,
     pub transport: sesh_transport_t,
+    pub agent_forwarding: bool,
+    pub agent_keys: *const *const c_char,
+    pub agent_key_passphrases: *const *const c_char,
+    pub agent_key_count: usize,
 }
 
 pub struct sesh_session_t {
@@ -296,7 +261,7 @@ unsafe fn keys(
     pems: *const *const c_char,
     passphrases: *const *const c_char,
     count: usize,
-) -> Vec<(String, Option<String>)> {
+) -> Vec<Key> {
     if pems.is_null() || count == 0 {
         return Vec::new();
     }
@@ -305,7 +270,7 @@ unsafe fn keys(
             let passphrase = (!passphrases.is_null())
                 .then(|| text(*passphrases.add(i)))
                 .flatten();
-            text(*pems.add(i)).map(|pem| (pem, passphrase))
+            text(*pems.add(i)).map(|pem| Key { pem, passphrase })
         })
         .collect()
 }
@@ -330,71 +295,9 @@ pub unsafe extern "C" fn sesh_set_device(id: *const c_char) {
     }
 }
 
-/// Starts a Session and returns immediately; progress arrives through the callbacks.
-/// Returns NULL only when `config` is NULL.
-#[no_mangle]
-pub unsafe extern "C" fn sesh_ssh_connect(
-    config: *const sesh_ssh_config_t,
-    callbacks: sesh_callbacks_t,
-    userdata: *mut c_void,
-) -> *mut sesh_session_t {
-    let Some(config) = config.as_ref() else {
-        return std::ptr::null_mut();
-    };
-    let session = ssh::connect(
-        ssh::Config {
-            host: text(config.host).unwrap_or_default(),
-            port: if config.port == 0 { 22 } else { config.port },
-            user: text(config.user).unwrap_or_default(),
-            password: text(config.password),
-            key: text(config.key_pem),
-            key_passphrase: text(config.key_passphrase),
-            known_hosts: text(config.known_hosts_path).map(PathBuf::from).unwrap_or_default(),
-            term: text(config.term).unwrap_or_else(|| "xterm-256color".into()),
-            remote_command: text(config.remote_command),
-            extra_flags: text(config.extra_flags).unwrap_or_default(),
-            cols: config.cols,
-            rows: config.rows,
-            agent_forwarding: config.agent_forwarding,
-            agent_keys: keys(config.agent_keys, config.agent_key_passphrases, config.agent_key_count),
-        },
-        Arc::new(Sink { callbacks, userdata }),
-    );
-    Box::into_raw(Box::new(sesh_session_t { session }))
-}
 
-/// Starts a mosh Session: `mosh-server` over ssh, then rmosh's client over UDP.
-/// Returns NULL only when `config` is NULL.
-#[no_mangle]
-pub unsafe extern "C" fn sesh_mosh_connect(
-    config: *const sesh_mosh_config_t,
-    callbacks: sesh_callbacks_t,
-    userdata: *mut c_void,
-) -> *mut sesh_session_t {
-    let Some(config) = config.as_ref() else {
-        return std::ptr::null_mut();
-    };
-    let session = mosh::connect(
-        mosh::Config {
-            host: text(config.host).unwrap_or_default(),
-            port: if config.port == 0 { 22 } else { config.port },
-            user: text(config.user).unwrap_or_default(),
-            password: text(config.password),
-            key: text(config.key_pem),
-            key_passphrase: text(config.key_passphrase),
-            known_hosts: text(config.known_hosts_path).map(PathBuf::from).unwrap_or_default(),
-            remote_command: text(config.remote_command),
-            extra_flags: text(config.extra_flags).unwrap_or_default(),
-            cols: config.cols,
-            rows: config.rows,
-        },
-        Arc::new(Sink { callbacks, userdata }),
-    );
-    Box::into_raw(Box::new(sesh_session_t { session }))
-}
-
-/// Opens a Link and returns immediately; its state arrives on `on_state`. Returns NULL
-/// only when `config` is NULL.
+/// Opens a Link to a Host from the phone's list and returns immediately; its state arrives
+/// on `on_state`. Returns NULL only when `config` is NULL.
 #[no_mangle]
 pub unsafe extern "C" fn sesh_link_connect(
     config: *const sesh_link_config_t,
@@ -404,20 +307,24 @@ pub unsafe extern "C" fn sesh_link_connect(
     let Some(config) = config.as_ref() else {
         return std::ptr::null_mut();
     };
-    let session = link::connect(
-        link::Config {
-            host: text(config.host).unwrap_or_default(),
-            port: if config.port == 0 { 22 } else { config.port },
-            user: text(config.user).unwrap_or_default(),
-            password: text(config.password),
-            key: text(config.key_pem),
-            key_passphrase: text(config.key_passphrase),
-            known_hosts: text(config.known_hosts_path).map(PathBuf::from).unwrap_or_default(),
-            extra_flags: text(config.extra_flags).unwrap_or_default(),
-            transport: transport(config.transport),
-        },
-        Arc::new(Sink { callbacks, userdata }),
-    );
+    let key = text(config.key_pem).map(|pem| Key { pem, passphrase: text(config.key_passphrase) });
+    let record = flags::Record {
+        host: text(config.host).unwrap_or_default(),
+        port: if config.port == 0 { 22 } else { config.port },
+        user: text(config.user).unwrap_or_default(),
+        password: text(config.password),
+        key,
+        known_hosts: text(config.known_hosts_path).map(PathBuf::from).unwrap_or_default(),
+        transport: transport(config.transport),
+        extra_flags: text(config.extra_flags).unwrap_or_default(),
+        agent_forwarding: config.agent_forwarding,
+        agent_keys: keys(config.agent_keys, config.agent_key_passphrases, config.agent_key_count),
+    };
+    let (spec, mosh) = match flags::spec(record) {
+        Ok((host, mosh)) => (Ok(host), mosh),
+        Err(e) => (Err(e), None),
+    };
+    let session = link::connect(async { spec }, mosh, Arc::new(Sink { callbacks, userdata }));
     Box::into_raw(Box::new(sesh_session_t { session }))
 }
 
@@ -432,7 +339,7 @@ pub unsafe extern "C" fn sesh_link_connect_alias(
     let Some(alias) = text(alias) else {
         return std::ptr::null_mut();
     };
-    let session = link::connect_alias(alias, Arc::new(Sink { callbacks, userdata }));
+    let session = link::connect(dial::resolve(alias), Some(MoshFlags::default()), Arc::new(Sink { callbacks, userdata }));
     Box::into_raw(Box::new(sesh_session_t { session }))
 }
 

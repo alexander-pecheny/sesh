@@ -1,8 +1,8 @@
 import Foundation
 import GhosttyKit
 
-/// The phone's attached views of sesh-mux panes, by Terminal record or by Agent session: each an
-/// ordinary Session to the pane's Host whose remote command is `sesh-mux terminal attach`.
+/// The phone's attached views of sesh-mux panes, by Terminal record or by Agent session: each a
+/// terminal on its Host's Link running `sesh-mux terminal attach`.
 @MainActor
 final class Terminals {
     var sessions: [String: SeshSession] = [:]
@@ -15,7 +15,7 @@ extension Library {
     /// with the reason when the pane is gone or its Host is not on this phone.
     func session(for key: String, pane: String, on machine: Machine, app: ghostty_app_t) async -> Result<SeshSession, Mux.Failure> {
         if let known = terminals.sessions[key] { return .success(known) }
-        guard let host = machine.host else { return .failure(Mux.Failure("\(machine.title) is not reachable from the phone.")) }
+        guard let link = machine.link else { return .failure(Mux.Failure("\(machine.title) is not reachable from the phone.")) }
         let terminal: String
         switch await Mux.look(for: pane, on: machine) {
         case .found(let found): terminal = found.terminal_id
@@ -24,8 +24,7 @@ extension Library {
         }
         let server = await machine.prepare() == nil ? Helper.moshServer : nil
         if let known = terminals.sessions[key] { return .success(known) }
-        let session = SeshSession(host: host, store: Store.shared, app: app,
-                                  command: Mux.attach(terminal), server: server)
+        let session = SeshSession(link: link, app: app, command: Mux.attach(terminal), server: server)
         terminals.sessions[key] = session
         return .success(session)
     }

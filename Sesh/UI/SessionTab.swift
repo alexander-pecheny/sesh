@@ -40,14 +40,6 @@ struct SessionTab: View {
             .onChange(of: session.picking) { _, picking in
                 if !picking { _ = session.terminal.becomeFirstResponder() }
             }
-            .sheet(item: $session.hostKeyQuestion) { question in
-                HostKeySheet(question: question, host: session.host) { session.answerHostKey($0) }
-            }
-            .sheet(item: $session.authQuestion) { question in
-                AuthSheet(question: question, savePassword: $session.savePassword) {
-                    session.answerPrompt(question, $0)
-                }
-            }
     }
 
     @ViewBuilder private var disconnected: some View {

@@ -1,36 +1,25 @@
+import Combine
 import PhotosUI
 import UIKit
 import GhosttyKit
 
-/// Owns one sesh-core Session and wires it to a libghostty surface. Core callbacks arrive
-/// on tokio threads; `Bridge` is the only thing they touch, and it hops to main.
+/// One terminal on a Host's Link, wired to a libghostty surface. Its Uploads and its questions
+/// for the user belong to the Link.
 @MainActor
-final class SeshSession: ObservableObject, Identifiable {
+final class SeshSession: ObservableObject, Identifiable, TerminalEvents {
     enum Stage: Equatable {
-        case connecting, authenticating, connected, closed, failed, bootstrapping
-    }
-
-    struct Progress {
-        let id: UInt32
-        var done: UInt64
-        var total: UInt64
-        var fraction: Double { total == 0 ? 0 : Double(done) / Double(total) }
+        case connecting, connected, closed, failed
     }
 
     @Published private(set) var stage = Stage.connecting
     @Published private(set) var message = ""
-    @Published var hostKeyQuestion: HostKeyQuestion?
-    @Published var authQuestion: AuthQuestion?
-    @Published var savePassword = false
     @Published var selection: CGPoint?
     @Published var editing = false
     @Published var picking = false
-    @Published private(set) var uploading: Progress?
-    @Published var uploadError: String?
     @Published private(set) var title: String?
 
     let id = UUID()
-    let host: Host
+    let link: HostLink
     /// What runs on the Host: a Terminal Tab's attach to its sesh-mux pane.
     let command: String
     /// The mosh-server Sesh put on the Host, which the Host's own PATH need not have.
@@ -38,26 +27,26 @@ final class SeshSession: ObservableObject, Identifiable {
     let input = InputState()
     let terminal: Ghostty.TerminalView
 
-    private let store: Store
-    private var handle: OpaquePointer?
-    private var bridge = Bridge()
-    private var finished: (([String], String?) -> Void)?
+    private var remote: CoreTerminal?
+    private var opening = false
+    private var relay: AnyCancellable?
 
-    init(host: Host, store: Store, app: ghostty_app_t, command: String, server: String?) {
-        self.host = host
+    init(link: HostLink, app: ghostty_app_t, command: String, server: String?) {
+        self.link = link
         self.command = command
         self.server = server
-        self.store = store
-        terminal = Ghostty.TerminalView(app: app, input: input, fontSize: store.fontSize)
-        savePassword = Keychain.read("password.\(host.id)") != nil
+        terminal = Ghostty.TerminalView(app: app, input: input, fontSize: Store.shared.fontSize)
+        relay = link.objectWillChange.sink { [weak self] in self?.objectWillChange.send() }
 
-        terminal.onWrite = { [weak self] data in self?.send(data) }
+        terminal.onWrite = { [weak self] data in self?.remote?.write(data) }
         terminal.onResize = { [weak self] cols, rows in self?.resize(cols, rows) }
         terminal.onSelection = { [weak self] anchor in self?.selection = anchor }
         terminal.onEditor = { [weak self] in self?.editing = true }
         terminal.onUpload = { [weak self] in self?.picking = true }
         terminal.onTitle = { [weak self] title in self?.title = title }
     }
+
+    var host: Host { link.host }
 
     var name: String { title.map { $0.isEmpty ? host.title : $0 } ?? host.title }
 
@@ -68,88 +57,45 @@ final class SeshSession: ObservableObject, Identifiable {
         return message.isEmpty ? "the Session failed" : message
     }
 
-    var status: String {
-        switch stage {
-        case .connecting: "connecting"
-        case .authenticating: "authenticating"
-        case .bootstrapping: "starting mosh-server"
-        case .connected: "connected"
-        case .closed: "closed"
-        case .failed: message.isEmpty ? "failed" : message
-        }
-    }
-
-    /// A fresh Session in the same Tab, on the same surface, so the scrollback survives.
+    /// A fresh terminal in the same Tab, on the same surface, so the scrollback survives.
     func reconnect() {
-        if let handle {
-            sesh_session_close(handle)
-            sesh_session_free(handle)
-            self.handle = nil
-        }
-        hostKeyQuestion = nil
-        authQuestion = nil
+        remote?.close()
+        remote = nil
         message = ""
         stage = .connecting
         let size = terminal.gridSize
-        connect(size.0, size.1)
+        open(size.0, size.1)
     }
 
-    /// The first layout is also the first honest grid size, so connecting waits for it and
-    /// the remote never sees the 80x24 placeholder.
+    /// The first layout is also the first honest grid size, so opening waits for it and the
+    /// remote never sees the 80x24 placeholder.
     private func resize(_ cols: UInt16, _ rows: UInt16) {
-        guard let handle else { return connect(cols, rows) }
-        sesh_session_resize(handle, cols, rows)
+        guard let remote else { return open(cols, rows) }
+        remote.resize(cols: cols, rows: rows)
     }
 
-    private func connect(_ cols: UInt16, _ rows: UInt16) {
-        bridge.owner = nil
-        bridge.terminal = nil
-        bridge = Bridge()
-        bridge.owner = self
-        bridge.terminal = terminal
-
-        let key = store.key(host.keyID)
-        let strings = CStrings()
-        let address = strings.make(host.address)
-        let user = strings.make(host.user)
-        let password = strings.make(Keychain.read("password.\(host.id)"))
-        let pem = strings.make(key.flatMap { Keychain.read("key.\($0.id)") })
-        let passphrase = strings.make(key.flatMap { Keychain.read("passphrase.\($0.id)") })
-        let knownHosts = strings.make(store.knownHostsPath)
-        let command = strings.make(command)
-        let userdata = Unmanaged.passRetained(bridge).toOpaque()
-
-        switch host.transport {
-        case .mosh:
-            var config = sesh_mosh_config_t(
-                host: address, port: UInt16(host.port), user: user, password: password,
-                key_pem: pem, key_passphrase: passphrase, known_hosts_path: knownHosts,
-                remote_command: command, extra_flags: strings.make((server.map { "--server=\($0) " } ?? "") + host.moshFlags),
-                cols: cols, rows: rows)
-            handle = sesh_mosh_connect(&config, Bridge.callbacks, userdata)
-        case .ssh:
-            let held = host.agentForwarding ? store.keys.compactMap(material) : []
-            let pems = held.map { strings.make($0.pem) }
-            let passphrases = held.map { strings.make($0.passphrase) }
-            let flags = strings.make(host.sshFlags)
-            let term = strings.make("xterm-256color")
-            handle = pems.withUnsafeBufferPointer { keys in
-                passphrases.withUnsafeBufferPointer { secrets in
-                    var config = sesh_ssh_config_t(
-                        host: address, port: UInt16(host.port), user: user, password: password,
-                        key_pem: pem, key_passphrase: passphrase, known_hosts_path: knownHosts,
-                        term: term, remote_command: command, extra_flags: flags,
-                        cols: cols, rows: rows, agent_forwarding: host.agentForwarding,
-                        agent_keys: keys.baseAddress, agent_key_passphrases: secrets.baseAddress,
-                        agent_key_count: UInt(held.count))
-                    return sesh_ssh_connect(&config, Bridge.callbacks, userdata)
-                }
+    private func open(_ cols: UInt16, _ rows: UInt16) {
+        guard !opening else { return }
+        opening = true
+        Task {
+            defer { opening = false }
+            switch await link.terminal(command, server: server, cols: cols, rows: rows, events: self) {
+            case .success(let opened):
+                remote = opened
+                stage = .connected
+            case .failure(let failure):
+                message = failure.message
+                stage = .failed
             }
         }
     }
 
-    private func material(_ key: Key) -> (pem: String, passphrase: String?)? {
-        Keychain.read("key.\(key.id)").map { ($0, Keychain.read("passphrase.\(key.id)")) }
+    func output(_ data: Data) { terminal.process(data) }
+
+    func ended(_ problem: String?) {
+        remote = nil
+        if let problem { message = problem }
+        stage = problem == nil ? .closed : .failed
     }
 
     func copySelection() {
@@ -158,203 +104,27 @@ final class SeshSession: ObservableObject, Identifiable {
         selection = nil
     }
 
-    var canUpload: Bool { stage == .connected && uploading == nil }
+    // MARK: Uploads, over the Link
 
-    /// Prepares the picks on a background task, then hands the core paths rather than
-    /// bytes, so a 200MB video never sits in memory. `insert` receives the remote paths,
-    /// already quoted and joined, once the whole batch has landed.
-    func upload(_ results: [PHPickerResult], insert: @escaping (String) -> Void) {
-        guard canUpload, !results.isEmpty else { return }
-        // Id 0 stands for "still preparing", which cancels without troubling the core.
-        uploading = Progress(id: 0, done: 0, total: 1)
-        Task {
-            let files: [PreparedUpload]
-            do {
-                files = try await Uploads.prepare(results, compress: store.compressUploads)
-            } catch {
-                uploading = nil
-                uploadError = error.localizedDescription
-                return
-            }
-            // Read the handle now, not before the await: a Reconnect would have freed it.
-            guard uploading != nil, let handle else { return Uploads.discard(files) }
-            guard let id = Uploads.start(files, on: handle) else {
-                uploading = nil
-                Uploads.discard(files)
-                uploadError = "the Upload could not be started"
-                return
-            }
-            uploading = Progress(id: id, done: 0, total: 1)
-            finished = { [weak self] paths, error in
-                Uploads.discard(files)
-                self?.uploading = nil
-                self?.uploadError = error
-                guard !paths.isEmpty else { return }
-                insert(Uploads.text(for: paths))
-            }
-        }
+    var uploading: HostLink.Progress? { link.uploading }
+    var canUpload: Bool { stage == .connected && link.canUpload }
+    var uploadError: String? {
+        get { link.uploadError }
+        set { link.uploadError = newValue }
     }
 
-    /// Frees the button at once: a stalled transfer may never report that it stopped.
-    func cancelUpload() {
-        guard let uploading else { return }
-        if uploading.id != 0, let handle { sesh_session_cancel_upload(handle, uploading.id) }
-        self.uploading = nil
-        let finish = finished
-        finished = nil
-        finish?([], nil)
-    }
+    func upload(_ results: [PHPickerResult], insert: @escaping (String) -> Void) { link.upload(results, insert: insert) }
 
-    fileprivate func progressed(_ id: UInt32, _ done: UInt64, _ total: UInt64) {
-        guard uploading?.id == id else { return }
-        uploading = Progress(id: id, done: done, total: total)
-    }
-
-    fileprivate func uploaded(_ id: UInt32, _ paths: [String], _ error: String?) {
-        guard uploading?.id == id, let finish = finished else { return }
-        finished = nil
-        finish(paths, error)
-    }
+    func cancelUpload() { link.cancelUpload() }
 
     func sendDraft(_ text: String, enter: Bool) {
         terminal.paste(text)
         if enter { terminal.send(keycode: Keycode.enter, mods: []) }
     }
 
-    deinit {
-        guard let handle else { return }
-        sesh_session_close(handle)
-        sesh_session_free(handle)
-    }
-
     func close() {
-        guard let handle else { return }
-        sesh_session_close(handle)
-    }
-
-    func send(_ data: Data) {
-        guard let handle else { return }
-        data.withUnsafeBytes { sesh_session_write(handle, $0.baseAddress?.assumingMemoryBound(to: UInt8.self), UInt($0.count)) }
-    }
-
-    func answerHostKey(_ accept: Bool) {
-        hostKeyQuestion = nil
-        guard let handle else { return }
-        sesh_session_answer_host_key(handle, accept)
-    }
-
-    func answerPrompt(_ question: AuthQuestion, _ answers: [String]?) {
-        authQuestion = nil
-        guard let handle else { return }
-        guard let answers else {
-            sesh_session_answer_prompt(handle, question.id, nil, 0)
-            return
-        }
-        if savePassword, let first = answers.first, question.prompts.count == 1 {
-            Keychain.write(first, to: "password.\(host.id)")
-        }
-        let strings = CStrings()
-        let pointers = answers.map { strings.make($0) }
-        pointers.withUnsafeBufferPointer { sesh_session_answer_prompt(handle, question.id, $0.baseAddress, UInt($0.count)) }
-    }
-
-    fileprivate func apply(_ state: UInt32, _ message: String) {
-        guard state != SESH_STATE_PASSWORD_REJECTED.rawValue else {
-            Keychain.write(nil, to: "password.\(host.id)")
-            savePassword = false
-            return
-        }
-        stage =
-            switch state {
-            case 0: .connecting
-            case 1: .authenticating
-            case 2: .connected
-            case 3: .closed
-            case 5: .bootstrapping
-            default: .failed
-            }
-        if !message.isEmpty { self.message = message }
-    }
-}
-
-private final class Bridge {
-    weak var owner: SeshSession?
-    var terminal: Ghostty.TerminalView?
-
-    private let lock = NSLock()
-    private var pending = Data()
-    private var draining = false
-
-    static let callbacks = sesh_callbacks_t(
-        on_output: { userdata, bytes, len in
-            guard let userdata, let bytes, len > 0 else { return }
-            Bridge.of(userdata).output(Data(bytes: bytes, count: Int(len)))
-        },
-        on_state: { userdata, state, message in
-            guard let userdata else { return }
-            let text = message.map { String(cString: $0) } ?? ""
-            let bridge = Bridge.of(userdata)
-            DispatchQueue.main.async { bridge.owner?.apply(state.rawValue, text) }
-        },
-        on_host_key: { userdata, fingerprint, previous in
-            guard let userdata, let fingerprint else { return }
-            let question = HostKeyQuestion(
-                fingerprint: String(cString: fingerprint),
-                previous: previous.map { String(cString: $0) })
-            let bridge = Bridge.of(userdata)
-            DispatchQueue.main.async { bridge.owner?.hostKeyQuestion = question }
-        },
-        on_auth_prompt: { userdata, id, name, instruction, prompts, echoes, count in
-            guard let userdata, let prompts, let echoes else { return }
-            let question = AuthQuestion(
-                id: id,
-                title: name.map { String(cString: $0) } ?? "Authentication",
-                instruction: instruction.map { String(cString: $0) } ?? "",
-                prompts: (0..<Int(count)).map {
-                    (prompts[$0].map { String(cString: $0) } ?? "", echoes[$0])
-                })
-            let bridge = Bridge.of(userdata)
-            DispatchQueue.main.async { bridge.owner?.authQuestion = question }
-        },
-        on_upload_progress: { userdata, id, done, total in
-            guard let userdata else { return }
-            let bridge = Bridge.of(userdata)
-            DispatchQueue.main.async { bridge.owner?.progressed(id, done, total) }
-        },
-        on_upload_done: { userdata, id, paths, count, error in
-            guard let userdata else { return }
-            let remote = (0..<Int(count)).compactMap { paths?[$0].map { String(cString: $0) } }
-            let message = error.map { String(cString: $0) }
-            let bridge = Bridge.of(userdata)
-            DispatchQueue.main.async { bridge.owner?.uploaded(id, remote, message) }
-        },
-        on_ran: nil,
-        on_chunk: nil,
-        on_release: { userdata in
-            guard let userdata else { return }
-            Unmanaged<Bridge>.fromOpaque(userdata).release()
-        })
-
-    private static func of(_ userdata: UnsafeMutableRawPointer) -> Bridge {
-        Unmanaged<Bridge>.fromOpaque(userdata).takeUnretainedValue()
-    }
-
-    /// Remote output can outrun the main queue, so it is coalesced into one hop per runloop.
-    func output(_ data: Data) {
-        lock.lock()
-        pending.append(data)
-        let schedule = !draining
-        draining = true
-        lock.unlock()
-        guard schedule else { return }
-        DispatchQueue.main.async { [self] in
-            lock.lock()
-            let chunk = pending
-            pending.removeAll(keepingCapacity: true)
-            draining = false
-            lock.unlock()
-            terminal?.process(chunk)
-        }
+        remote?.close()
+        remote = nil
     }
 }
 

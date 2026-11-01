@@ -1,6 +1,6 @@
-//! One mosh Session: start a server over ssh, then run rmosh's client over UDP.
+//! A mosh terminal's pieces: start a server over a Link's connection, then run rmosh's
+//! client over UDP.
 
-use std::path::PathBuf;
 use std::sync::{Arc, OnceLock};
 
 use mosh::handshake::Handshake;
@@ -11,106 +11,14 @@ use mosh_client::session::{Event, Options};
 use russh::ChannelMsg;
 use tokio::sync::oneshot;
 
-use crate::flags::{self, Predict, RemoteIp};
-use crate::session::{Command, Context, Events, Session, State};
-use crate::ssh::{self, Credentials};
-use crate::upload::{self, Pending};
+use crate::flags::{Predict, RemoteIp};
+use crate::session::{Command, Events, State};
 
 /// The locale both ends are told to use. iOS gives a process no environment to read one
 /// from, and the two ends must agree on character widths or they disagree on the screen.
 const LOCALE: &str = "en_US.UTF-8";
 
-#[derive(Default)]
-pub struct Config {
-    pub host: String,
-    pub port: u16,
-    pub user: String,
-    pub password: Option<String>,
-    pub key: Option<String>,
-    pub key_passphrase: Option<String>,
-    pub known_hosts: PathBuf,
-    pub remote_command: Option<String>,
-    pub extra_flags: String,
-    pub cols: u16,
-    pub rows: u16,
-}
-
-pub fn connect(config: Config, events: Arc<dyn Events>) -> Session {
-    Session::start(events, move |context| drive(config, context))
-}
-
-async fn drive(config: Config, context: Context) -> Result<(), String> {
-    let Context {
-        events,
-        answers,
-        mut commands,
-    } = context;
-    settle_environment();
-
-    let flags = flags::parse_mosh(&config.extra_flags)?;
-    let mut ssh_flags = flags.ssh.clone();
-    ssh_flags.ipv4_only |= flags.ipv4_only;
-    ssh_flags.ipv6_only |= flags.ipv6_only;
-    if ssh_flags.jump.is_some() {
-        return Err("mosh cannot reach a host through -J: its datagrams go direct".into());
-    }
-    let user = ssh_flags.user.clone().unwrap_or_else(|| config.user.clone());
-    let port = ssh_flags.port.unwrap_or(config.port);
-
-    events.state(State::Connecting, "");
-    let client_config = Arc::new(ssh::client_config(&ssh_flags));
-    let (mut handle, address) =
-        ssh::connect_any(&client_config, &config.host, port, &ssh_flags, || ssh::Handler {
-            events: events.clone(),
-            answers: answers.clone(),
-            known_hosts: crate::known_hosts::KnownHosts::app(config.known_hosts.clone()),
-            host: config.host.clone(),
-            port,
-            forward: None,
-        })
-        .await?;
-    let credentials = Credentials {
-        host: &config.host,
-        key: config.key.as_deref(),
-        key_passphrase: config.key_passphrase.as_deref(),
-        password: config.password.as_deref(),
-    };
-    ssh::authenticate(&mut handle, &user, &credentials, &ssh_flags, &events, &answers).await?;
-
-    let dialer = Arc::new(ssh::Dialer {
-        host: config.host.clone(),
-        port,
-        user: user.clone(),
-        password: config.password.clone(),
-        key: config.key.clone(),
-        key_passphrase: config.key_passphrase.clone(),
-        known_hosts: config.known_hosts.clone(),
-        flags: ssh_flags.clone(),
-    });
-
-    events.state(State::Bootstrapping, "");
-    let mut found = Handshake::default();
-    if flags.remote_ip == RemoteIp::Local {
-        found.ip = Some(address.ip().to_string());
-    }
-    let command = config.remote_command.as_deref().map(str::trim).filter(|c| !c.is_empty()).map(crate::session::in_login_shell);
-    let line = server_line(&flags.server, flags.ports, flags.remote_ip, &config.host, command);
-    bootstrap(&handle, &line, config.cols, config.rows, &events, &mut found).await?;
-    drop(handle);
-    let mut uploads = Pending::default();
-    run_client(&found, config.cols, config.rows, flags.predict, &events, &mut commands, |command| match command {
-        Command::Upload(id, files) => {
-            let task = upload::over_mosh(dialer.clone(), id, files, uploads.begin(id), events.clone(), answers.clone());
-            tokio::spawn(task);
-        }
-        Command::CancelUpload(id) => uploads.cancel(id),
-        _ => {}
-    })
-    .await
-}
-
-/// rmosh's client, run until it ends or the app closes it; commands other than keys, sizes
-/// and closing go to `other`.
+/// rmosh's client, run until it ends or the app closes it.
 pub(crate) async fn run_client(
     found: &Handshake,
     cols: u16,
@@ -118,7 +26,6 @@ pub(crate) async fn run_client(
     predict: Predict,
     events: &Arc<dyn Events>,
     commands: &mut tokio::sync::mpsc::UnboundedReceiver<Command>,
-    mut other: impl FnMut(Command),
 ) -> Result<(), String> {
     settle_environment();
     let (udp_port, key) = found
@@ -184,7 +91,7 @@ pub(crate) async fn run_client(
                     client.send(Event::Quit);
                     return worker.await.map_err(|e| format!("the mosh client stopped: {e}"))?;
                 }
-                Some(command) => other(command),
+                Some(_) => {}
             },
         }
     }
@@ -280,9 +187,9 @@ mod tests {
     use super::*;
 
     fn line(extra: &str, remote_command: &str) -> String {
-        let flags = flags::parse_mosh(extra).unwrap();
+        let flags = crate::flags::parse_mosh(extra).unwrap();
         let command = Some(remote_command).filter(|c| !c.is_empty()).map(crate::session::in_login_shell);
-        server_line(&flags.server, flags.ports, flags.remote_ip, "example.com", command)
+        server_line(flags.server.as_deref().unwrap_or("mosh-server"), flags.ports, flags.remote_ip, "example.com", command)
     }
 
     #[test]

@@ -68,7 +68,36 @@ pub struct Algorithms {
     pub macs: Option<String>,
 }
 
-/// Everything ssh(1) would use to reach one alias.
+/// A Key held in memory, as the phone keeps its Keys in the Keychain rather than in files.
+#[derive(Clone, PartialEq, Eq)]
+pub struct Key {
+    pub pem: String,
+    pub passphrase: Option<String>,
+}
+
+impl std::fmt::Debug for Key {
+    fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+        f.write_str("Key")
+    }
+}
+
+/// The agent a Host is let use: the one at a socket on this machine, or the app's own Keys.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum Forward {
+    Socket(PathBuf),
+    Keys(Vec<Key>),
+}
+
+/// Where a Host's options came from, and so where a jump hop's come from.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Origin {
+    /// The user's ssh config, which a hop's alias is looked up in too.
+    Config,
+    /// The phone's Host list: a hop is reached as the Host itself is, at another address.
+    App,
+}
+
+/// Everything ssh(1) would use to reach one alias: the spec every connection is dialed from.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Host {
     pub alias: String,
@@ -81,8 +110,11 @@ pub struct Host {
     /// The agent's socket, or nil for none.
     pub identity_agent: Option<PathBuf>,
     pub add_keys_to_agent: bool,
-    /// The socket of the agent forwarded to the Host, or nil when none is.
-    pub forward_agent: Option<PathBuf>,
+    /// Tried after the agent's keys and before the identity files.
+    pub keys: Vec<Key>,
+    /// Tried once before the user is asked for a password.
+    pub password: Option<String>,
+    pub forward_agent: Option<Forward>,
     pub proxy: Proxy,
     pub alive_interval: Option<Duration>,
     pub alive_count_max: u32,
@@ -98,6 +130,7 @@ pub struct Host {
     pub methods: Vec<Method>,
     pub batch_mode: bool,
     pub set_env: Vec<(String, String)>,
+    pub origin: Origin,
 }
 
 /// Options as obtained so far: each is set only while unset.
@@ -591,7 +624,8 @@ fn finish(original: &str, host: &str, options: Options, local: &Local) -> Result
         None | Some("no") | Some("false") => None,
         Some("yes") | Some("true") => identity_agent.clone(),
         Some(_) => agent(options.forward_agent.as_deref().unwrap_or_default())?,
-    };
+    }
+    .map(Forward::Socket);
     let proxy = match (options.proxy_jump.as_deref(), options.proxy_command.as_deref()) {
         (Some(jump), _) if jump != "none" => Proxy::Jump(jump.split(',').map(hop).collect::<Result<_, _>>()?),
         (_, Some(command)) if command != "none" => {
@@ -628,6 +662,8 @@ fn finish(original: &str, host: &str, options: Options, local: &Local) -> Result
         identities_only: options.identities_only.unwrap_or(false),
         identity_agent,
         add_keys_to_agent: options.add_keys_to_agent.unwrap_or(false),
+        keys: Vec::new(),
+        password: None,
         forward_agent,
         proxy,
         alive_interval: options.alive_interval.filter(|&s| s > 0).map(Duration::from_secs),
@@ -643,6 +679,7 @@ fn finish(original: &str, host: &str, options: Options, local: &Local) -> Result
         methods,
         batch_mode: options.batch_mode.unwrap_or(false),
         set_env: options.set_env,
+        origin: Origin::Config,
     })
 }
 
