@@ -43,27 +43,6 @@ pub trait Events: Send + Sync + 'static {
     fn chunk(&self, _id: u32, _bytes: &[u8]) {}
 }
 
-/// Forwards the questions a connection may ask but swallows its state and its output, so
-/// a re-authentication for an Upload does not leave the Tab reading "authenticating".
-pub struct Aside(pub Arc<dyn Events>);
-
-impl Events for Aside {
-    fn output(&self, _: &[u8]) {}
-    fn state(&self, _: State, _: &str) {}
-    fn host_key(&self, fingerprint: &str, previous: Option<&str>) {
-        self.0.host_key(fingerprint, previous)
-    }
-    fn auth_prompt(&self, id: u32, name: &str, instruction: &str, prompts: &[Prompt]) {
-        self.0.auth_prompt(id, name, instruction, prompts)
-    }
-    fn upload_progress(&self, id: u32, done: u64, total: u64) {
-        self.0.upload_progress(id, done, total)
-    }
-    fn upload_done(&self, id: u32, paths: &[String], error: Option<&str>) {
-        self.0.upload_done(id, paths, error)
-    }
-}
-
 pub enum Command {
     Write(Vec<u8>),
     Resize(u16, u16),

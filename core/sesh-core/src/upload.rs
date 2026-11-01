@@ -12,8 +12,7 @@ use russh_sftp::protocol::FileAttributes;
 use tokio::fs;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
-use crate::session::{Aside, Answers, Events, Upload};
-use crate::ssh::Dialer;
+use crate::session::{Events, Upload};
 
 const DIRECTORY: &str = ".sesh/uploads";
 const CHUNK: usize = 256 * 1024;
@@ -49,28 +48,6 @@ pub async fn over_ssh<H: client::Handler>(
     events: Arc<dyn Events>,
 ) {
     let result = run(open(handle.as_ref()).await, id, &files, &cancelled, &events).await;
-    report(id, result, &cancelled, &events);
-}
-
-/// A mosh Session dropped its handle once mosh-server was running, so it dials again and
-/// hangs up afterwards: mosh roams, and a socket kept open would be stale when wanted.
-pub async fn over_mosh(
-    dialer: Arc<Dialer>,
-    id: u32,
-    files: Vec<Upload>,
-    cancelled: Arc<AtomicBool>,
-    events: Arc<dyn Events>,
-    answers: Arc<Answers>,
-) {
-    let aside: Arc<dyn Events> = Arc::new(Aside(events.clone()));
-    let result = match dialer.connect(&aside, &answers).await {
-        Err(error) => Err(error),
-        Ok(handle) => {
-            let session = open(&handle).await;
-            // `handle` is held to the end on purpose: dropping it takes the channel with it.
-            run(session, id, &files, &cancelled, &events).await
-        }
-    };
     report(id, result, &cancelled, &events);
 }
 
@@ -487,7 +464,7 @@ mod tests {
     async fn connect(
         root: PathBuf,
         trip: Option<Arc<AtomicBool>>,
-    ) -> (client::Handle<crate::ssh::Handler>, SftpSession) {
+    ) -> (client::Handle<crate::dial::Handler>, SftpSession) {
         let config = Arc::new(server::Config {
             keys: vec![PrivateKey::random(&mut OsRng, russh::keys::Algorithm::Ed25519).unwrap()],
             methods: [MethodKind::Password][..].into(),
@@ -506,30 +483,16 @@ mod tests {
         *watcher.answers.lock().unwrap() = Some(answers.clone());
         let events: Arc<dyn Events> = watcher;
         let known_hosts = tempfile::NamedTempFile::new().unwrap();
-        let flags = crate::flags::SshFlags::default();
-        let mut handle = client::connect(
-            Arc::new(crate::ssh::client_config(&flags)),
-            address,
-            crate::ssh::Handler {
-                events: events.clone(),
-                answers: answers.clone(),
-                known_hosts: crate::known_hosts::KnownHosts::app(known_hosts.path().to_path_buf()),
-                host: "127.0.0.1".into(),
-                port: address.port(),
-                forward: None,
-            },
-        )
-        .await
-        .unwrap();
-        let credentials = crate::ssh::Credentials {
-            host: "127.0.0.1",
-            key: None,
-            key_passphrase: None,
-            password: Some("any"),
+        let record = crate::flags::Record {
+            host: "127.0.0.1".into(),
+            port: address.port(),
+            user: "tester".into(),
+            password: Some("any".into()),
+            known_hosts: known_hosts.path().to_path_buf(),
+            ..Default::default()
         };
-        crate::ssh::authenticate(&mut handle, "tester", &credentials, &flags, &events, &answers)
-            .await
-            .unwrap();
+        let (spec, _) = crate::flags::spec(record).unwrap();
+        let handle = crate::dial::dial(spec, &events, &answers).await.unwrap().handle;
         let sftp = open(&handle).await.unwrap();
         (handle, sftp)
     }

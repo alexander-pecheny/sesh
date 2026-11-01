@@ -1,34 +1,23 @@
-//! A Link: an SSH connection with no terminal, on which Projects runs commands, follows
-//! a Conversation and uploads.
+//! A Link: the one SSH connection a device keeps to a Host, on which it runs commands,
+//! streams, pipes, uploads and terminals.
 
 use std::collections::HashMap;
 use std::future::Future;
-use std::path::PathBuf;
+use std::net::IpAddr;
 use std::sync::Arc;
 
 use russh::client;
 use russh::{ChannelMsg, Sig};
 use tokio::sync::oneshot;
 
-use crate::flags::{self, Transport};
+use crate::dial::{self, Handler};
+use crate::flags::MoshFlags;
 use crate::session::{in_login_shell, Command, Context, Events, Session, State};
-use crate::ssh::{Dialer, Handler};
+use crate::ssh_config::Host;
 use crate::upload::{self, Pending};
 
 /// Printed before the command, so whatever the rc files say is not taken for its output.
 const MARK: &str = "--sesh-output--";
-
-pub struct Config {
-    pub host: String,
-    pub port: u16,
-    pub user: String,
-    pub password: Option<String>,
-    pub key: Option<String>,
-    pub key_passphrase: Option<String>,
-    pub known_hosts: PathBuf,
-    pub extra_flags: String,
-    pub transport: Transport,
-}
 
 pub struct Ran {
     pub status: i32,
@@ -36,67 +25,37 @@ pub struct Ran {
     pub stderr: String,
 }
 
-pub fn connect(config: Config, events: Arc<dyn Events>) -> Session {
-    Session::start(events, move |context| drive(config, context))
-}
-
-/// A Link to a Host named by its alias in the user's ssh config.
-pub fn connect_alias(alias: String, events: Arc<dyn Events>) -> Session {
+/// A Link to the Host `spec` gives; `mosh` is how its terminals use mosh, nil for never.
+pub fn connect<S>(spec: S, mosh: Option<MoshFlags>, events: Arc<dyn Events>) -> Session
+where
+    S: Future<Output = Result<Host, String>> + Send + 'static,
+{
     Session::start(events, move |context| async move {
-        let dialed = crate::dial::dial(&alias, &context.events, &context.answers).await?;
-        let remote = Remote { handle: Arc::new(dialed.handle), direct: dialed.direct.is_some(), env: dialed.env };
-        serve(remote, context, dialed.carriers).await
+        let dialed = dial::dial(spec.await?, &context.events, &context.answers).await?;
+        serve(dialed, mosh, context).await
     })
 }
 
 /// A Link's connection, lent to a terminal.
 pub struct Lent {
     pub handle: Arc<client::Handle<Handler>>,
-    pub direct: bool,
+    /// Where the Host was reached when nothing stands between, so mosh's datagrams can go there.
+    pub direct: Option<IpAddr>,
     /// The terminal's command, as the Host's shell runs it.
     pub command: String,
     pub env: Vec<(String, String)>,
+    pub forward: bool,
+    pub mosh: Option<MoshFlags>,
 }
 
-/// The connection a Link runs everything on.
-struct Remote {
-    handle: Arc<client::Handle<Handler>>,
-    /// Nothing stands between, so a pipe can go over mosh's datagrams.
-    direct: bool,
-    /// `SetEnv`, given to every command.
-    env: Vec<(String, String)>,
-}
-
-async fn drive(config: Config, context: Context) -> Result<(), String> {
-    let flags = match config.transport {
-        Transport::Ssh => flags::parse_ssh(&config.extra_flags)?,
-        Transport::Mosh => flags::parse_mosh(&config.extra_flags)?.ssh,
-    };
-    if flags.jump.is_some() {
-        return Err("Projects cannot reach a Host through -J yet".into());
-    }
-    let dialer = Dialer {
-        host: config.host.clone(),
-        port: flags.port.unwrap_or(config.port),
-        user: flags.user.clone().unwrap_or(config.user),
-        password: config.password,
-        key: config.key,
-        key_passphrase: config.key_passphrase,
-        known_hosts: config.known_hosts,
-        flags,
-    };
-    context.events.state(State::Connecting, "");
-    let handle = Arc::new(dialer.connect(&context.events, &context.answers).await?);
-    serve(Remote { handle, direct: true, env: Vec::new() }, context, Default::default()).await
-}
-
-async fn serve(remote: Remote, context: Context, _carriers: crate::dial::Carriers) -> Result<(), String> {
+async fn serve(dialed: dial::Dialed, mosh: Option<MoshFlags>, context: Context) -> Result<(), String> {
     let Context { events, mut commands, .. } = context;
-    let Remote { handle, direct, env } = remote;
+    let dial::Dialed { handle, direct, env, forward, carriers: _carriers } = dialed;
+    let handle = Arc::new(handle);
     let env = Arc::new(env);
     let shell = Shell::read(&handle).await;
     events.state(State::Connected, "");
-    if let (true, Some(reap)) = (direct, crate::servers::reap()) {
+    if let (Some(_), Some(reap)) = (direct, crate::servers::reap()) {
         let (handle, command, env) = (handle.clone(), shell.wrap(&reap), env.clone());
         tokio::spawn(async move { run(&handle, &command, &env).await });
     }
@@ -145,11 +104,12 @@ async fn serve(remote: Remote, context: Context, _carriers: crate::dial::Carrier
                 });
             }
             Some(Command::Lend(command, reply)) => {
-                let _ = reply.send(Lent { handle: handle.clone(), direct, command: shell.command(&command), env: (*env).clone() });
+                let command = shell.command(&command);
+                let _ = reply.send(Lent { handle: handle.clone(), direct, command, env: (*env).clone(), forward, mosh: mosh.clone() });
             }
             Some(Command::Pipe(mut start)) => {
                 start.command = shell.command(&start.command);
-                tokio::spawn(crate::pipe::run(handle.clone(), start, direct));
+                tokio::spawn(crate::pipe::run(handle.clone(), start, direct.is_some()));
             }
             Some(Command::Close) | None => break,
             Some(_) => {}

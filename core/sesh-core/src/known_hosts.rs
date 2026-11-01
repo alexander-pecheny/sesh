@@ -30,11 +30,6 @@ pub struct KnownHosts {
 }
 
 impl KnownHosts {
-    /// The file the phone keeps for its own Hosts, where every new key is asked about.
-    pub fn app(path: PathBuf) -> Self {
-        KnownHosts { files: vec![path], global: Vec::new(), strict: Strict::Ask, batch: false }
-    }
-
     pub fn check(&self, host: &str, port: u16, key: &PublicKey) -> Verdict {
         let name = entry(host, port);
         let (mut known, mut changed) = (false, None);
@@ -177,7 +172,7 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("known_hosts");
         std::fs::write(&path, text).unwrap();
-        (dir, KnownHosts::app(path))
+        (dir, KnownHosts { files: vec![path], global: Vec::new(), strict: Strict::Ask, batch: false })
     }
 
     #[test]

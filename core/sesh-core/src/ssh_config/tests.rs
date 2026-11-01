@@ -164,7 +164,7 @@ fn paths_expand_tilde_environment_and_tokens() {
     let agent = host.identity_agent.clone().unwrap();
     assert_eq!(agent.parent().unwrap(), scratch.home().join("agents"));
     assert_eq!(agent.file_name().unwrap().len(), 40);
-    assert_eq!(host.forward_agent, host.identity_agent);
+    assert_eq!(host.forward_agent, host.identity_agent.clone().map(Forward::Socket));
     assert_eq!(host.known_hosts, [PathBuf::from("/dev/null")]);
     assert!(scratch.resolve("box", "IdentityFile ${NOPE}/key\n").unwrap_err().contains("NOPE is not set"));
 }

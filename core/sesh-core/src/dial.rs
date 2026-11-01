@@ -1,6 +1,7 @@
-//! Reaching a Host by its alias in the user's ssh config, as ssh(1) would: directly, through
-//! a `ProxyCommand` or along a `ProxyJump` chain, signing in with the agent's keys and the
-//! configured identity files.
+//! Reaching a Host as ssh(1) would, from a spec: the options `ssh_config` resolves for an
+//! alias on the Mac, or those the phone builds from its Host list. Directly, through a
+//! `ProxyCommand` or along a `ProxyJump` chain, signing in with the agent's keys, the spec's
+//! own Keys, the identity files, a password or keyboard-interactive answers.
 
 use std::future::Future;
 use std::net::IpAddr;
@@ -9,21 +10,22 @@ use std::pin::Pin;
 use std::process::Stdio;
 use std::sync::{Arc, Mutex, OnceLock};
 
-use russh::client::{self, AuthResult};
+use russh::client::{self, AuthResult, KeyboardInteractiveAuthResponse};
 use russh::keys::agent::client::AgentClient;
 use russh::keys::ssh_key::{Algorithm, Certificate, PublicKey};
 use russh::keys::{HashAlg, PrivateKey, PrivateKeyWithHashAlg};
-use russh::{cipher, compression, kex, mac, MethodKind, Preferred};
+use russh::{cipher, compression, kex, mac, Channel, MethodKind, Preferred};
 use tokio::io::AsyncReadExt;
+use tokio::sync::oneshot;
 
-use crate::known_hosts::KnownHosts;
-use crate::session::{ask, Answers, Events, State};
-use crate::ssh::{self, Forward, Handler};
-use crate::ssh_config::{self, wildcard, Host, Method, Proxy};
+use crate::agent::{self, Agent};
+use crate::known_hosts::{self, KnownHosts, Verdict};
+use crate::session::{ask, Answers, Events, Prompt, State};
+use crate::ssh_config::{self, wildcard, Forward, Hop, Host, Method, Origin, Proxy, Strict};
 
 /// A chain of jumps longer than this is taken for a loop.
 const MAX_HOPS: usize = 8;
-/// How often a quiet connection is checked when the config says nothing.
+/// How often a quiet connection is checked when the spec says nothing.
 const KEEPALIVE: std::time::Duration = std::time::Duration::from_secs(15);
 /// How much of a proxy command's stderr is kept to explain its failure.
 const STDERR_KEPT: usize = 4096;
@@ -35,6 +37,8 @@ pub struct Dialed {
     pub direct: Option<IpAddr>,
     /// The target's `SetEnv`, for every command run on the connection.
     pub env: Vec<(String, String)>,
+    /// The Host may use an agent, which a terminal asks to forward.
+    pub forward: bool,
     pub carriers: Carriers,
 }
 
@@ -44,36 +48,56 @@ pub struct Carriers {
     _held: Vec<Box<dyn std::any::Any + Send + Sync>>,
 }
 
-pub async fn dial(alias: &str, events: &Arc<dyn Events>, answers: &Arc<Answers>) -> Result<Dialed, String> {
-    let host = resolve(alias, None, None).await?;
+pub async fn dial(host: Host, events: &Arc<dyn Events>, answers: &Arc<Answers>) -> Result<Dialed, String> {
     events.state(State::Connecting, "");
     reach(host, events.clone(), answers.clone(), 0).await
 }
 
+/// The Mac's spec for `alias`, from the user's ssh config.
+pub async fn resolve(alias: String) -> Result<Host, String> {
+    configured(alias, None, None).await
+}
+
 /// `alias`'s options, with a jump hop's own user and port over what the config says.
-async fn resolve(alias: &str, user: Option<String>, port: Option<u16>) -> Result<Host, String> {
-    let alias = alias.to_string();
+async fn configured(alias: String, user: Option<String>, port: Option<u16>) -> Result<Host, String> {
     tokio::task::spawn_blocking(move || {
         let mut host = ssh_config::resolve(&alias, &local())?;
         host.user = user.unwrap_or(host.user);
         host.port = port.unwrap_or(host.port);
-        // Unlike an interactive ssh, a Link has no one at its keyboard to notice it went dead.
-        host.alive_interval.get_or_insert(KEEPALIVE);
         Ok(host)
     })
     .await
     .map_err(|e| e.to_string())?
 }
 
+/// A jump hop: looked up in the config like any alias, or, for a Host from the phone's list,
+/// reached as that Host is, at the hop's address.
+async fn hop(of: &Host, hop: &Hop) -> Result<Host, String> {
+    match of.origin {
+        Origin::Config => configured(hop.host.clone(), hop.user.clone(), hop.port).await,
+        Origin::App => Ok(Host {
+            alias: hop.host.clone(),
+            host_name: hop.host.clone(),
+            user: hop.user.clone().unwrap_or_else(|| of.user.clone()),
+            port: hop.port.unwrap_or(22),
+            proxy: Proxy::Direct,
+            forward_agent: None,
+            ..of.clone()
+        }),
+    }
+}
+
 type Reached = Pin<Box<dyn Future<Output = Result<Dialed, String>> + Send>>;
 
-fn reach(host: Host, events: Arc<dyn Events>, answers: Arc<Answers>, depth: usize) -> Reached {
+fn reach(mut host: Host, events: Arc<dyn Events>, answers: Arc<Answers>, depth: usize) -> Reached {
     Box::pin(async move {
         if depth > MAX_HOPS {
             return Err(format!("{}: ProxyJump goes round in a loop", host.alias));
         }
+        // Unlike an interactive ssh, a Link has no one at its keyboard to notice it went dead.
+        host.alive_interval.get_or_insert(KEEPALIVE);
         let config = Arc::new(client_config(&host)?);
-        let handler = handler(&host, &events, &answers);
+        let handler = handler(&host, &events, &answers).await?;
         let connecting = async {
             match &host.proxy {
                 Proxy::Direct => tcp(&host, config, handler).await.map(|(handle, ip)| (handle, Some(ip), Vec::<Box<dyn std::any::Any + Send + Sync>>::new())),
@@ -82,10 +106,9 @@ fn reach(host: Host, events: Arc<dyn Events>, answers: Arc<Answers>, depth: usiz
                     Ok((handle, None, vec![Box::new(child) as Box<dyn std::any::Any + Send + Sync>]))
                 }
                 Proxy::Jump(hops) => {
-                    let first = &hops[0];
-                    let mut via = reach(resolve(&first.host, first.user.clone(), first.port).await?, events.clone(), answers.clone(), depth + 1).await?;
-                    for hop in &hops[1..] {
-                        let mut next = resolve(&hop.host, hop.user.clone(), hop.port).await?;
+                    let mut via = reach(hop(&host, &hops[0]).await?, events.clone(), answers.clone(), depth + 1).await?;
+                    for next in &hops[1..] {
+                        let mut next = hop(&host, next).await?;
                         next.proxy = Proxy::Direct;
                         via = through(via, next, &events, &answers).await?;
                     }
@@ -101,16 +124,19 @@ fn reach(host: Host, events: Arc<dyn Events>, answers: Arc<Answers>, depth: usiz
             None => connecting.await?,
         };
         authenticate(&mut handle, &host, &events, &answers).await?;
-        Ok(Dialed { handle, direct, env: host.set_env.clone(), carriers: Carriers { _held: carriers } })
+        let forward = host.forward_agent.is_some();
+        Ok(Dialed { handle, direct, env: host.set_env.clone(), forward, carriers: Carriers { _held: carriers } })
     })
 }
 
 /// The next hop, reached through the one before it.
-async fn through(via: Dialed, host: Host, events: &Arc<dyn Events>, answers: &Arc<Answers>) -> Result<Dialed, String> {
+async fn through(via: Dialed, mut host: Host, events: &Arc<dyn Events>, answers: &Arc<Answers>) -> Result<Dialed, String> {
+    host.alive_interval.get_or_insert(KEEPALIVE);
     let config = Arc::new(client_config(&host)?);
-    let mut handle = tunnel(&via, &host, config, handler(&host, events, answers)).await?;
+    let mut handle = tunnel(&via, &host, config, handler(&host, events, answers).await?).await?;
     authenticate(&mut handle, &host, events, answers).await?;
-    Ok(Dialed { handle, direct: None, env: host.set_env.clone(), carriers: Carriers { _held: vec![Box::new(via)] } })
+    let forward = host.forward_agent.is_some();
+    Ok(Dialed { handle, direct: None, env: host.set_env.clone(), forward, carriers: Carriers { _held: vec![Box::new(via)] } })
 }
 
 async fn tunnel(via: &Dialed, host: &Host, config: Arc<client::Config>, handler: Handler) -> Result<client::Handle<Handler>, String> {
@@ -123,8 +149,34 @@ async fn tunnel(via: &Dialed, host: &Host, config: Arc<client::Config>, handler:
     client::connect_stream(config, stream, handler).await.map_err(|e| format!("{}: {e}", host.alias))
 }
 
-fn handler(host: &Host, events: &Arc<dyn Events>, answers: &Arc<Answers>) -> Handler {
-    Handler {
+/// Checks the Host's key and answers its agent requests.
+#[derive(Clone)]
+pub struct Handler {
+    events: Arc<dyn Events>,
+    answers: Arc<Answers>,
+    known_hosts: KnownHosts,
+    /// The name and port the host's keys are recorded under.
+    host: String,
+    port: u16,
+    agent: Option<Forwarded>,
+}
+
+#[derive(Clone)]
+enum Forwarded {
+    Socket(PathBuf),
+    App(Agent),
+}
+
+async fn handler(host: &Host, events: &Arc<dyn Events>, answers: &Arc<Answers>) -> Result<Handler, String> {
+    let agent = match &host.forward_agent {
+        None => None,
+        Some(Forward::Socket(path)) => Some(Forwarded::Socket(path.clone())),
+        Some(Forward::Keys(keys)) => {
+            let keys = keys.iter().map(|key| decode(key, "a Key for the agent")).collect::<Result<_, _>>()?;
+            Some(Forwarded::App(agent::start(keys).await?))
+        }
+    };
+    Ok(Handler {
         events: events.clone(),
         answers: answers.clone(),
         known_hosts: KnownHosts {
@@ -135,7 +187,54 @@ fn handler(host: &Host, events: &Arc<dyn Events>, answers: &Arc<Answers>) -> Han
         },
         host: host.host_key_alias.clone().unwrap_or_else(|| host.host_name.clone()),
         port: host.port,
-        forward: host.forward_agent.clone().map(Forward::Socket),
+        agent,
+    })
+}
+
+impl client::Handler for Handler {
+    type Error = russh::Error;
+
+    async fn server_channel_open_agent_forward(&mut self, channel: Channel<client::Msg>, _: &mut client::Session) -> Result<(), Self::Error> {
+        match &self.agent {
+            Some(Forwarded::App(agent)) => agent.attach(channel.into_stream()),
+            Some(Forwarded::Socket(path)) => {
+                let path = path.clone();
+                tokio::spawn(async move {
+                    if let Ok(mut socket) = tokio::net::UnixStream::connect(path).await {
+                        let _ = tokio::io::copy_bidirectional(&mut channel.into_stream(), &mut socket).await;
+                    }
+                });
+            }
+            None => {}
+        }
+        Ok(())
+    }
+
+    async fn check_server_key(&mut self, key: &PublicKey) -> Result<bool, Self::Error> {
+        let hosts = &self.known_hosts;
+        let refused = |_| russh::Error::IO(std::io::ErrorKind::Other.into());
+        let previous = match (hosts.check(&self.host, self.port, key), hosts.strict) {
+            (Verdict::Known, _) | (_, Strict::No) => return Ok(true),
+            (Verdict::Revoked, _) => return Ok(false),
+            (Verdict::Unknown, Strict::AcceptNew) => {
+                hosts.accept(&self.host, self.port, key, None).map_err(refused)?;
+                return Ok(true);
+            }
+            (Verdict::Unknown, Strict::Yes) | (Verdict::Mismatch(_), Strict::Yes | Strict::AcceptNew) => return Ok(false),
+            (Verdict::Unknown, _) => None,
+            (Verdict::Mismatch(old), _) => Some(old),
+        };
+        if hosts.batch {
+            return Ok(false);
+        }
+        let (tx, rx) = oneshot::channel();
+        *self.answers.host_key.lock().unwrap() = Some(tx);
+        self.events.host_key(&known_hosts::fingerprint(key), previous.as_ref().map(known_hosts::fingerprint).as_deref());
+        if !rx.await.unwrap_or(false) {
+            return Ok(false);
+        }
+        hosts.accept(&self.host, self.port, key, previous.as_ref()).map_err(refused)?;
+        Ok(true)
     }
 }
 
@@ -329,28 +428,34 @@ async fn authenticate(handle: &mut client::Handle<Handler>, host: &Host, events:
             Method::KeyboardInteractive => MethodKind::KeyboardInteractive,
             Method::Password => MethodKind::Password,
         };
-        if !ssh::offers(&result, kind) || (host.batch_mode && *method != Method::PublicKey) {
+        if !offers(&result, kind) || (host.batch_mode && *method != Method::PublicKey) {
             continue;
         }
         result = match method {
             Method::PublicKey => publickey(handle, host, result, events, answers).await?,
             Method::KeyboardInteractive => {
                 for _ in 0..3 {
-                    result = ssh::keyboard_interactive(handle, user, events, answers).await?;
-                    if result.success() || !ssh::offers(&result, kind) {
+                    result = keyboard_interactive(handle, user, events, answers).await?;
+                    if result.success() || !offers(&result, kind) {
                         break;
                     }
                 }
                 result
             }
             Method::Password => {
+                if let Some(saved) = &host.password {
+                    result = handle.authenticate_password(user, saved).await.map_err(failed)?;
+                    if !result.success() {
+                        events.state(State::PasswordRejected, "");
+                    }
+                }
                 for _ in 0..3 {
-                    let asked = vec![ssh::prompt(&format!("{user}@{}'s password:", host.host_name), false)];
-                    let given = ask(events, answers, "Password", "", asked).await?;
-                    result = handle.authenticate_password(user, given.into_iter().next().unwrap_or_default()).await.map_err(failed)?;
-                    if result.success() || !ssh::offers(&result, kind) {
+                    if result.success() || !offers(&result, kind) {
                         break;
                     }
+                    let asked = vec![prompt(&format!("{user}@{}'s password:", host.host_name), false)];
+                    let given = ask(events, answers, "Password", "", asked).await?;
+                    result = handle.authenticate_password(user, given.into_iter().next().unwrap_or_default()).await.map_err(failed)?;
                 }
                 result
             }
@@ -365,8 +470,42 @@ async fn authenticate(handle: &mut client::Handle<Handler>, host: &Host, events:
     }
 }
 
+async fn keyboard_interactive(handle: &mut client::Handle<Handler>, user: &str, events: &Arc<dyn Events>, answers: &Arc<Answers>) -> Result<AuthResult, String> {
+    let failed = |e: russh::Error| format!("authenticating as {user}: {e}");
+    let mut response = handle.authenticate_keyboard_interactive_start(user, None).await.map_err(failed)?;
+    loop {
+        match response {
+            KeyboardInteractiveAuthResponse::Success => return Ok(AuthResult::Success),
+            KeyboardInteractiveAuthResponse::Failure { remaining_methods, partial_success } => {
+                return Ok(AuthResult::Failure { remaining_methods, partial_success })
+            }
+            KeyboardInteractiveAuthResponse::InfoRequest { name, instructions, prompts } => {
+                let asked: Vec<_> = prompts.iter().map(|p| prompt(&p.prompt, p.echo)).collect();
+                let given = ask(events, answers, &name, &instructions, asked).await?;
+                response = handle.authenticate_keyboard_interactive_respond(given).await.map_err(failed)?;
+            }
+        }
+    }
+}
+
+fn prompt(text: &str, echo: bool) -> Prompt {
+    Prompt { prompt: text.to_string(), echo }
+}
+
+fn offers(result: &AuthResult, method: MethodKind) -> bool {
+    match result {
+        AuthResult::Success => false,
+        AuthResult::Failure { remaining_methods, .. } => remaining_methods.contains(&method),
+    }
+}
+
+fn decode(key: &ssh_config::Key, what: &str) -> Result<PrivateKey, String> {
+    russh::keys::decode_secret_key(&key.pem, key.passphrase.as_deref()).map_err(|e| format!("reading {what}: {e}"))
+}
+
+
 /// The agent's keys the config names, then its others unless `IdentitiesOnly`, then the
-/// identity files it lacks, asking for a passphrase where one is needed.
+/// spec's own Keys, then the identity files it lacks, asking for a passphrase where needed.
 async fn publickey(
     handle: &mut client::Handle<Handler>,
     host: &Host,
@@ -398,7 +537,17 @@ async fn publickey(
             .authenticate_publickey_with(user, key.clone(), hash, agent)
             .await
             .map_err(|e| format!("signing with the agent: {e:?}"))?;
-        if result.success() || !ssh::offers(&result, MethodKind::PublicKey) {
+        if result.success() || !offers(&result, MethodKind::PublicKey) {
+            return Ok(result);
+        }
+    }
+    for key in &host.keys {
+        let key = decode(key, "the key")?;
+        if tried.contains(key.public_key().key_data()) {
+            continue;
+        }
+        result = handle.authenticate_publickey(user, PrivateKeyWithHashAlg::new(Arc::new(key), hash)).await.map_err(|e| e.to_string())?;
+        if result.success() || !offers(&result, MethodKind::PublicKey) {
             return Ok(result);
         }
     }
@@ -411,7 +560,7 @@ async fn publickey(
         for certificate in certificates(file, &host.certificate_files) {
             if certificate.public_key() == key.public_key().key_data() {
                 result = handle.authenticate_openssh_cert(user, key.clone(), certificate).await.map_err(|e| e.to_string())?;
-                if result.success() || !ssh::offers(&result, MethodKind::PublicKey) {
+                if result.success() || !offers(&result, MethodKind::PublicKey) {
                     return Ok(result);
                 }
             }
@@ -425,7 +574,7 @@ async fn publickey(
                 let _ = agent.add_identity(&key, &[]).await;
             }
         }
-        if result.success() || !ssh::offers(&result, MethodKind::PublicKey) {
+        if result.success() || !offers(&result, MethodKind::PublicKey) {
             return Ok(result);
         }
     }
@@ -448,7 +597,7 @@ async fn private_key(file: &Path, batch: bool, events: &Arc<dyn Events>, answers
         Err(_) => return None,
     }
     for _ in 0..3 {
-        let asked = vec![ssh::prompt(&format!("Enter passphrase for key '{}':", file.display()), false)];
+        let asked = vec![prompt(&format!("Enter passphrase for key '{}':", file.display()), false)];
         let given = ask(events, answers, "Passphrase", "", asked).await.ok()?;
         let passphrase = given.into_iter().next().filter(|p| !p.is_empty())?;
         if let Ok(key) = russh::keys::load_secret_key(file, Some(&passphrase)) {
@@ -470,7 +619,7 @@ fn certificates(file: &Path, configured: &[PathBuf]) -> Vec<Certificate> {
         .collect()
 }
 
-pub async fn rsa_hash(accepted: Option<&str>, handle: &client::Handle<Handler>) -> Option<HashAlg> {
+async fn rsa_hash(accepted: Option<&str>, handle: &client::Handle<Handler>) -> Option<HashAlg> {
     match accepted {
         Some(list) if list.contains("rsa-sha2-512") => Some(HashAlg::Sha512),
         Some(list) if list.contains("rsa-sha2-256") => Some(HashAlg::Sha256),
