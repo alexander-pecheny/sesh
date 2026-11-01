@@ -228,34 +228,14 @@ final class Library: ObservableObject {
 
     // MARK: Unfiled
 
-    /// An Agent session on one of the machines that no Task has adopted.
-    struct Unfiled: Identifiable, Hashable {
-        let machine: String?
-        let pane: String
-        let agent: Agent
-        let cwd: String
-        let name: String
-        /// sesh-mux's name for the Agent, which its session keeps once adopted.
-        let named: String?
-        var id: String { "\(machine ?? ""):\(pane)" }
-    }
+    typealias Unfiled = Panes.Unfiled
+    typealias Mark = Panes.Mark
 
-    @Published private(set) var unfiled: [String: [Unfiled]] = [:]
+    /// What the machines' followers last said of every pane.
+    @Published private(set) var panes = Panes()
+    var unfiled: [String: [Unfiled]] { panes.unfiled }
     private var watching: Task<Void, Never>?
     private var followers: [String: Task<Void, Never>] = [:]
-
-    /// One session's summary as its machine's follower keeps it (ADR 0012).
-    private struct Summary: Decodable {
-        let t: String
-        let session: String?
-        let state: String?
-        let agent: String?
-        let cwd: String?
-        let name: String?
-        let done: UInt64?
-        let last: String?
-        let background: [SessionLog.Background]?
-    }
 
     /// Every machine an open Task's session runs on, wherever its Vault lives: a session on a
     /// machine nobody watches could never be seen to end.
@@ -266,16 +246,8 @@ final class Library: ObservableObject {
         return Set(aliases).sorted().map(TaskActions.machine)
     }
 
-    /// Who runs in each pane, by `machine:pane`, as the last summaries said.
-    private var occupants: [String: Occupant] = [:]
-
-    private struct Occupant: Equatable {
-        let name: String?
-        let cwd: String?
-    }
-
     /// Every session's summary, by machine and pane.
-    private var summaries: [String: [String: Summary]] = [:]
+    private var summaries: [String: [String: Panes.Summary]] = [:]
     private var publishing = false
 
     /// Every Vault's Host and the Mac, each followed by one stream of session summaries.
@@ -323,8 +295,7 @@ final class Library: ObservableObject {
     }
 
     private func summarize(_ text: String, on machine: String) {
-        guard let summary = try? JSONDecoder().decode(Summary.self, from: Data(text.utf8)) else { return }
-        guard summary.t == "session", let pane = summary.session else { return }
+        guard let summary = Panes.summary(text), let pane = summary.session else { return }
         summaries[machine, default: [:]][pane] = summary
         // A working session's status line ticks every second; marks need no more than this.
         guard !publishing else { return }
@@ -337,55 +308,16 @@ final class Library: ObservableObject {
 
     /// The summaries as the marks, the Unfiled lists and the Tasks' order read them.
     private func publish() {
-        occupants = summaries.reduce(into: [:]) { all, machine in
-            for (pane, summary) in machine.value where summary.state != "ended" {
-                all["\(machine.key):\(pane)"] = Occupant(name: summary.name, cwd: summary.cwd)
-            }
-        }
-        name()
-        let adopted = Set(vaults.flatMap { $0.all(.session) }.map(key))
-        var states: [String: Live] = [:], found: [String: [Unfiled]] = [:], counts: [String: Int] = [:], over: Set<String> = []
-        for (machine, sessions) in summaries {
-            for (pane, summary) in sessions {
-                guard let state = summary.state, state != "ended" else { continue }
-                let key = "\(machine):\(pane)"
-                states[key] = Live(status: state == "background" ? "working" : state, done: summary.done ?? 0)
-                counts[key] = summary.background?.count ?? 0
-                if state == "background" { over.insert(key) }
-                if let last = summary.last.flatMap(Self.time), active[key] != last { active[key] = last }
-                guard !adopted.contains(key), let agent = summary.agent.flatMap(Agent.init), let cwd = summary.cwd else { continue }
-                found[machine, default: []].append(Unfiled(
-                    machine: machine.isEmpty ? nil : machine, pane: pane, agent: agent, cwd: cwd,
-                    name: summary.name ?? (cwd as NSString).lastPathComponent, named: summary.name))
-            }
-        }
-        if unfiled != found { unfiled = found }
-        if live != states { live = states }
-        if busy != counts { busy = counts }
-        turnOver = over
+        let read = Panes(summaries, sessions: vaults.flatMap { $0.all(.session) })
+        name(from: read)
+        for (key, last) in read.last where active[key] != last { active[key] = last }
+        if panes != read { panes = read }
         markSeen()
         // An Agent going idle is the moment one handed over can be started afresh.
         if listed.contains(where: { legacy[$0] == nil }) || legacy.values.contains(where: { !$0.isEmpty }) { Task { await renew() } }
     }
 
     // MARK: Marks
-
-    /// What sesh-mux last said of a pane: its status, and how many turns its Agent has finished.
-    struct Live: Equatable {
-        let status: String
-        let done: UInt64
-    }
-
-    enum Mark: Int, Comparable {
-        case seen, finished, background, working, waiting
-        static func < (a: Mark, b: Mark) -> Bool { a.rawValue < b.rawValue }
-    }
-
-    @Published private(set) var live: [String: Live] = [:]
-    /// How much each idle Claude pane left running in the background, by `machine:pane`.
-    @Published private(set) var busy: [String: Int] = [:]
-    /// Claude panes whose turn is over, so sesh-mux's "working" there is only background work.
-    private var turnOver: Set<String> = []
 
     /// When each pane's Transcript last had a message, in milliseconds since 1970.
     @Published private(set) var active: [String: Double] = UserDefaults.standard.dictionary(forKey: "active") as? [String: Double] ?? [:] {
@@ -430,47 +362,17 @@ final class Library: ObservableObject {
             .map(\.element.0)
     }
 
-    private static let iso: ISO8601DateFormatter = {
-        let parser = ISO8601DateFormatter()
-        parser.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
-        return parser
-    }()
-
-    private static func time(_ text: String) -> Double? {
-        (iso.date(from: text) ?? ISO8601DateFormatter().date(from: text)).map { $0.timeIntervalSince1970 * 1000 }
-    }
     /// The finished-turn count the user has seen, by `machine:pane`, so a turn finished while
     /// they looked elsewhere, or while the app was closed, still shows.
     private var seen: [String: UInt64] = UserDefaults.standard.dictionary(forKey: "seen") as? [String: UInt64] ?? [:]
 
-    /// `machine:pane` while the pane runs the session's own Agent. sesh-mux gives a closed pane's id
-    /// to the next, so a session whose pane holds another Agent keys nothing live.
-    private func key(_ session: Record) -> String {
-        let key = "\(session.body.machine ?? ""):\(session.body.pane ?? "")"
-        guard let occupant = occupants[key], !Self.owns(session, occupant) else { return key }
-        return key + "#replaced"
-    }
-
-    /// Whether `occupant` is the session's own Agent: by sesh-mux's name for it, or, for a session
-    /// recorded before Sesh kept names, by its folder.
-    private static func owns(_ session: Record, _ occupant: Occupant) -> Bool {
-        owns(session, name: occupant.name, cwd: occupant.cwd)
-    }
-
-    /// Whether the Agent named `name`, working in `cwd`, is the session's own rather than one
-    /// sesh-mux put in its pane later.
-    static func owns(_ session: Record, name: String?, cwd: String?) -> Bool {
-        if let mine = session.body.name { return name == mine }
-        guard let path = session.body.path, let cwd else { return true }
-        return (path as NSString).lastPathComponent == (cwd as NSString).lastPathComponent
-    }
+    private func key(_ session: Record) -> String { panes.key(of: session) }
 
     /// Gives each session recorded before Sesh kept names the name of the Agent it owns.
-    private func name() {
+    private func name(from read: Panes) {
         for vault in vaults {
-            for var session in vault.all(.session) where session.body.name == nil {
-                guard let occupant = occupants["\(session.body.machine ?? ""):\(session.body.pane ?? "")"],
-                      let name = occupant.name, Self.owns(session, occupant) else { continue }
+            for var session in vault.all(.session) {
+                guard let name = read.name(of: session) else { continue }
                 session.body.name = name
                 vault.write(session)
             }
@@ -479,19 +381,10 @@ final class Library: ObservableObject {
 
     /// Whether the session's pane may still hold its Agent, as far as Sesh knows, so stopping it
     /// stops nothing else.
-    func holdsPane(_ session: Record) -> Bool {
-        session.body.pane != nil && !key(session).hasSuffix("#replaced")
-    }
+    func holdsPane(_ session: Record) -> Bool { panes.holds(session) }
 
     /// An Agent waiting on the user outranks one working, which outranks one finished unseen.
-    func mark(of session: Record) -> Mark? {
-        guard let state = live[key(session)] else { return nil }
-        if state.status == "blocked" { return .waiting }
-        let background = busy[key(session), default: 0] > 0
-        if state.status == "working" { return background && turnOver.contains(key(session)) ? .background : .working }
-        if background { return .background }
-        return state.done > seen[key(session), default: state.done] ? .finished : .seen
-    }
+    func mark(of session: Record) -> Mark? { panes.mark(of: session, seen: seen) }
 
     /// One mark for each of the Task's running Agents, in the order of their Tabs; those without one come last.
     func marks(ofTask task: String) -> [Mark] {
@@ -503,12 +396,12 @@ final class Library: ObservableObject {
     /// The open Agent session counts as seen, and so does every pane met for the first time.
     func markSeen() {
         var changed = false
-        for (key, state) in live where seen[key] == nil {
+        for (key, state) in panes.live where seen[key] == nil {
             seen[key] = state.done
             changed = true
         }
         if let task = selection, case .session(let id)? = current[task], let session = vault(of: id)?.records[id],
-           let state = live[key(session)], seen[key(session)] != state.done {
+           let state = panes.live[key(session)], seen[key(session)] != state.done {
             seen[key(session)] = state.done
             changed = true
         }
@@ -520,7 +413,7 @@ final class Library: ObservableObject {
     /// Interrupts an Unfiled Agent and closes its pane.
     func stop(_ item: Unfiled) async {
         _ = await TaskActions.machine(item.machine).follower.stop(item.pane)
-        unfiled[item.machine ?? ""]?.removeAll { $0 == item }
+        panes.unfiled[item.machine ?? ""]?.removeAll { $0 == item }
     }
 
     /// Makes an Unfiled Agent session part of `task`; it never goes back.
@@ -530,7 +423,7 @@ final class Library: ObservableObject {
             title: "\(item.agent.title) in \((item.cwd as NSString).lastPathComponent)", task: task,
             position: Double(Date().timeIntervalSince1970), machine: item.machine, path: item.cwd, pane: item.pane,
             name: item.named, agent: item.agent.rawValue))
-        unfiled[item.machine ?? ""]?.removeAll { $0 == item }
+        panes.unfiled[item.machine ?? ""]?.removeAll { $0 == item }
         open(.session(session.id), in: task)
     }
 
@@ -594,7 +487,7 @@ final class Library: ObservableObject {
 
     /// Whether a session's Agent has stopped: its machine answered and no longer lists it.
     func ended(_ session: Record) -> Bool {
-        !resuming.contains(session.id) && reachable(session) && live[key(session)] == nil
+        !resuming.contains(session.id) && reachable(session) && panes.live[key(session)] == nil
     }
 
     /// Whether the session's machine answers, so Sesh knows whether its Agent runs.
@@ -607,7 +500,7 @@ final class Library: ObservableObject {
     func end(_ session: Record) async {
         await vault(of: session.id)?.copier.copy([session])
         if let pane = session.body.pane, holdsPane(session) { _ = await TaskActions.machine(session.body.machine).follower.stop(pane) }
-        live[key(session)] = nil
+        panes.live[key(session)] = nil
         reload(session.id)
     }
 

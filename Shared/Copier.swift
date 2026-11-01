@@ -42,7 +42,7 @@ final class Copier {
             guard let pane = session.body.pane else { continue }
             let machine = TaskActions.machine(session.body.machine)
             // A pane id comes back for a later Agent, whose Transcript is not this session's.
-            if case .found(let found) = await Mux.look(for: pane, on: machine), Library.owns(session, name: found.name, cwd: found.cwd),
+            if case .found(let found) = await Mux.look(for: pane, on: machine), Panes.owns(session, name: found.name, cwd: found.cwd),
                let path = await found.agent_session?.path.asyncOr({ await self.found(pane, on: machine) }),
                !(session.body.transcripts ?? []).contains(path) {
                 var record = vault.records[session.id] ?? session

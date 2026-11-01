@@ -146,6 +146,7 @@ targets:
       - path: Shared/FollowerLink.swift
       - path: Shared/HelperInstaller.swift
       - path: Shared/Record.swift
+      - path: Shared/Panes.swift
       - path: Shared/Git.swift
       - path: Shared/Close.swift
       - path: Shared/Tree.swift
