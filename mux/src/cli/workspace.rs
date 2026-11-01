@@ -14,7 +14,6 @@ pub(super) fn run_workspace_command(args: &[String]) -> std::io::Result<i32> {
         "list" => workspace_list(&args[1..]),
         "create" => workspace_create(&args[1..]),
         "get" => workspace_get(&args[1..]),
-        "focus" => workspace_focus(&args[1..]),
         "rename" => workspace_rename(&args[1..]),
         "report-metadata" => workspace_report_metadata(&args[1..]),
         "close" => workspace_close(&args[1..]),
@@ -31,7 +30,7 @@ pub(super) fn run_workspace_command(args: &[String]) -> std::io::Result<i32> {
 
 fn workspace_list(args: &[String]) -> std::io::Result<i32> {
     if !args.is_empty() {
-        eprintln!("usage: herdr workspace list");
+        eprintln!("usage: sesh-mux workspace list");
         return Ok(2);
     }
 
@@ -104,33 +103,20 @@ fn workspace_create(args: &[String]) -> std::io::Result<i32> {
 
 fn workspace_get(args: &[String]) -> std::io::Result<i32> {
     let Some(raw_workspace_id) = args.first() else {
-        eprintln!("usage: herdr workspace get <workspace_id>");
+        eprintln!("usage: sesh-mux workspace get <workspace_id>");
         return Ok(2);
     };
     if args.len() != 1 {
-        eprintln!("usage: herdr workspace get <workspace_id>");
+        eprintln!("usage: sesh-mux workspace get <workspace_id>");
         return Ok(2);
     }
 
     super::runtime::workspace_get(super::normalize_workspace_id(raw_workspace_id))
 }
 
-fn workspace_focus(args: &[String]) -> std::io::Result<i32> {
-    let Some(raw_workspace_id) = args.first() else {
-        eprintln!("usage: herdr workspace focus <workspace_id>");
-        return Ok(2);
-    };
-    if args.len() != 1 {
-        eprintln!("usage: herdr workspace focus <workspace_id>");
-        return Ok(2);
-    }
-
-    super::runtime::workspace_focus(super::normalize_workspace_id(raw_workspace_id))
-}
-
 fn workspace_rename(args: &[String]) -> std::io::Result<i32> {
     if args.len() < 2 {
-        eprintln!("usage: herdr workspace rename <workspace_id> <label>");
+        eprintln!("usage: sesh-mux workspace rename <workspace_id> <label>");
         return Ok(2);
     }
 
@@ -142,7 +128,7 @@ fn workspace_rename(args: &[String]) -> std::io::Result<i32> {
 
 fn workspace_report_metadata(args: &[String]) -> std::io::Result<i32> {
     let Some(raw_workspace_id) = args.first() else {
-        eprintln!("usage: herdr workspace report-metadata <workspace_id> --source ID [--token NAME=VALUE] [--clear-token NAME] [--seq N] [--ttl-ms N]");
+        eprintln!("usage: sesh-mux workspace report-metadata <workspace_id> --source ID [--token NAME=VALUE] [--clear-token NAME] [--seq N] [--ttl-ms N]");
         return Ok(2);
     };
     let workspace_id = super::normalize_workspace_id(raw_workspace_id);
@@ -230,7 +216,7 @@ fn workspace_close(args: &[String]) -> std::io::Result<i32> {
         [workspace_id] => (workspace_id, false),
         [workspace_id, flag] if flag == "--group" => (workspace_id, true),
         _ => {
-            eprintln!("usage: herdr workspace close <workspace_id> [--group]");
+            eprintln!("usage: sesh-mux workspace close <workspace_id> [--group]");
             return Ok(2);
         }
     };
@@ -242,12 +228,12 @@ fn workspace_close(args: &[String]) -> std::io::Result<i32> {
 }
 
 fn print_workspace_help() {
-    eprintln!("herdr workspace commands:");
-    eprintln!("  herdr workspace list");
-    eprintln!("  herdr workspace create [--cwd PATH] [--label TEXT] [--env KEY=VALUE] [--focus] [--no-focus]");
-    eprintln!("  herdr workspace get <workspace_id>");
-    eprintln!("  herdr workspace focus <workspace_id>");
-    eprintln!("  herdr workspace rename <workspace_id> <label>");
-    eprintln!("  herdr workspace report-metadata <workspace_id> --source ID [--token NAME=VALUE] [--clear-token NAME] [--seq N] [--ttl-ms N]");
-    eprintln!("  herdr workspace close <workspace_id> [--group]");
+    eprintln!("sesh-mux workspace commands:");
+    eprintln!("  sesh-mux workspace list");
+    eprintln!("  sesh-mux workspace create [--cwd PATH] [--label TEXT] [--env KEY=VALUE] [--focus] [--no-focus]");
+    eprintln!("  sesh-mux workspace get <workspace_id>");
+    eprintln!("  sesh-mux workspace focus <workspace_id>");
+    eprintln!("  sesh-mux workspace rename <workspace_id> <label>");
+    eprintln!("  sesh-mux workspace report-metadata <workspace_id> --source ID [--token NAME=VALUE] [--clear-token NAME] [--seq N] [--ttl-ms N]");
+    eprintln!("  sesh-mux workspace close <workspace_id> [--group]");
 }

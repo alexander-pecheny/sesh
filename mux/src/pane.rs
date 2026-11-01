@@ -8,13 +8,10 @@ use std::sync::{
 
 use bytes::Bytes;
 use portable_pty::CommandBuilder;
-#[cfg(all(test, unix))]
-use portable_pty::{native_pty_system, PtySize};
 use ratatui::{layout::Rect, Frame};
 #[cfg(test)]
 use tokio::sync::watch;
 use tokio::sync::{mpsc, Notify};
-#[cfg(not(windows))]
 use tracing::debug;
 use tracing::{error, info, warn};
 
@@ -40,27 +37,13 @@ use self::agent_detection::{
     DetectionScreenReadInput, PendingIdleConfirmation, ScreenDetectionPublishInput,
     AGENT_PENDING_IDLE_RECHECK, AGENT_STARTUP_GRACE_WINDOW,
 };
-#[cfg(unix)]
 pub use self::terminal::InputState;
 use self::terminal::{GhosttyPaneTerminal, PaneTerminal};
-pub(crate) use self::terminal::{
-    TerminalCompressionStep, TerminalDirtyPatch, TerminalDirtyPatchOutcome, TerminalReadSnapshot,
-    TerminalSearchDirection, TerminalSearchWindow, TerminalTextPoint, TerminalWordMotion,
-};
+pub(crate) use self::terminal::{TerminalCompressionStep, TerminalReadSnapshot};
 pub use self::{
     state::PaneState,
     terminal::{ScrollMetrics, TerminalCursorState},
 };
-
-pub(crate) struct TerminalDirtyPatchSnapshot {
-    pub patch: TerminalDirtyPatchOutcome,
-    pub content_revision: u64,
-    pub scroll_metrics: Option<ScrollMetrics>,
-    pub mouse_reporting: bool,
-    pub sgr_pixel_mouse: bool,
-    pub alternate_screen_active: bool,
-    pub graphics_may_have_placements: bool,
-}
 
 const RELEASE_REACQUIRE_SUPPRESSION: std::time::Duration = std::time::Duration::from_secs(1);
 const TERMINAL_COMPRESSION_IDLE: std::time::Duration = std::time::Duration::from_millis(250);
@@ -90,7 +73,7 @@ where
 }
 
 fn apply_pane_terminal_env(cmd: &mut CommandBuilder) {
-    // Each pane is rendered by herdr's own terminal layer, not the outer terminal
+    // Each pane is rendered by sesh-mux's own terminal layer, not the outer terminal
     // that launched the app. Advertising the inherited TERM leaks the host terminal
     // identity into shells and across SSH, which breaks redraw and cursor movement
     // when the remote side lacks matching terminfo entries.
@@ -138,16 +121,9 @@ impl PaneLaunchEnv {
         };
         self
     }
-
-    pub(crate) fn without_pane_identity(mut self) -> Self {
-        self.identity = PaneLaunchIdentity::OmitPane;
-        self
-    }
 }
 
 fn apply_pane_launch_env(cmd: &mut CommandBuilder, launch_env: &PaneLaunchEnv) {
-    #[cfg(unix)]
-    crate::platform::ssh_agent::apply_pane_env(cmd);
     cmd.env_remove("CODEX_THREAD_ID");
     // OMP sets OMPCODE for shells it spawns. A pane launched from inside OMP
     // must not inherit it or its root agent would look like a nested session.
@@ -155,7 +131,6 @@ fn apply_pane_launch_env(cmd: &mut CommandBuilder, launch_env: &PaneLaunchEnv) {
     for (key, value) in &launch_env.extra {
         cmd.env(key, value);
     }
-    cmd.env(crate::HERDR_ENV_VAR, crate::HERDR_ENV_VALUE);
     crate::integration::apply_pane_base_env(cmd);
     crate::platform::apply_pane_runtime_marker(cmd);
     match &launch_env.identity {
@@ -165,12 +140,15 @@ fn apply_pane_launch_env(cmd: &mut CommandBuilder, launch_env: &PaneLaunchEnv) {
             tab_id,
             pane_id,
         } => {
-            cmd.env(crate::integration::HERDR_WORKSPACE_ID_ENV_VAR, workspace_id);
-            cmd.env(crate::integration::HERDR_TAB_ID_ENV_VAR, tab_id);
-            cmd.env(crate::integration::HERDR_PANE_ID_ENV_VAR, pane_id);
+            cmd.env(
+                crate::integration::SESH_MUX_WORKSPACE_ID_ENV_VAR,
+                workspace_id,
+            );
+            cmd.env(crate::integration::SESH_MUX_TAB_ID_ENV_VAR, tab_id);
+            cmd.env(crate::integration::SESH_MUX_PANE_ID_ENV_VAR, pane_id);
         }
         PaneLaunchIdentity::OmitPane => {
-            cmd.env_remove(crate::integration::HERDR_PANE_ID_ENV_VAR);
+            cmd.env_remove(crate::integration::SESH_MUX_PANE_ID_ENV_VAR);
         }
     }
 }
@@ -327,17 +305,14 @@ struct AgentDetectionPresence {
     consecutive_misses: u8,
 }
 
-#[cfg(unix)]
 fn absolute_process_cwd(pid: u32) -> Option<std::path::PathBuf> {
     crate::platform::process_cwd(pid).filter(|cwd| cwd.is_absolute())
 }
 
-#[cfg(unix)]
 fn usable_process_cwd(pid: u32) -> Option<std::path::PathBuf> {
     absolute_process_cwd(pid).filter(|cwd| cwd.is_dir())
 }
 
-#[cfg(unix)]
 fn foreground_member_cwd_different_from_shell(
     shell_pid: u32,
     shell_cwd: Option<&std::path::PathBuf>,
@@ -479,23 +454,6 @@ fn should_skip_process_probe_for_lifecycle_authority(
         && input.suppressed_agent.is_none()
         && input.has_process_probe
         && !foreground_group_changed(input.foreground_pgid, input.last_foreground_pgid)
-}
-
-#[cfg(any(windows, test))]
-fn should_observe_foreground_process_group(
-    lifecycle_authority: bool,
-    content_changed: bool,
-    elapsed: std::time::Duration,
-    input: ProcessProbeInput,
-) -> bool {
-    !input.has_process_probe
-        || input.current_agent.is_none()
-        || input.suppressed_agent.is_some()
-        || input.pending_foreground_shell_clear
-        || input.pending_restore_probe
-        || content_changed
-        || (lifecycle_authority && elapsed >= PROCESS_RECHECK_IDENTIFIED)
-        || (!lifecycle_authority && input.elapsed_since_process_check >= PROCESS_RECHECK_IDENTIFIED)
 }
 
 fn should_probe_foreground_job(input: ProcessProbeInput) -> bool {
@@ -708,7 +666,6 @@ fn probe_foreground_process(pid: u32, foreground_pgid: Option<u32>) -> ProcessPr
     )
 }
 
-#[cfg(unix)]
 fn spawn_basic_detection_task(
     pane_id: PaneId,
     child_pid: Arc<AtomicU32>,
@@ -1292,7 +1249,6 @@ impl PaneRuntimeIo {
         }
     }
 
-    #[cfg(unix)]
     fn duplicate_handoff_fd(&self) -> std::io::Result<std::os::fd::RawFd> {
         match self {
             PaneRuntimeIo::Actor(actor) => actor.duplicate_for_handoff(),
@@ -1303,7 +1259,6 @@ impl PaneRuntimeIo {
         }
     }
 
-    #[cfg(unix)]
     fn foreground_process_group_id(&self) -> Option<u32> {
         match self {
             PaneRuntimeIo::Actor(actor) => actor.foreground_process_group_id(),
@@ -1312,7 +1267,6 @@ impl PaneRuntimeIo {
         }
     }
 
-    #[cfg(unix)]
     fn begin_handoff(&self, timeout: std::time::Duration) -> std::io::Result<()> {
         match self {
             PaneRuntimeIo::Actor(actor) => actor.begin_handoff(timeout),
@@ -1321,7 +1275,6 @@ impl PaneRuntimeIo {
         }
     }
 
-    #[cfg(unix)]
     fn set_handoff_paused(&self, paused: bool) -> std::io::Result<()> {
         match self {
             PaneRuntimeIo::Actor(actor) => {
@@ -1336,7 +1289,6 @@ impl PaneRuntimeIo {
         }
     }
 
-    #[cfg(unix)]
     fn release_after_commit(&self) -> std::io::Result<()> {
         match self {
             PaneRuntimeIo::Actor(actor) => actor.release_after_commit(),
@@ -1370,7 +1322,6 @@ impl PaneRuntimeIo {
         }
     }
 
-    #[cfg(unix)]
     fn nudge_child_redraw_after_handoff(
         &self,
         rows: u16,
@@ -1395,18 +1346,6 @@ impl PaneRuntimeIo {
         }
     }
 
-    fn write_terminal_response(&self, response: impl FnOnce() -> Option<Bytes>) {
-        match self {
-            PaneRuntimeIo::Actor(actor) => actor.write_terminal_response(response),
-            #[cfg(test)]
-            PaneRuntimeIo::TestChannel { sender, .. } => {
-                if let Some(bytes) = response() {
-                    let _ = sender.try_send(bytes);
-                }
-            }
-        }
-    }
-
     fn queue_user_input_submission(
         &self,
         text: Bytes,
@@ -1416,8 +1355,6 @@ impl PaneRuntimeIo {
     ) -> std::io::Result<std::sync::mpsc::Receiver<std::io::Result<()>>> {
         match self {
             PaneRuntimeIo::Actor(actor) => {
-                #[cfg(windows)]
-                return actor.queue_user_input_submission(text, enter, delay, deadline);
                 #[cfg(unix)]
                 {
                     let _ = deadline;
@@ -1560,7 +1497,6 @@ fn shutdown_pane_processes(
     );
 }
 
-#[cfg(unix)]
 fn truncate_handoff_history(history: String, max_bytes: usize) -> String {
     if history.len() <= max_bytes {
         return history;
@@ -1586,152 +1522,12 @@ fn pane_shell_from(configured_shell: &str, env_shell: Option<String>) -> String 
         return configured_shell.to_string();
     }
 
-    #[cfg(windows)]
-    {
-        let _ = env_shell;
-        default_pane_shell()
-    }
-
-    #[cfg(not(windows))]
     env_shell
         .map(|shell| shell.trim().to_string())
         .filter(|shell| !shell.is_empty())
         .unwrap_or_else(default_pane_shell)
 }
 
-#[cfg(windows)]
-fn default_pane_shell() -> String {
-    default_windows_pane_shell(std::env::var_os("PATH"))
-}
-
-/// Windows has no `$SHELL`, so an unset `[terminal] default_shell` has to name
-/// a concrete executable. `powershell.exe` (5.1) is the only one guaranteed to
-/// exist, but `pwsh` (7+) is what every other Windows terminal prefers when it
-/// is installed. Return the first launchable `pwsh.exe` on `PATH` as a full
-/// path so the pane launches exactly the binary that was validated; keep the
-/// inbox shell when none is found. An explicit `default_shell` still wins.
-#[cfg(any(windows, test))]
-fn default_windows_pane_shell(path: Option<std::ffi::OsString>) -> String {
-    path.as_deref()
-        .into_iter()
-        .flat_map(std::env::split_paths)
-        .filter(|dir| dir.is_absolute())
-        .map(|dir| dir.join("pwsh.exe"))
-        .find(|candidate| is_windows_executable_file(candidate))
-        .and_then(|path| path.into_os_string().into_string().ok())
-        .unwrap_or_else(|| "powershell.exe".into())
-}
-
-/// Validate that `path` looks like a Windows executable image the current
-/// machine can launch: a DOS `MZ` header whose `e_lfanew` points at a `PE\0\0`
-/// signature with a non-empty, executable-image COFF header for a compatible
-/// machine and a PE32/PE32+ optional header that fits in the file.
-///
-/// `portable-pty` resolves the configured shell with `Path::exists` and hands
-/// it straight to `CreateProcessW`, which does not fall back to later `PATH`
-/// entries, so a malformed, DLL, or foreign-architecture `pwsh.exe` must be
-/// skipped here instead of selected. Actually launching the candidate is the
-/// only way to prove it loads, and this deliberately does not do that.
-#[cfg(any(windows, test))]
-fn is_windows_executable_file(path: &std::path::Path) -> bool {
-    is_windows_executable_file_for_host(path, windows_host_native_machine())
-}
-
-/// Native processor architecture of the host. Non-Windows builds only reach
-/// this from the cross-platform unit tests, which model an x64 host.
-#[cfg(any(windows, test))]
-fn windows_host_native_machine() -> u16 {
-    #[cfg(windows)]
-    {
-        crate::platform::native_machine_type()
-    }
-    #[cfg(not(windows))]
-    {
-        0x8664
-    }
-}
-
-#[cfg(any(windows, test))]
-fn is_windows_executable_file_for_host(path: &std::path::Path, native_machine: u16) -> bool {
-    use std::io::{Read, Seek, SeekFrom};
-
-    const PE_OFFSET_FIELD: usize = 0x3c;
-    const DOS_HEADER_LEN: u64 = 0x40;
-    const PE_SIGNATURE: &[u8; 4] = b"PE\0\0";
-    const COFF_HEADER_LEN: usize = 20;
-    const SECTION_HEADER_LEN: u64 = 40;
-    const OPTIONAL_HEADER_MAGIC_LEN: u64 = 2;
-    const IMAGE_FILE_EXECUTABLE_IMAGE: u16 = 0x0002;
-    const IMAGE_FILE_DLL: u16 = 0x2000;
-
-    let Ok(mut file) = std::fs::File::open(path) else {
-        return false;
-    };
-    let Ok(len) = file.metadata().map(|metadata| metadata.len()) else {
-        return false;
-    };
-
-    let mut dos_header = [0u8; DOS_HEADER_LEN as usize];
-    if file.read_exact(&mut dos_header).is_err() || &dos_header[..2] != b"MZ" {
-        return false;
-    }
-    let pe_offset = u32::from_le_bytes([
-        dos_header[PE_OFFSET_FIELD],
-        dos_header[PE_OFFSET_FIELD + 1],
-        dos_header[PE_OFFSET_FIELD + 2],
-        dos_header[PE_OFFSET_FIELD + 3],
-    ]) as u64;
-    let pe_header_len = PE_SIGNATURE.len() as u64 + COFF_HEADER_LEN as u64;
-    if pe_offset < DOS_HEADER_LEN || pe_offset.saturating_add(pe_header_len) > len {
-        return false;
-    }
-    if file.seek(SeekFrom::Start(pe_offset)).is_err() {
-        return false;
-    }
-
-    let mut header = [0u8; 4 + COFF_HEADER_LEN];
-    if file.read_exact(&mut header).is_err() || &header[..4] != PE_SIGNATURE {
-        return false;
-    }
-    let machine = u16::from_le_bytes([header[4], header[5]]);
-    let number_of_sections = u16::from_le_bytes([header[4 + 2], header[4 + 3]]);
-    let optional_header_len = u16::from_le_bytes([header[4 + 16], header[4 + 17]]) as u64;
-    let characteristics = u16::from_le_bytes([header[4 + 18], header[4 + 19]]);
-
-    if !windows_executable_machine_is_compatible(machine, native_machine)
-        || number_of_sections == 0
-        || characteristics & IMAGE_FILE_EXECUTABLE_IMAGE == 0
-        || characteristics & IMAGE_FILE_DLL != 0
-        || optional_header_len < OPTIONAL_HEADER_MAGIC_LEN
-        || pe_offset.saturating_add(
-            pe_header_len + optional_header_len + number_of_sections as u64 * SECTION_HEADER_LEN,
-        ) > len
-    {
-        return false;
-    }
-
-    let mut magic = [0u8; 2];
-    file.read_exact(&mut magic).is_ok() && matches!(u16::from_le_bytes(magic), 0x010b | 0x020b)
-}
-
-/// Whether a Windows host can launch a given `IMAGE_FILE_MACHINE_*` image.
-/// A native host runs its own architecture; ARM64 Windows also runs x64 and
-/// x86 through emulation, and x64 Windows runs x86 through WOW64. An unknown
-/// host (detection failed) is treated as the x64 build Herdr ships.
-#[cfg(any(windows, test))]
-fn windows_executable_machine_is_compatible(machine: u16, native_machine: u16) -> bool {
-    const MACHINE_I386: u16 = 0x014c;
-    const MACHINE_AMD64: u16 = 0x8664;
-    const MACHINE_ARM64: u16 = 0xaa64;
-
-    match native_machine {
-        MACHINE_ARM64 => matches!(machine, MACHINE_I386 | MACHINE_AMD64 | MACHINE_ARM64),
-        MACHINE_I386 => machine == MACHINE_I386,
-        _ => matches!(machine, MACHINE_I386 | MACHINE_AMD64),
-    }
-}
-
-#[cfg(not(windows))]
 fn default_pane_shell() -> String {
     "/bin/sh".into()
 }
@@ -1791,7 +1587,6 @@ fn is_executable_file(path: &Path) -> bool {
     if !metadata.is_file() {
         return false;
     }
-    #[cfg(unix)]
     {
         use std::os::unix::fs::PermissionsExt;
         metadata.permissions().mode() & 0o111 != 0
@@ -1847,7 +1642,7 @@ fn resolve_shell_for_login_mode(shell: &str) -> io::Result<String> {
 /// The original prompt must be invoked before any other statement in the
 /// wrapper: anything that runs first resets `$?`, so a status-aware user
 /// prompt would show success after a failed command (verified on 5.1).
-pub(crate) const WINDOWS_POWERSHELL_SHELL_INTEGRATION_COMMAND: &str = r"if ($null -eq $global:__HerdrOriginalPrompt) { $global:__HerdrOriginalPrompt = $function:prompt; function global:prompt { $out = @(& $global:__HerdrOriginalPrompt) -join ' '; $loc = $ExecutionContext.SessionState.Path.CurrentLocation; if ($loc.Provider.Name -eq 'FileSystem') { try { [Environment]::CurrentDirectory = $loc.ProviderPath } catch {}; $esc = [string][char]27; $out += $esc + ']9;9;' + $loc.ProviderPath + $esc + '\' }; $out } }";
+pub(crate) const WINDOWS_POWERSHELL_SHELL_INTEGRATION_COMMAND: &str = r"if ($null -eq $global:__SeshMuxOriginalPrompt) { $global:__SeshMuxOriginalPrompt = $function:prompt; function global:prompt { $out = @(& $global:__SeshMuxOriginalPrompt) -join ' '; $loc = $ExecutionContext.SessionState.Path.CurrentLocation; if ($loc.Provider.Name -eq 'FileSystem') { try { [Environment]::CurrentDirectory = $loc.ProviderPath } catch {}; $esc = [string][char]27; $out += $esc + ']9;9;' + $loc.ProviderPath + $esc + '\' }; $out } }";
 
 /// Login flags appended when launching POSIX-style shells on Windows.
 ///
@@ -1998,12 +1793,10 @@ impl PaneRuntime {
         self.preserve_processes_on_drop = true;
     }
 
-    #[cfg(unix)]
     pub fn duplicate_handoff_fd(&self) -> std::io::Result<std::os::fd::RawFd> {
         self.io.duplicate_handoff_fd()
     }
 
-    #[cfg(unix)]
     pub fn preserve_for_handoff(mut self) {
         if let Err(err) = self.io.release_after_commit() {
             warn!(
@@ -2019,12 +1812,10 @@ impl PaneRuntime {
         self.preserve_processes_on_drop = true;
     }
 
-    #[cfg(unix)]
     pub fn assume_handoff_ownership(&mut self) {
         self.preserve_processes_on_drop = false;
     }
 
-    #[cfg(unix)]
     pub fn set_handoff_reader_paused(&self, paused: bool) {
         if let Err(err) = self.io.set_handoff_paused(paused) {
             warn!(
@@ -2036,12 +1827,10 @@ impl PaneRuntime {
         }
     }
 
-    #[cfg(unix)]
     pub fn pause_handoff_reader(&self, timeout: std::time::Duration) -> std::io::Result<()> {
         self.io.begin_handoff(timeout)
     }
 
-    #[cfg(unix)]
     pub fn handoff_runtime_state(
         &self,
         pane_id: u32,
@@ -2066,7 +1855,6 @@ impl PaneRuntime {
         }
     }
 
-    #[cfg(unix)]
     pub fn handoff_history_ansi(&self) -> Option<String> {
         if self.terminal.alternate_screen_active() {
             return None;
@@ -2074,18 +1862,6 @@ impl PaneRuntime {
         self.snapshot_history().map(|history| {
             truncate_handoff_history(history, crate::server::handoff::MAX_REPLAY_BYTES_PER_PANE)
         })
-    }
-
-    pub fn apply_host_terminal_theme(&self, theme: crate::terminal_theme::TerminalTheme) {
-        self.terminal.apply_host_terminal_theme(theme);
-    }
-
-    pub fn apply_host_terminal_appearance(
-        &self,
-        appearance: Option<crate::terminal_theme::HostAppearance>,
-    ) {
-        self.io
-            .write_terminal_response(|| self.terminal.apply_host_terminal_appearance(appearance));
     }
 
     // Runtime construction threads PTY geometry, host context, launch policy, and render hooks.
@@ -2166,42 +1942,6 @@ impl PaneRuntime {
     }
 
     // Runtime construction needs to thread PTY size, environment, theme, and render hooks together.
-    #[allow(clippy::too_many_arguments)]
-    pub fn spawn_shell_command(
-        pane_id: PaneId,
-        rows: u16,
-        cols: u16,
-        cwd: std::path::PathBuf,
-        command: &str,
-        launch_env: &PaneLaunchEnv,
-        agent_detection: AgentDetection,
-        scrollback_limit_bytes: usize,
-        host_terminal_theme: crate::terminal_theme::TerminalTheme,
-        host_terminal_appearance: Option<crate::terminal_theme::HostAppearance>,
-        events: mpsc::Sender<AppEvent>,
-        render_notify: Arc<Notify>,
-        render_dirty: Arc<RenderSignal>,
-    ) -> std::io::Result<Self> {
-        let mut cmd = crate::platform::pane_custom_command_pty_builder(command);
-        cmd.cwd(crate::platform::normalize_cwd_for_launch(&cwd));
-        apply_pane_terminal_env(&mut cmd);
-        apply_pane_launch_env(&mut cmd, launch_env);
-        Self::spawn_command_builder(
-            pane_id,
-            rows,
-            cols,
-            scrollback_limit_bytes,
-            host_terminal_theme,
-            host_terminal_appearance,
-            events,
-            render_notify,
-            render_dirty,
-            cmd,
-            "failed to spawn command pane",
-            SpawnInitialState::default(),
-            agent_detection,
-        )
-    }
 
     // Runtime construction needs to thread PTY size, environment, theme, render hooks, and detection policy together.
     #[allow(clippy::too_many_arguments)]
@@ -2250,7 +1990,6 @@ impl PaneRuntime {
         )
     }
 
-    #[cfg(unix)]
     pub fn from_handoff_fd(
         import: crate::handoff_runtime::ImportedHandoffRuntime,
         detected_agent: Option<Agent>,
@@ -2286,7 +2025,7 @@ impl PaneRuntime {
         terminal
             .resize(cols, rows, cell_width_px, cell_height_px)
             .map_err(|e| std::io::Error::other(e.to_string()))?;
-        if crate::kitty_graphics::is_enabled() {
+        if false {
             terminal
                 .enable_kitty_graphics()
                 .map_err(|e| std::io::Error::other(e.to_string()))?;
@@ -2455,7 +2194,7 @@ impl PaneRuntime {
         let (response_tx, _response_rx) = mpsc::channel::<Bytes>(1);
         let mut terminal = crate::ghostty::Terminal::new(cols, rows, scrollback_limit_bytes)
             .map_err(|e| std::io::Error::other(e.to_string()))?;
-        if crate::kitty_graphics::is_enabled() {
+        if false {
             terminal
                 .enable_kitty_graphics()
                 .map_err(|e| std::io::Error::other(e.to_string()))?;
@@ -2582,10 +2321,7 @@ impl PaneRuntime {
             });
             PaneRuntimeIo::Actor(PtyIoActor::spawn(PtyIoActorConfig {
                 pane_id: pane_id.raw(),
-                #[cfg(unix)]
                 master_fd: spawned.master_fd,
-                #[cfg(windows)]
-                master: spawned.master,
                 initially_quiesced: false,
                 on_read,
                 on_reader_exit: None,
@@ -2704,8 +2440,6 @@ impl PaneRuntime {
                         elapsed_since_process_check: now.duration_since(last_process_check),
                     };
                     #[cfg(windows)]
-                    let content_seq = detection_content_seq.load(Ordering::Relaxed);
-                    #[cfg(windows)]
                     let last_content_seq = last_observation.1;
                     #[cfg(windows)]
                     let foreground_observation_due = should_observe_foreground_process_group(
@@ -2723,12 +2457,6 @@ impl PaneRuntime {
                         (_, true) => detect::foreground_process_group_id(pid),
                         _ => last_foreground_pgid,
                     };
-                    #[cfg(windows)]
-                    if pid > 0 && foreground_observation_due {
-                        let retry =
-                            last_content_seq.is_some() && last_content_seq != Some(content_seq);
-                        last_observation = (now, (!retry).then_some(content_seq));
-                    }
                     let process_group_changed =
                         foreground_group_changed(foreground_pgid, last_foreground_pgid);
                     let should_check_process = pid > 0 && {
@@ -3022,15 +2750,6 @@ impl PaneRuntime {
         self.detect_reset_notify.notify_one();
     }
 
-    pub fn reset_agent_detection(&self) {
-        self.detect_reset_notify.notify_one();
-    }
-
-    #[cfg(test)]
-    pub(crate) fn agent_detection_reset_notify_for_test(&self) -> Arc<Notify> {
-        self.detect_reset_notify.clone()
-    }
-
     pub fn set_full_lifecycle_authority_active(&self, active: bool) {
         let previous = self
             .full_lifecycle_authority_active
@@ -3079,7 +2798,6 @@ impl PaneRuntime {
         );
     }
 
-    #[cfg(unix)]
     pub fn nudge_child_redraw_after_handoff(&self) {
         let (rows, cols, cell_width_px, cell_height_px) = self.current_size.get();
         self.io
@@ -3098,29 +2816,9 @@ impl PaneRuntime {
         self.compression.wake();
     }
 
-    pub fn clear_screen(&self) -> Result<(), String> {
-        let guard = match self.content_write_lock.lock() {
-            Ok(guard) => guard,
-            Err(poisoned) => poisoned.into_inner(),
-        };
-        self.content_seq.fetch_add(1, Ordering::AcqRel);
-        let result = self.terminal.clear_screen();
-        self.content_seq.fetch_add(1, Ordering::Release);
-        drop(guard);
-        self.compression.wake();
-        mark_detection_content_changed(&self.detection_content_seq);
-        result
-    }
-
     /// Reset scroll to live view (offset = 0).
     pub fn scroll_reset(&self) {
         self.terminal.scroll_reset();
-        self.compression.wake();
-    }
-
-    /// Set scrollback offset measured from the live bottom of the terminal.
-    pub fn set_scroll_offset_from_bottom(&self, lines: usize) {
-        self.terminal.set_scroll_offset_from_bottom(lines);
         self.compression.wake();
     }
 
@@ -3128,66 +2826,12 @@ impl PaneRuntime {
         self.terminal.scroll_metrics()
     }
 
-    pub(crate) fn search_text_window(
-        &self,
-        query: &str,
-        case_sensitive: bool,
-        direction: crate::pane::TerminalSearchDirection,
-        cursor: crate::pane::TerminalTextPoint,
-        previous: Option<(
-            crate::pane::TerminalTextPoint,
-            crate::pane::TerminalTextPoint,
-        )>,
-        limit: usize,
-    ) -> crate::pane::TerminalSearchWindow {
-        let result = self.terminal.search_text_window(
-            query,
-            case_sensitive,
-            direction,
-            cursor,
-            previous,
-            limit,
-        );
-        self.compression.wake();
-        result
-    }
-
-    pub(crate) fn word_motion_target(
-        &self,
-        row: u32,
-        col: u16,
-        motion: crate::pane::TerminalWordMotion,
-    ) -> Option<crate::pane::TerminalTextPoint> {
-        let result = self.terminal.word_motion_target(row, col, motion);
-        self.compression.wake();
-        result
-    }
-
-    pub(crate) fn terminal_dimensions(&self) -> Option<(u16, u16)> {
-        self.terminal.dimensions()
-    }
-
-    pub(crate) fn paragraph_motion_target(
-        &self,
-        row: u32,
-        direction: i8,
-    ) -> Option<crate::pane::TerminalTextPoint> {
-        let result = self.terminal.paragraph_motion_target(row, direction);
-        self.compression.wake();
-        result
-    }
-
-    #[cfg(unix)]
     pub fn input_state(&self) -> Option<InputState> {
         self.terminal.input_state()
     }
 
     pub fn bracketed_paste_enabled(&self) -> bool {
         self.terminal.bracketed_paste_enabled()
-    }
-
-    pub fn focus_reporting_enabled(&self) -> bool {
-        self.terminal.focus_reporting_enabled()
     }
 
     pub fn mouse_reporting_enabled(&self) -> bool {
@@ -3200,10 +2844,6 @@ impl PaneRuntime {
 
     pub fn plain_page_keys_use_host_scrollback(&self) -> Option<bool> {
         self.terminal.plain_page_keys_use_host_scrollback()
-    }
-
-    pub fn alternate_screen_active(&self) -> bool {
-        self.terminal.alternate_screen_active()
     }
 
     pub fn cursor_state(&self, area: Rect, show_cursor: bool) -> Option<TerminalCursorState> {
@@ -3240,14 +2880,6 @@ impl PaneRuntime {
 
     pub fn terminal_title(&self) -> Option<String> {
         self.terminal.terminal_title()
-    }
-
-    pub fn agent_osc_title(&self) -> String {
-        self.terminal.agent_osc_title()
-    }
-
-    pub fn agent_osc_progress(&self) -> String {
-        self.terminal.agent_osc_progress()
     }
 
     pub(crate) fn recent_text_snapshot(&self, lines: usize) -> TerminalReadSnapshot {
@@ -3298,68 +2930,8 @@ impl PaneRuntime {
         self.terminal.render(frame, area, show_cursor);
     }
 
-    pub(crate) fn collect_dirty_patch_snapshot(
-        &self,
-        area_width: u16,
-        area_height: u16,
-    ) -> Option<TerminalDirtyPatchSnapshot> {
-        // PTY/resize writers announce changes before locking the terminal core.
-        // Exclude them until rows and metadata have been paired with their revision.
-        let _content_guard = self
-            .content_write_lock
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner);
-        let revision = self.content_seq();
-        if !revision.is_multiple_of(2) {
-            return None;
-        }
-        let patch = self.terminal.collect_dirty_patch(area_width, area_height);
-        if matches!(patch, TerminalDirtyPatchOutcome::Fallback) {
-            return None;
-        }
-        let snapshot = TerminalDirtyPatchSnapshot {
-            patch,
-            content_revision: revision,
-            scroll_metrics: self.scroll_metrics(),
-            mouse_reporting: self.mouse_reporting_enabled(),
-            sgr_pixel_mouse: self.sgr_pixel_mouse_enabled(),
-            alternate_screen_active: self.alternate_screen_active(),
-            graphics_may_have_placements: crate::kitty_graphics::is_enabled()
-                && self.kitty_graphics_may_have_placements(),
-        };
-        (self.content_seq() == revision).then_some(snapshot)
-    }
-
     pub fn visible_hyperlinks(&self, area: Rect) -> Vec<((u16, u16), String, String)> {
         self.terminal.visible_hyperlinks(area)
-    }
-
-    pub(crate) fn link_regions_at(
-        &self,
-        col: u16,
-        row: u16,
-        resolve: fn(&str, usize) -> Option<std::ops::Range<usize>>,
-    ) -> Vec<crate::api::schema::PaneLinkRegion> {
-        self.terminal.link_regions_at(col, row, resolve)
-    }
-
-    pub(crate) fn link_target_at(&self, col: u16, row: u16) -> Option<crate::ghostty::LinkTarget> {
-        self.terminal.link_target_at(col, row)
-    }
-
-    pub(crate) fn kitty_graphics_may_have_placements(&self) -> bool {
-        self.terminal.kitty_graphics_may_have_placements()
-    }
-
-    pub fn kitty_image_placements_with_data_filter<F>(
-        &self,
-        needs_data: F,
-    ) -> Vec<crate::ghostty::KittyImagePlacement>
-    where
-        F: FnMut(crate::ghostty::KittyImageDescriptor) -> bool,
-    {
-        self.terminal
-            .kitty_image_placements_with_data_filter(needs_data)
     }
 
     pub fn keyboard_protocol(&self) -> crate::input::KeyboardProtocol {
@@ -3406,20 +2978,6 @@ impl PaneRuntime {
             text
         };
         Bytes::from(payload)
-    }
-
-    pub fn try_send_focus_event(&self, event: crate::ghostty::FocusEvent) -> bool {
-        if !self.focus_reporting_enabled() {
-            return false;
-        }
-
-        let Ok(bytes) = crate::ghostty::encode_focus(event) else {
-            return false;
-        };
-        if let Err(err) = self.try_send_bytes(Bytes::from(bytes)) {
-            warn!(err = %err, ?event, "failed to forward pane focus event");
-        }
-        true
     }
 
     pub fn wheel_routing(&self) -> Option<WheelRouting> {
@@ -3538,7 +3096,6 @@ impl PaneRuntime {
     }
 
     pub fn follow_cwd(&self) -> Option<std::path::PathBuf> {
-        #[cfg(unix)]
         {
             let leader_cwd = self
                 .io
@@ -3555,7 +3112,6 @@ impl PaneRuntime {
 
     /// Get the current working directory of the process group controlling the pane PTY.
     pub fn foreground_cwd(&self) -> Option<std::path::PathBuf> {
-        #[cfg(unix)]
         {
             let pid = self.child_pid.load(Ordering::Acquire);
             let shell_cwd = absolute_process_cwd(pid);
@@ -3596,60 +3152,6 @@ impl PaneRuntime {
 
     pub(crate) fn test_with_screen_bytes(cols: u16, rows: u16, bytes: &[u8]) -> Self {
         Self::test_with_scrollback_bytes(cols, rows, 0, bytes)
-    }
-
-    pub(crate) fn test_contend_during_dirty_collection(
-        &self,
-        bytes: Vec<u8>,
-    ) -> (std::sync::mpsc::Sender<()>, std::thread::JoinHandle<bool>) {
-        let terminal = self.terminal.clone();
-        let sequence = self.content_seq.clone();
-        let write_lock = self.content_write_lock.clone();
-        let pane_id = self.pane_id;
-        let (start_tx, start_rx) = std::sync::mpsc::channel();
-        let (ready_tx, ready_rx) = std::sync::mpsc::channel();
-        let (release_tx, release_rx) = std::sync::mpsc::channel();
-        self.terminal
-            .ghostty
-            .core
-            .lock()
-            .unwrap()
-            .dirty_collection_hook = Some(Box::new(move || {
-            start_tx.send(()).unwrap();
-            ready_rx
-                .recv_timeout(std::time::Duration::from_secs(5))
-                .unwrap();
-        }));
-        let writer = std::thread::spawn(move || {
-            start_rx
-                .recv_timeout(std::time::Duration::from_secs(5))
-                .unwrap();
-            let guard = match write_lock.try_lock() {
-                Ok(guard) => Some(guard),
-                Err(std::sync::TryLockError::WouldBlock) => None,
-                Err(error) => panic!("poisoned content lock: {error}"),
-            };
-            let announced = guard.is_some();
-            if announced {
-                sequence.fetch_add(1, Ordering::AcqRel);
-                assert!(matches!(
-                    terminal.ghostty.core.try_lock(),
-                    Err(std::sync::TryLockError::WouldBlock)
-                ));
-            }
-            ready_tx.send(()).unwrap();
-            let _ = release_rx.recv();
-            let _guard = guard.unwrap_or_else(|| {
-                let guard = write_lock.lock().unwrap();
-                sequence.fetch_add(1, Ordering::AcqRel);
-                guard
-            });
-            let (tx, _rx) = mpsc::channel(1);
-            let _ = terminal.process_pty_bytes(pane_id, 0, &bytes, &tx);
-            sequence.fetch_add(1, Ordering::Release);
-            announced
-        });
-        (release_tx, writer)
     }
 
     pub(crate) fn test_process_pty_bytes(&self, bytes: &[u8]) {
@@ -3725,224 +3227,6 @@ impl PaneRuntime {
 mod tests {
     use super::*;
 
-    #[tokio::test]
-    async fn clear_pane_preserves_wrapped_input_and_unfinished_vt_sequence() {
-        let (runtime, mut rx) = PaneRuntime::test_with_channel_and_scrollback_bytes(
-            10,
-            5,
-            100_000,
-            b"old\r\nold\r\nold\r\nold\r\nold\r\n\x1b[32m$ abcdefghijklmnop\x1b[1A\x1b[4G\x1b[",
-            4,
-        );
-        let before = runtime.content_seq();
-        runtime.scroll_up(1);
-        runtime.clear_screen().unwrap();
-        let snapshot = runtime.collect_dirty_patch_snapshot(10, 5).unwrap();
-        assert!(snapshot.content_revision > before);
-        assert!(!matches!(snapshot.patch, TerminalDirtyPatchOutcome::Clean));
-        let metrics = runtime.scroll_metrics().unwrap();
-        assert_eq!(metrics.max_offset_from_bottom, 0);
-        assert_eq!(metrics.offset_from_bottom, 0);
-        let text = runtime.recent_unwrapped_text_snapshot(100).text;
-        assert!(text.contains("$ abcdefghijklmnop"), "{text:?}");
-        assert!(!text.contains("old"), "{text:?}");
-        runtime.test_process_pty_bytes(b"5 q");
-        assert!(!runtime.visible_text().contains("5 q"));
-        assert!(rx.try_recv().is_err(), "clear must not send child input");
-    }
-
-    #[tokio::test]
-    async fn clear_pane_preserves_alternate_screen_and_primary_history() {
-        let runtime = PaneRuntime::test_with_scrollback_bytes(
-            20,
-            4,
-            100_000,
-            b"one\r\ntwo\r\nthree\r\nfour\r\nfive\x1b[?1049halt app",
-        );
-        let before = runtime.visible_text();
-        runtime.clear_screen().unwrap();
-        assert_eq!(runtime.visible_text(), before);
-        runtime.test_process_pty_bytes(b"\x1b[?1049l");
-        assert!(runtime
-            .recent_unwrapped_text_snapshot(100)
-            .text
-            .contains("one"));
-        runtime.clear_screen().unwrap();
-        assert!(!runtime
-            .recent_unwrapped_text_snapshot(100)
-            .text
-            .contains("one"));
-        assert!(runtime.visible_text().contains("five"));
-    }
-
-    #[tokio::test]
-    async fn dirty_patch_snapshot_keeps_clean_metadata_and_terminal_fallback() {
-        let (runtime, _rx) = PaneRuntime::test_with_channel(20, 4);
-        runtime
-            .collect_dirty_patch_snapshot(20, 4)
-            .expect("initial snapshot");
-        runtime.test_process_pty_bytes(b"\x1b[?1003h\x1b[?1016h");
-        let snapshot = runtime
-            .collect_dirty_patch_snapshot(20, 4)
-            .expect("mode snapshot");
-        assert!(matches!(snapshot.patch, TerminalDirtyPatchOutcome::Clean));
-        assert_eq!(snapshot.content_revision, runtime.content_seq());
-        assert!(snapshot.content_revision.is_multiple_of(2));
-        assert!(snapshot.mouse_reporting);
-        assert!(snapshot.sgr_pixel_mouse);
-        assert!(!snapshot.alternate_screen_active);
-
-        runtime.test_process_pty_bytes(b"\x1b]8;;https://example.com\x1b\\link\x1b]8;;\x1b\\");
-        assert!(runtime.collect_dirty_patch_snapshot(20, 4).is_none());
-        assert!(runtime.content_write_lock.try_lock().is_ok());
-    }
-
-    #[tokio::test]
-    async fn dirty_patch_snapshot_tracks_serialized_scroll_and_resize() {
-        let runtime = PaneRuntime::test_with_scrollback_bytes(
-            20,
-            4,
-            100_000,
-            b"one\r\ntwo\r\nthree\r\nfour\r\nfive\r\nsix",
-        );
-        runtime
-            .collect_dirty_patch_snapshot(20, 4)
-            .expect("live snapshot");
-        runtime.scroll_up(1);
-        let scrolled = runtime
-            .collect_dirty_patch_snapshot(20, 4)
-            .expect("scrolled snapshot");
-        assert_eq!(
-            scrolled.scroll_metrics.expect("metrics").offset_from_bottom,
-            1
-        );
-        runtime.scroll_reset();
-        runtime.resize(5, 24, 0, 0);
-        let resized = runtime
-            .collect_dirty_patch_snapshot(24, 5)
-            .expect("resized snapshot");
-        let metrics = resized.scroll_metrics.expect("resized metrics");
-        assert_eq!(metrics.offset_from_bottom, 0);
-        assert_eq!(metrics.viewport_rows, 5);
-        assert!(resized.content_revision.is_multiple_of(2));
-        let TerminalDirtyPatchOutcome::Patch(patch) = resized.patch else {
-            panic!("resize must dirty the viewport");
-        };
-        assert_eq!(patch.rows.len(), 5);
-        assert!(patch.rows.iter().all(|(_, cells)| cells.len() == 24));
-    }
-
-    #[test]
-    fn pane_launch_env_removes_outer_codex_thread_id() {
-        let mut cmd = CommandBuilder::new("shell");
-        cmd.env("CODEX_THREAD_ID", "outer-session");
-
-        apply_pane_launch_env(&mut cmd, &PaneLaunchEnv::default());
-
-        assert!(cmd.get_env("CODEX_THREAD_ID").is_none());
-    }
-
-    #[test]
-    fn pane_launch_env_removes_outer_ompcode_marker() {
-        let mut cmd = CommandBuilder::new("shell");
-        cmd.env("OMPCODE", "1");
-
-        apply_pane_launch_env(&mut cmd, &PaneLaunchEnv::default());
-
-        assert!(cmd.get_env("OMPCODE").is_none());
-    }
-
-    #[test]
-    fn pane_terminal_identity_removes_outer_windows_terminal_session() {
-        let mut cmd = CommandBuilder::new("shell");
-        cmd.env("WT_SESSION", "outer-session");
-
-        apply_pane_terminal_env(&mut cmd);
-
-        assert!(cmd.get_env("WT_SESSION").is_none());
-    }
-
-    #[tokio::test]
-    async fn cwd_returns_accepted_report_without_rechecking_filesystem() {
-        let stamp = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .expect("clock should be after unix epoch")
-            .as_nanos();
-        let cwd = std::env::temp_dir().join(format!(
-            "herdr-reported-cwd-cache-{}-{stamp}",
-            std::process::id()
-        ));
-        std::fs::create_dir(&cwd).expect("create reported cwd");
-
-        let (runtime, _rx) = PaneRuntime::test_with_channel(80, 24);
-        let (events, _event_rx) = mpsc::channel(1);
-        publish_reported_cwd(runtime.pane_id, cwd.clone(), &runtime.reported_cwd, &events);
-        assert_eq!(
-            runtime.reported_cwd.lock().unwrap().as_ref(),
-            Some(&cwd),
-            "test setup must pass cache admission"
-        );
-
-        std::fs::remove_dir(&cwd).expect("remove reported cwd after admission");
-
-        assert_eq!(runtime.cwd(), Some(cwd));
-    }
-
-    #[cfg(unix)]
-    #[test]
-    fn process_cwd_does_not_require_traversing_the_directory_path() {
-        use std::os::unix::fs::PermissionsExt;
-
-        let stamp = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .expect("clock should be after unix epoch")
-            .as_nanos();
-        let base = std::env::temp_dir().join(format!(
-            "herdr-process-cwd-no-stat-{}-{stamp}",
-            std::process::id()
-        ));
-        let private = base.join("private");
-        let cwd = private.join("cwd");
-        std::fs::create_dir_all(&cwd).expect("create process cwd");
-
-        let mut child = std::process::Command::new("/bin/sh")
-            .args(["-c", "sleep 30"])
-            .current_dir(&cwd)
-            .spawn()
-            .expect("spawn process in cwd");
-        let expected_cwd = crate::platform::process_cwd(child.id())
-            .expect("resolve process cwd before restricting traversal");
-        std::fs::set_permissions(&private, std::fs::Permissions::from_mode(0o000))
-            .expect("make cwd path untraversable");
-
-        let path_is_traversable = cwd.is_dir();
-        let observed = (!path_is_traversable)
-            .then(|| absolute_process_cwd(child.id()))
-            .flatten();
-
-        std::fs::set_permissions(&private, std::fs::Permissions::from_mode(0o755))
-            .expect("restore cwd path permissions");
-        let _ = child.kill();
-        let _ = child.wait();
-        std::fs::remove_dir_all(&base).expect("remove process cwd");
-
-        if path_is_traversable {
-            eprintln!("skipping untraversable cwd assertion for privileged test process");
-            return;
-        }
-        assert_eq!(observed, Some(expected_cwd));
-    }
-
-    #[cfg(unix)]
-    #[tokio::test]
-    async fn follow_cwd_falls_back_to_reported_pane_cwd_without_foreground_group() {
-        let (runtime, _rx) = PaneRuntime::test_with_channel(80, 24);
-        let cwd = std::env::temp_dir();
-        *runtime.reported_cwd.lock().unwrap() = Some(cwd.clone());
-
-        assert_eq!(runtime.follow_cwd(), Some(cwd));
-    }
-
     #[test]
     fn shutdown_liveness_treats_reaped_direct_child_as_gone() {
         assert!(!process_alive_for_shutdown(42, 42, true, |_| true));
@@ -3954,54 +3238,6 @@ mod tests {
     }
 
     #[test]
-    fn shutdown_liveness_keeps_other_session_processes_alive() {
-        assert!(process_alive_for_shutdown(43, 42, true, |_| true));
-    }
-
-    #[test]
-    fn shutdown_liveness_treats_missing_process_as_gone() {
-        assert!(!process_alive_for_shutdown(43, 42, false, |_| false));
-    }
-
-    #[cfg(unix)]
-    fn capture_shell_output(command: &str, extra_env: &[(&str, &str)]) -> String {
-        let pair = native_pty_system()
-            .openpty(PtySize {
-                rows: 24,
-                cols: 80,
-                pixel_width: 0,
-                pixel_height: 0,
-            })
-            .unwrap();
-        let output_path = std::env::temp_dir().join(format!(
-            "herdr-pane-term-test-{}-{}.txt",
-            std::process::id(),
-            std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .unwrap()
-                .as_nanos()
-        ));
-        let mut cmd = CommandBuilder::new("/bin/sh");
-        cmd.arg("-c");
-        cmd.arg(format!("{command} > '{}'", output_path.display()));
-        cmd.cwd(std::env::current_dir().unwrap());
-        cmd.env("TERM", "xterm-ghostty");
-        cmd.env("COLORTERM", "falsecolor");
-        apply_pane_terminal_env(&mut cmd);
-        for (key, value) in extra_env {
-            cmd.env(key, value);
-        }
-
-        let mut child = pair.slave.spawn_command(cmd).unwrap();
-        let status = child.wait().unwrap();
-        assert!(status.success(), "shell command failed: {status:?}");
-
-        let output = std::fs::read_to_string(&output_path).unwrap();
-        let _ = std::fs::remove_file(output_path);
-        output
-    }
-
-    #[test]
     fn pane_shell_prefers_configured_shell() {
         assert_eq!(
             pane_shell_from("/usr/bin/nu", Some("/bin/bash".to_string())),
@@ -4009,21 +3245,11 @@ mod tests {
         );
     }
 
-    #[cfg(not(windows))]
     #[test]
     fn pane_shell_falls_back_to_shell_env() {
         assert_eq!(
             pane_shell_from("", Some("/bin/bash".to_string())),
             "/bin/bash"
-        );
-    }
-
-    #[cfg(windows)]
-    #[test]
-    fn pane_shell_ignores_shell_env_on_windows() {
-        assert_eq!(
-            pane_shell_from("", Some("c:\\windows\\system32\\cmd.exe".to_string())),
-            default_pane_shell()
         );
     }
 
@@ -4034,440 +3260,6 @@ mod tests {
             default_pane_shell()
         );
         assert_eq!(pane_shell_from("", None), default_pane_shell());
-    }
-
-    const TEST_EXECUTABLE_IMAGE: u16 = 0x0002;
-    const TEST_DLL: u16 = 0x2000;
-    const TEST_MACHINE_AMD64: u16 = 0x8664;
-
-    /// Structurally valid PE32+ image, with fields chosen so tests can make it
-    /// malformed one way at a time.
-    fn windows_test_pe(machine: u16, characteristics: u16, number_of_sections: u16) -> Vec<u8> {
-        const PE_OFFSET: u32 = 0x80;
-        const COFF_HEADER_LEN: usize = 20;
-        const OPTIONAL_HEADER_LEN: u16 = 0x70;
-        const SECTION_HEADER_LEN: usize = 40;
-
-        let pe = PE_OFFSET as usize;
-        let mut bytes = vec![
-            0u8;
-            pe + 4
-                + COFF_HEADER_LEN
-                + OPTIONAL_HEADER_LEN as usize
-                + number_of_sections as usize * SECTION_HEADER_LEN
-        ];
-        bytes[..2].copy_from_slice(b"MZ");
-        bytes[0x3c..0x40].copy_from_slice(&PE_OFFSET.to_le_bytes());
-        bytes[pe..pe + 4].copy_from_slice(b"PE\0\0");
-        bytes[pe + 4..pe + 6].copy_from_slice(&machine.to_le_bytes());
-        bytes[pe + 4 + 2..pe + 4 + 4].copy_from_slice(&number_of_sections.to_le_bytes());
-        bytes[pe + 4 + 16..pe + 4 + 18].copy_from_slice(&OPTIONAL_HEADER_LEN.to_le_bytes());
-        bytes[pe + 4 + 18..pe + 4 + 20].copy_from_slice(&characteristics.to_le_bytes());
-        bytes[pe + 24..pe + 26].copy_from_slice(&0x020bu16.to_le_bytes());
-        bytes
-    }
-
-    #[test]
-    fn windows_default_pane_shell_prefers_pwsh_on_path() {
-        let dir = std::env::temp_dir().join(format!(
-            "herdr-windows-default-shell-pwsh-{}",
-            std::process::id()
-        ));
-        std::fs::create_dir_all(&dir).unwrap();
-        let pwsh = dir.join("pwsh.exe");
-        let image = windows_test_pe(TEST_MACHINE_AMD64, TEST_EXECUTABLE_IMAGE, 1);
-        std::fs::write(&pwsh, image).unwrap();
-        let path = std::env::join_paths([&dir]).unwrap();
-
-        let resolved = default_windows_pane_shell(Some(path));
-        let expected = pwsh.into_os_string().into_string().unwrap();
-
-        let _ = std::fs::remove_dir_all(dir);
-        assert_eq!(resolved, expected);
-    }
-
-    #[test]
-    fn windows_default_pane_shell_falls_back_to_inbox_powershell() {
-        let dir = std::env::temp_dir().join(format!(
-            "herdr-windows-default-shell-fallback-{}",
-            std::process::id()
-        ));
-        std::fs::create_dir_all(&dir).unwrap();
-        // A file that is not a launchable executable must not be selected.
-        std::fs::write(dir.join("pwsh.exe"), b"not a PE image").unwrap();
-        let path = std::env::join_paths([&dir]).unwrap();
-
-        let invalid = default_windows_pane_shell(Some(path));
-
-        let _ = std::fs::remove_dir_all(dir);
-        assert_eq!(invalid, "powershell.exe");
-        assert_eq!(default_windows_pane_shell(None), "powershell.exe");
-    }
-
-    #[test]
-    fn windows_default_pane_shell_rejects_non_executable_pe_images() {
-        let dir = std::env::temp_dir().join(format!(
-            "herdr-windows-default-shell-invalid-{}",
-            std::process::id()
-        ));
-        std::fs::create_dir_all(&dir).unwrap();
-        let pwsh = dir.join("pwsh.exe");
-        let path = || std::env::join_paths([&dir]).unwrap();
-
-        let truncated_header = {
-            let mut bytes = b"MZ".to_vec();
-            bytes.resize(0x40, 0);
-            bytes[0x3c..0x40].copy_from_slice(&0x50u32.to_le_bytes());
-            bytes
-        };
-        // One declared section, but the file ends before its 40-byte header.
-        let truncated_section_table = {
-            let mut bytes = windows_test_pe(TEST_MACHINE_AMD64, TEST_EXECUTABLE_IMAGE, 1);
-            bytes.truncate(bytes.len() - 1);
-            bytes
-        };
-        let cases: [(&str, Vec<u8>); 7] = [
-            ("empty", Vec::new()),
-            ("dos signature only", b"MZ".to_vec()),
-            ("truncated pe header", truncated_header),
-            ("truncated section table", truncated_section_table),
-            (
-                "dll",
-                windows_test_pe(TEST_MACHINE_AMD64, TEST_EXECUTABLE_IMAGE | TEST_DLL, 1),
-            ),
-            (
-                "no executable bit",
-                windows_test_pe(TEST_MACHINE_AMD64, 0, 1),
-            ),
-            (
-                "foreign machine",
-                windows_test_pe(0x0200, TEST_EXECUTABLE_IMAGE, 1),
-            ),
-        ];
-
-        for (label, bytes) in cases {
-            std::fs::write(&pwsh, &bytes).unwrap();
-            assert_eq!(
-                default_windows_pane_shell(Some(path())),
-                "powershell.exe",
-                "case {label:?}"
-            );
-        }
-
-        std::fs::write(
-            &pwsh,
-            windows_test_pe(TEST_MACHINE_AMD64, TEST_EXECUTABLE_IMAGE, 0),
-        )
-        .unwrap();
-        assert_eq!(
-            default_windows_pane_shell(Some(path())),
-            "powershell.exe",
-            "case zero sections"
-        );
-
-        let _ = std::fs::remove_dir_all(dir);
-    }
-
-    #[test]
-    fn windows_executable_machine_compatibility_tracks_native_host() {
-        const I386: u16 = 0x014c;
-        const AMD64: u16 = 0x8664;
-        const ARM64: u16 = 0xaa64;
-
-        assert!(windows_executable_machine_is_compatible(I386, AMD64));
-        assert!(windows_executable_machine_is_compatible(AMD64, AMD64));
-        assert!(!windows_executable_machine_is_compatible(ARM64, AMD64));
-        assert!(windows_executable_machine_is_compatible(I386, ARM64));
-        assert!(windows_executable_machine_is_compatible(AMD64, ARM64));
-        assert!(windows_executable_machine_is_compatible(ARM64, ARM64));
-        assert!(windows_executable_machine_is_compatible(I386, I386));
-        assert!(!windows_executable_machine_is_compatible(AMD64, I386));
-        assert!(!windows_executable_machine_is_compatible(0x0200, AMD64));
-    }
-
-    #[test]
-    fn windows_executable_file_rejects_arm64_image_on_amd64_host() {
-        let dir = std::env::temp_dir().join(format!(
-            "herdr-windows-default-shell-arm64-{}",
-            std::process::id()
-        ));
-        std::fs::create_dir_all(&dir).unwrap();
-        let pwsh = dir.join("pwsh.exe");
-        std::fs::write(&pwsh, windows_test_pe(0xaa64, TEST_EXECUTABLE_IMAGE, 1)).unwrap();
-
-        let on_amd64 = is_windows_executable_file_for_host(&pwsh, 0x8664);
-        let on_arm64 = is_windows_executable_file_for_host(&pwsh, 0xaa64);
-        let on_x86 = is_windows_executable_file_for_host(&pwsh, 0x014c);
-
-        let _ = std::fs::remove_dir_all(dir);
-        assert!(!on_amd64, "x64 Windows cannot launch a pure ARM64 image");
-        assert!(on_arm64);
-        assert!(!on_x86);
-    }
-
-    #[test]
-    fn windows_default_pane_shell_skips_invalid_pwsh_candidates() {
-        let base = std::env::temp_dir().join(format!(
-            "herdr-windows-default-shell-skip-{}",
-            std::process::id()
-        ));
-        let invalid_dir = base.join("invalid");
-        let valid_dir = base.join("valid");
-        std::fs::create_dir_all(&invalid_dir).unwrap();
-        std::fs::create_dir_all(&valid_dir).unwrap();
-        std::fs::write(invalid_dir.join("pwsh.exe"), b"MZ").unwrap();
-        let pwsh = valid_dir.join("pwsh.exe");
-        std::fs::write(
-            &pwsh,
-            windows_test_pe(TEST_MACHINE_AMD64, TEST_EXECUTABLE_IMAGE, 1),
-        )
-        .unwrap();
-        let path = std::env::join_paths([&invalid_dir, &valid_dir]).unwrap();
-
-        let resolved = default_windows_pane_shell(Some(path));
-        let expected = pwsh.into_os_string().into_string().unwrap();
-
-        let _ = std::fs::remove_dir_all(base);
-        assert_eq!(resolved, expected);
-    }
-
-    #[test]
-    fn shell_mode_auto_uses_login_shell_only_on_macos() {
-        assert!(shell_mode_uses_login_shell(
-            crate::config::ShellModeConfig::Auto,
-            ShellLaunchTarget::Macos
-        ));
-        assert!(!shell_mode_uses_login_shell(
-            crate::config::ShellModeConfig::Auto,
-            ShellLaunchTarget::OtherUnix
-        ));
-        assert!(!shell_mode_uses_login_shell(
-            crate::config::ShellModeConfig::Auto,
-            ShellLaunchTarget::Windows
-        ));
-        assert!(shell_mode_uses_login_shell(
-            crate::config::ShellModeConfig::Login,
-            ShellLaunchTarget::OtherUnix
-        ));
-        assert!(!shell_mode_uses_login_shell(
-            crate::config::ShellModeConfig::NonLogin,
-            ShellLaunchTarget::Macos
-        ));
-    }
-
-    #[cfg(unix)]
-    #[test]
-    fn login_shell_builder_uses_default_prog_with_resolved_shell_env() {
-        let cmd = pane_shell_command_builder_for_target(
-            PaneShellConfig::new("/bin/sh", crate::config::ShellModeConfig::Login),
-            ShellLaunchTarget::OtherUnix,
-        )
-        .unwrap();
-        assert!(cmd.is_default_prog());
-        assert_eq!(
-            cmd.get_env("SHELL").and_then(std::ffi::OsStr::to_str),
-            Some("/bin/sh")
-        );
-    }
-
-    #[cfg(unix)]
-    #[test]
-    fn auto_shell_builder_uses_login_shell_on_macos_target() {
-        let cmd = pane_shell_command_builder_for_target(
-            PaneShellConfig::new("/bin/sh", crate::config::ShellModeConfig::Auto),
-            ShellLaunchTarget::Macos,
-        )
-        .unwrap();
-        assert!(cmd.is_default_prog());
-        assert_eq!(
-            cmd.get_env("SHELL").and_then(std::ffi::OsStr::to_str),
-            Some("/bin/sh")
-        );
-    }
-
-    #[test]
-    fn windows_login_shell_builder_launches_configured_shell_with_login_flag() {
-        let cmd = pane_shell_command_builder_for_target(
-            PaneShellConfig::new("bash.exe", crate::config::ShellModeConfig::Login),
-            ShellLaunchTarget::Windows,
-        )
-        .unwrap();
-
-        assert!(
-            !cmd.is_default_prog(),
-            "Windows login mode must not fall back to the default program (cmd.exe)"
-        );
-        assert_eq!(
-            cmd.get_argv(),
-            &[
-                std::ffi::OsString::from("bash.exe"),
-                std::ffi::OsString::from("-l"),
-            ]
-        );
-    }
-
-    #[test]
-    fn windows_login_shell_builder_launches_native_shells_without_flag() {
-        for shell in ["cmd.exe", "C:\\Windows\\System32\\cmd.exe"] {
-            let cmd = pane_shell_command_builder_for_target(
-                PaneShellConfig::new(shell, crate::config::ShellModeConfig::Login),
-                ShellLaunchTarget::Windows,
-            )
-            .unwrap();
-
-            assert!(!cmd.is_default_prog(), "shell {shell:?}");
-            assert_eq!(
-                cmd.get_argv(),
-                &[std::ffi::OsString::from(shell)],
-                "shell {shell:?}"
-            );
-        }
-    }
-
-    #[test]
-    fn windows_login_powershell_builder_injects_prompt_cwd_shell_integration() {
-        for shell in [
-            "powershell.exe",
-            "pwsh.exe",
-            "C:\\Program Files\\PowerShell\\7\\pwsh.exe",
-        ] {
-            let cmd = pane_shell_command_builder_for_target(
-                PaneShellConfig::new(shell, crate::config::ShellModeConfig::Login),
-                ShellLaunchTarget::Windows,
-            )
-            .unwrap();
-
-            assert_eq!(
-                cmd.get_argv(),
-                &[
-                    std::ffi::OsString::from(shell),
-                    std::ffi::OsString::from("-NoExit"),
-                    std::ffi::OsString::from("-Command"),
-                    std::ffi::OsString::from(WINDOWS_POWERSHELL_SHELL_INTEGRATION_COMMAND),
-                ],
-                "shell {shell:?}"
-            );
-        }
-    }
-
-    #[test]
-    fn windows_login_shell_args_maps_posix_shells_to_login_flag() {
-        for shell in [
-            "sh",
-            "sh.exe",
-            "bash",
-            "bash.exe",
-            "BASH.EXE",
-            "zsh",
-            "zsh.exe",
-            "ksh",
-            "dash",
-            "ash",
-            "mksh",
-            "fish",
-            "fish.exe",
-            "csh",
-            "csh.exe",
-            "tcsh",
-            "tcsh.exe",
-            "C:\\Program Files\\Git\\bin\\bash.exe",
-        ] {
-            assert_eq!(
-                windows_login_shell_args(shell),
-                &["-l"],
-                "shell {shell:?} should get the login flag"
-            );
-        }
-    }
-
-    #[test]
-    fn windows_login_shell_args_omits_flag_for_shells_without_login_concept() {
-        for shell in [
-            "cmd",
-            "cmd.exe",
-            "powershell",
-            "powershell.exe",
-            "pwsh",
-            "pwsh.exe",
-            "nu",
-            "nu.exe",
-            "C:\\Windows\\System32\\cmd.exe",
-        ] {
-            assert_eq!(
-                windows_login_shell_args(shell),
-                &[] as &[&str],
-                "shell {shell:?} must not get a login flag"
-            );
-        }
-    }
-
-    #[test]
-    fn auto_shell_builder_keeps_direct_shell_on_non_macos_target() {
-        let cmd = pane_shell_command_builder_for_target(
-            PaneShellConfig::new("/bin/sh", crate::config::ShellModeConfig::Auto),
-            ShellLaunchTarget::OtherUnix,
-        )
-        .unwrap();
-        assert!(!cmd.is_default_prog());
-        assert_eq!(cmd.get_argv(), &[std::ffi::OsString::from("/bin/sh")]);
-    }
-
-    #[test]
-    fn windows_powershell_builder_injects_prompt_cwd_shell_integration() {
-        for shell in [
-            "powershell.exe",
-            "pwsh.exe",
-            "C:\\Program Files\\PowerShell\\7\\pwsh.exe",
-        ] {
-            let cmd = pane_shell_command_builder_for_target(
-                PaneShellConfig::new(shell, crate::config::ShellModeConfig::NonLogin),
-                ShellLaunchTarget::Windows,
-            )
-            .unwrap();
-
-            assert_eq!(
-                cmd.get_argv(),
-                &[
-                    std::ffi::OsString::from(shell),
-                    std::ffi::OsString::from("-NoExit"),
-                    std::ffi::OsString::from("-Command"),
-                    std::ffi::OsString::from(WINDOWS_POWERSHELL_SHELL_INTEGRATION_COMMAND),
-                ]
-            );
-        }
-
-        let script = WINDOWS_POWERSHELL_SHELL_INTEGRATION_COMMAND;
-        let cwd_sync = script
-            .find("[Environment]::CurrentDirectory = $loc.ProviderPath")
-            .expect("wrapper must synchronize the Win32 process cwd");
-        let osc_report = script.find("]9;9;").expect("wrapper must emit OSC 9;9");
-        assert!(cwd_sync < osc_report, "cwd sync must precede OSC report");
-        assert!(
-            script.contains("$global:__HerdrOriginalPrompt = $function:prompt"),
-            "must wrap the profile-defined prompt: {script}"
-        );
-        assert!(
-            script.contains("$null -eq $global:__HerdrOriginalPrompt"),
-            "wrap must be idempotent for nested sessions: {script}"
-        );
-        assert!(
-            script.contains("'FileSystem'"),
-            "must not report non-filesystem provider paths: {script}"
-        );
-        assert!(
-            !script.contains('"'),
-            "double quotes corrupt the powershell.exe command-line round-trip: {script}"
-        );
-        let invoke_original = script
-            .find("@(& $global:__HerdrOriginalPrompt)")
-            .expect("wrapper must invoke the original prompt");
-        let cwd_lookup = script
-            .find("$loc =")
-            .expect("wrapper must look up the current location");
-        assert!(
-            invoke_original < cwd_lookup,
-            "original prompt must run first or $? is reset before a status-aware prompt reads it: {script}"
-        );
     }
 
     #[test]
@@ -4482,51 +3274,10 @@ mod tests {
     }
 
     #[test]
-    fn unix_powershell_builder_launches_plain_shell() {
-        let cmd = pane_shell_command_builder_for_target(
-            PaneShellConfig::new("pwsh", crate::config::ShellModeConfig::NonLogin),
-            ShellLaunchTarget::OtherUnix,
-        )
-        .unwrap();
-
-        assert_eq!(cmd.get_argv(), &[std::ffi::OsString::from("pwsh")]);
-    }
-
-    #[test]
-    fn windows_powershell_pane_shell_predicate_requires_windows_and_powershell() {
-        for mode in [
-            crate::config::ShellModeConfig::NonLogin,
-            crate::config::ShellModeConfig::Login,
-        ] {
-            let pwsh = PaneShellConfig::new("pwsh.exe", mode);
-            assert!(
-                uses_windows_powershell_pane_shell_for_target(pwsh, ShellLaunchTarget::Windows),
-                "mode {mode:?}"
-            );
-            assert!(!uses_windows_powershell_pane_shell_for_target(
-                pwsh,
-                ShellLaunchTarget::OtherUnix
-            ));
-            assert!(!uses_windows_powershell_pane_shell_for_target(
-                pwsh,
-                ShellLaunchTarget::Macos
-            ));
-        }
-        assert!(!uses_windows_powershell_pane_shell_for_target(
-            PaneShellConfig::new("cmd.exe", crate::config::ShellModeConfig::NonLogin),
-            ShellLaunchTarget::Windows
-        ));
-        assert!(!uses_windows_powershell_pane_shell_for_target(
-            PaneShellConfig::new("cmd.exe", crate::config::ShellModeConfig::Login),
-            ShellLaunchTarget::Windows
-        ));
-    }
-
-    #[test]
     fn login_shell_builder_rejects_missing_shell_instead_of_falling_back() {
         let err = pane_shell_command_builder_for_target(
             PaneShellConfig::new(
-                "/__herdr_missing_shell__",
+                "/__sesh_mux_missing_shell__",
                 crate::config::ShellModeConfig::Login,
             ),
             ShellLaunchTarget::OtherUnix,
@@ -4535,12 +3286,11 @@ mod tests {
         assert_eq!(err.kind(), io::ErrorKind::NotFound);
     }
 
-    #[cfg(unix)]
     #[test]
     fn login_shell_builder_resolves_bare_shell_names_from_path() {
         let _lock = crate::integration::integration_env_lock();
         let base = std::env::temp_dir().join(format!(
-            "herdr-login-shell-path-{}-{}",
+            "sesh-mux-login-shell-path-{}-{}",
             std::process::id(),
             std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)
@@ -4551,7 +3301,6 @@ mod tests {
         std::fs::create_dir_all(&bin).unwrap();
         let shell = bin.join("fake-shell");
         std::fs::write(&shell, "#!/bin/sh\nexit 0\n").unwrap();
-        #[cfg(unix)]
         {
             use std::os::unix::fs::PermissionsExt;
             std::fs::set_permissions(&shell, std::fs::Permissions::from_mode(0o755)).unwrap();
@@ -4577,7 +3326,6 @@ mod tests {
         let _ = std::fs::remove_dir_all(base);
     }
 
-    #[cfg(unix)]
     #[test]
     fn login_shell_resolution_preserves_shell_paths() {
         assert_eq!(resolve_shell_for_login_mode("/bin/sh").unwrap(), "/bin/sh");
@@ -4594,24 +3342,6 @@ mod tests {
         assert_eq!(cmd.get_argv(), &[std::ffi::OsString::from("/bin/sh")]);
     }
 
-    #[cfg(unix)]
-    #[test]
-    fn pane_terminal_identity_overrides_outer_terminal_env() {
-        let output = capture_shell_output("printf '%s\\n%s\\n' \"$TERM\" \"$COLORTERM\"", &[]);
-        assert_eq!(output, "xterm-256color\ntruecolor\n");
-    }
-
-    #[cfg(unix)]
-    #[test]
-    fn pane_terminal_identity_allows_explicit_override() {
-        let output = capture_shell_output(
-            "printf '%s\\n%s\\n' \"$TERM\" \"$COLORTERM\"",
-            &[("TERM", "vt100"), ("COLORTERM", "24bit")],
-        );
-        assert_eq!(output, "vt100\n24bit\n");
-    }
-
-    #[cfg(unix)]
     #[tokio::test]
     async fn handoff_history_ansi_captures_primary_screen() {
         let runtime =
@@ -4622,7 +3352,6 @@ mod tests {
         assert!(history.contains("handoff-primary-history"));
     }
 
-    #[cfg(unix)]
     #[tokio::test]
     async fn handoff_history_ansi_skips_alternate_screen() {
         let runtime = PaneRuntime::test_with_scrollback_bytes(
@@ -4635,7 +3364,6 @@ mod tests {
         assert!(runtime.handoff_history_ansi().is_none());
     }
 
-    #[cfg(unix)]
     #[tokio::test]
     async fn ended_handoff_keeps_persistence_cwd_when_pid_is_reused() {
         let (runtime, _rx) = PaneRuntime::test_with_channel(80, 24);
@@ -4652,39 +3380,6 @@ mod tests {
         assert_eq!(runtime.cwd_for_persistence(), None);
     }
 
-    #[cfg(unix)]
-    #[tokio::test]
-    async fn handoff_runtime_state_captures_terminal_input_and_title_state() {
-        let runtime = PaneRuntime::test_with_screen_bytes(
-            80,
-            24,
-            b"\x1b[>5u\x1b[>4;2m\x1b[?1h\x1b[?2004h\x1b[?1004h\x1b[?1002h\x1b[?1006h\x1b[?2031h",
-        );
-
-        runtime.test_process_pty_bytes("\x1b]2;✳ 修复🙂标题\x1b\\".as_bytes());
-        runtime.terminal.clear_agent_osc_state();
-        assert_eq!(runtime.agent_osc_title(), "");
-        let pane = runtime.handoff_runtime_state(12);
-
-        assert_eq!(pane.keyboard_protocol_flags, 5);
-        assert_eq!(pane.terminal_title.as_deref(), Some("✳ 修复🙂标题"));
-        assert_eq!(
-            pane.input_state,
-            Some(InputState {
-                alternate_screen: false,
-                application_cursor: true,
-                bracketed_paste: true,
-                focus_reporting: true,
-                mouse_protocol_mode: crate::input::MouseProtocolMode::ButtonMotion,
-                mouse_protocol_encoding: crate::input::MouseProtocolEncoding::Sgr,
-                mouse_alternate_scroll: true,
-                modify_other_keys: true,
-                color_scheme_reporting: true,
-            })
-        );
-    }
-
-    #[cfg(unix)]
     #[test]
     fn truncate_handoff_history_keeps_recent_utf8_boundary() {
         let history = format!("old\n{}\nrecent\n", "é".repeat(8));
@@ -4695,7 +3390,6 @@ mod tests {
         assert!(truncated.is_char_boundary(0));
     }
 
-    #[cfg(unix)]
     #[test]
     fn truncate_handoff_history_drops_partial_long_line() {
         let history = format!("old\n{}", "x".repeat(64));
@@ -4757,152 +3451,6 @@ mod tests {
         .unwrap();
     }
 
-    #[cfg(any(target_os = "linux", target_os = "macos"))]
-    #[tokio::test]
-    async fn compressed_scrollback_survives_shrink_and_grow_resize() {
-        let suffix = "x".repeat(66);
-        let history = (1..=2_000)
-            .map(|line| format!("{line:05} {suffix}\r\n"))
-            .collect::<String>();
-        let runtime =
-            PaneRuntime::test_with_scrollback_bytes(80, 45, 20_000_000, history.as_bytes());
-
-        tokio::time::timeout(std::time::Duration::from_secs(5), async {
-            while runtime.compression.completed_passes() == 0 {
-                tokio::time::sleep(std::time::Duration::from_millis(10)).await;
-            }
-        })
-        .await
-        .unwrap();
-
-        runtime.resize(21, 80, 0, 0);
-        let completed_after_shrink = runtime.compression.completed_passes();
-        tokio::time::timeout(std::time::Duration::from_secs(5), async {
-            while runtime.compression.completed_passes() == completed_after_shrink {
-                tokio::time::sleep(std::time::Duration::from_millis(10)).await;
-            }
-        })
-        .await
-        .unwrap();
-
-        runtime.resize(45, 80, 0, 0);
-
-        assert_eq!(runtime.current_size(), (45, 80));
-        assert_eq!(runtime.terminal_dimensions(), Some((80, 45)));
-        assert_eq!(runtime.scroll_metrics().unwrap().viewport_rows, 45);
-        let snapshot = runtime.recent_unwrapped_text_snapshot(usize::MAX);
-        assert!(snapshot.text.contains("00001 "));
-        assert!(snapshot.text.contains("02000 "));
-    }
-
-    #[tokio::test]
-    async fn focus_events_are_forwarded_when_enabled() {
-        let (tx, mut rx) = mpsc::channel(4);
-        let (resize_tx, _resize_rx) = watch::channel((80, 24, 0, 0));
-        let mut terminal = crate::ghostty::Terminal::new(80, 24, 0).unwrap();
-        terminal
-            .mode_set(crate::ghostty::MODE_FOCUS_EVENT, true)
-            .unwrap();
-        let pane_id = PaneId::from_raw(0);
-        let terminal = Arc::new(PaneTerminal::new(
-            GhosttyPaneTerminal::new(terminal, tx.clone()).unwrap(),
-        ));
-        let compression = TerminalCompressionTask::spawn(pane_id, terminal.clone());
-        let runtime = PaneRuntime {
-            cwd_process_exited: Arc::new(AtomicBool::new(false)),
-            persistence_cwd: Mutex::new(None),
-            pane_id,
-            terminal,
-            io: PaneRuntimeIo::TestChannel {
-                sender: tx,
-                resize_tx,
-            },
-            current_size: Cell::new((80, 24, 0, 0)),
-            child_pid: Arc::new(AtomicU32::new(0)),
-            reported_cwd: Arc::new(Mutex::new(None)),
-            child_wait_completed: None,
-            kitty_keyboard_flags: Arc::new(AtomicU16::new(0)),
-            content_seq: Arc::new(AtomicU64::new(0)),
-            content_write_lock: Arc::new(Mutex::new(())),
-            detection_content_seq: Arc::new(AtomicU64::new(0)),
-            full_lifecycle_authority_active: Arc::new(AtomicBool::new(false)),
-            detect_reset_notify: Arc::new(Notify::new()),
-            pending_release: Arc::new(Mutex::new(None)),
-            preserve_processes_on_drop: true,
-            compression,
-            detect_handle: Some(tokio::spawn(async {}).abort_handle()),
-        };
-
-        assert!(runtime.try_send_focus_event(crate::ghostty::FocusEvent::Gained));
-        assert_eq!(rx.recv().await.unwrap(), Bytes::from_static(b"\x1b[I"));
-    }
-
-    #[tokio::test]
-    async fn focus_events_are_suppressed_when_disabled() {
-        let (tx, mut rx) = mpsc::channel(4);
-        let (resize_tx, _resize_rx) = watch::channel((80, 24, 0, 0));
-        let terminal = crate::ghostty::Terminal::new(80, 24, 0).unwrap();
-        let pane_id = PaneId::from_raw(0);
-        let terminal = Arc::new(PaneTerminal::new(
-            GhosttyPaneTerminal::new(terminal, tx.clone()).unwrap(),
-        ));
-        let compression = TerminalCompressionTask::spawn(pane_id, terminal.clone());
-        let runtime = PaneRuntime {
-            cwd_process_exited: Arc::new(AtomicBool::new(false)),
-            persistence_cwd: Mutex::new(None),
-            pane_id,
-            terminal,
-            io: PaneRuntimeIo::TestChannel {
-                sender: tx,
-                resize_tx,
-            },
-            current_size: Cell::new((80, 24, 0, 0)),
-            child_pid: Arc::new(AtomicU32::new(0)),
-            reported_cwd: Arc::new(Mutex::new(None)),
-            child_wait_completed: None,
-            kitty_keyboard_flags: Arc::new(AtomicU16::new(0)),
-            content_seq: Arc::new(AtomicU64::new(0)),
-            content_write_lock: Arc::new(Mutex::new(())),
-            detection_content_seq: Arc::new(AtomicU64::new(0)),
-            full_lifecycle_authority_active: Arc::new(AtomicBool::new(false)),
-            detect_reset_notify: Arc::new(Notify::new()),
-            pending_release: Arc::new(Mutex::new(None)),
-            preserve_processes_on_drop: true,
-            compression,
-            detect_handle: Some(tokio::spawn(async {}).abort_handle()),
-        };
-
-        assert!(!runtime.try_send_focus_event(crate::ghostty::FocusEvent::Gained));
-        assert!(
-            tokio::time::timeout(std::time::Duration::from_millis(10), rx.recv())
-                .await
-                .is_err()
-        );
-    }
-
-    #[tokio::test]
-    async fn subscribed_idle_child_receives_color_scheme_transition() {
-        let (runtime, mut rx) = PaneRuntime::test_with_channel(80, 24);
-        runtime.apply_host_terminal_appearance(Some(crate::terminal_theme::HostAppearance::Dark));
-        runtime.test_process_pty_bytes(b"\x1b[?2031h");
-
-        runtime.apply_host_terminal_appearance(Some(crate::terminal_theme::HostAppearance::Light));
-
-        assert_eq!(rx.recv().await, Some(Bytes::from_static(b"\x1b[?997;2n")));
-    }
-
-    #[test]
-    fn foreground_shell_reports_process_exit_before_clearing_agent() {
-        assert_eq!(
-            foreground_shell_agent_action(Some(Agent::Codex), None, true, false),
-            ForegroundShellAgentAction::ReportProcessExit
-        );
-        assert_eq!(
-            foreground_shell_agent_action(Some(Agent::Codex), None, true, true),
-            ForegroundShellAgentAction::ClearAgent
-        );
-    }
-
     #[test]
     fn same_agent_after_reported_exit_is_a_replacement_process() {
         assert_eq!(
@@ -4919,811 +3467,11 @@ mod tests {
         );
     }
 
-    #[tokio::test]
-    async fn first_agent_acquisition_keeps_osc_evidence_replacement_clears_it() {
-        let runtime = PaneRuntime::test_with_screen_bytes(80, 24, b"");
-        runtime.test_process_pty_bytes(b"\x1b]2;startup title\x1b\\\x1b]9;4;1;\x1b\\");
-
-        clear_osc_evidence_for_agent_transition(&runtime.terminal, None);
-        assert_eq!(runtime.agent_osc_title(), "startup title");
-        assert_eq!(runtime.agent_osc_progress(), "4;1;");
-
-        clear_osc_evidence_for_agent_transition(&runtime.terminal, Some(Agent::Claude));
-        assert_eq!(runtime.agent_osc_title(), "");
-        assert_eq!(runtime.agent_osc_progress(), "");
-    }
-
     #[test]
     fn reported_process_exit_clears_before_unknown_foreground_probe() {
         assert_eq!(
             foreground_shell_agent_action(Some(Agent::Claude), None, false, true),
             ForegroundShellAgentAction::ClearAgent
         );
-    }
-
-    #[test]
-    fn foreground_agent_job_is_not_clear_signal() {
-        assert_eq!(
-            foreground_shell_agent_action(Some(Agent::Claude), Some(Agent::OpenCode), true, false,),
-            ForegroundShellAgentAction::ObserveProbe
-        );
-    }
-
-    fn foreground_process(pid: u32, name: &str) -> crate::platform::ForegroundProcess {
-        crate::platform::ForegroundProcess {
-            pid,
-            name: name.to_string(),
-            argv0: None,
-            argv: None,
-            cmdline: None,
-        }
-    }
-
-    #[test]
-    fn foreground_agent_hint_accepts_pane_shell_environment() {
-        let job = crate::platform::ForegroundJob {
-            process_group_id: 42,
-            processes: vec![foreground_process(42, "bash")],
-        };
-
-        assert_eq!(
-            agent_hint_for_foreground_job_members(&job, |pid| {
-                (pid == 42).then_some(Agent::Claude)
-            }),
-            Some(Agent::Claude)
-        );
-    }
-
-    #[test]
-    fn foreground_agent_hint_accepts_non_leader_foreground_process_environment() {
-        let job = crate::platform::ForegroundJob {
-            process_group_id: 99,
-            processes: vec![
-                foreground_process(99, "fence"),
-                foreground_process(100, "pi"),
-            ],
-        };
-
-        assert_eq!(
-            agent_hint_for_foreground_job_members(&job, |pid| {
-                (pid == 100).then_some(Agent::Codex)
-            }),
-            Some(Agent::Codex)
-        );
-    }
-
-    #[test]
-    fn foreground_agent_hint_wins_over_process_name_detection() {
-        let job = crate::platform::ForegroundJob {
-            process_group_id: 99,
-            processes: vec![foreground_process(99, "codex")],
-        };
-
-        let result = probe_foreground_process_from_jobs(
-            42,
-            Some(99),
-            Some(job),
-            || None,
-            |pid| (pid == 99).then_some(Agent::Claude),
-        );
-
-        assert_eq!(result.agent, Some(Agent::Claude));
-        assert_eq!(result.process_name.as_deref(), Some("claude"));
-    }
-
-    #[test]
-    fn foreground_agent_hint_on_inherited_child_environment_is_authoritative() {
-        let job = crate::platform::ForegroundJob {
-            process_group_id: 99,
-            processes: vec![foreground_process(99, "vim")],
-        };
-
-        let result = probe_foreground_process_from_jobs(
-            42,
-            Some(99),
-            None,
-            || Some(job),
-            |pid| (pid == 99).then_some(Agent::Claude),
-        );
-
-        assert_eq!(result.agent, Some(Agent::Claude));
-        assert_eq!(result.process_name.as_deref(), Some("claude"));
-    }
-
-    #[test]
-    fn non_leader_agent_hint_does_not_override_identifiable_leader() {
-        let job = crate::platform::ForegroundJob {
-            process_group_id: 99,
-            processes: vec![
-                foreground_process(99, "codex"),
-                foreground_process(100, "vim"),
-            ],
-        };
-
-        let result = probe_foreground_process_from_jobs(
-            42,
-            Some(99),
-            None,
-            || Some(job),
-            |pid| (pid == 100).then_some(Agent::Claude),
-        );
-
-        assert_eq!(result.agent, Some(Agent::Codex));
-        assert_eq!(result.process_name.as_deref(), Some("codex"));
-    }
-
-    #[test]
-    fn non_leader_agent_hint_wins_when_leader_is_unidentified() {
-        let job = crate::platform::ForegroundJob {
-            process_group_id: 99,
-            processes: vec![
-                foreground_process(99, "some_vm"),
-                foreground_process(100, "vim"),
-            ],
-        };
-
-        let result = probe_foreground_process_from_jobs(
-            42,
-            Some(99),
-            None,
-            || Some(job),
-            |pid| (pid == 100).then_some(Agent::Claude),
-        );
-
-        assert_eq!(result.agent, Some(Agent::Claude));
-        assert_eq!(result.process_name.as_deref(), Some("claude"));
-    }
-
-    fn process_probe_input() -> ProcessProbeInput {
-        ProcessProbeInput {
-            current_agent: None,
-            suppressed_agent: None,
-            foreground_pgid: Some(42),
-            last_foreground_pgid: Some(42),
-            has_process_probe: true,
-            acquisition_age: None,
-            pending_foreground_shell_clear: false,
-            pending_restore_probe: false,
-            elapsed_since_process_check: std::time::Duration::from_secs(1),
-        }
-    }
-
-    #[test]
-    fn windows_foreground_observation_schedule_preserves_lifecycle_checks() {
-        let quiet = ProcessProbeInput {
-            current_agent: Some(Agent::Codex),
-            ..process_probe_input()
-        };
-        let before_safety_bound = PROCESS_RECHECK_IDENTIFIED - std::time::Duration::from_millis(1);
-        let content_retry = std::time::Duration::from_millis(300);
-        let observe = |lifecycle, content_changed, elapsed, input| {
-            should_observe_foreground_process_group(lifecycle, content_changed, elapsed, input)
-        };
-        let content_due = |last: Option<u64>, current, elapsed| {
-            last != Some(current) && (last.is_some() || elapsed >= content_retry)
-        };
-
-        assert!(!observe(false, false, before_safety_bound, quiet));
-        assert!(observe(false, true, before_safety_bound, quiet));
-        assert!(observe(true, true, before_safety_bound, quiet));
-        assert!(content_due(Some(0), 1, std::time::Duration::ZERO));
-        assert!(!content_due(
-            None,
-            1,
-            content_retry - std::time::Duration::from_millis(1)
-        ));
-        assert!(content_due(None, 1, content_retry));
-        assert!(observe(
-            false,
-            false,
-            before_safety_bound,
-            ProcessProbeInput {
-                elapsed_since_process_check: PROCESS_RECHECK_IDENTIFIED,
-                ..quiet
-            }
-        ));
-        assert!(observe(true, false, PROCESS_RECHECK_IDENTIFIED, quiet));
-
-        for immediate in [
-            ProcessProbeInput {
-                has_process_probe: false,
-                ..quiet
-            },
-            ProcessProbeInput {
-                current_agent: None,
-                acquisition_age: Some(std::time::Duration::ZERO),
-                ..quiet
-            },
-            ProcessProbeInput {
-                pending_restore_probe: true,
-                ..quiet
-            },
-            ProcessProbeInput {
-                suppressed_agent: Some(Agent::Codex),
-                ..quiet
-            },
-            ProcessProbeInput {
-                pending_foreground_shell_clear: true,
-                ..quiet
-            },
-        ] {
-            assert!(observe(false, false, std::time::Duration::ZERO, immediate));
-        }
-    }
-
-    #[test]
-    fn unchanged_unidentified_foreground_group_skips_full_process_probe() {
-        assert!(!should_probe_foreground_job(process_probe_input()));
-    }
-
-    #[test]
-    fn unidentified_foreground_group_change_runs_full_process_probe() {
-        assert!(should_probe_foreground_job(ProcessProbeInput {
-            foreground_pgid: Some(43),
-            ..process_probe_input()
-        }));
-    }
-
-    #[test]
-    fn unidentified_pane_gets_initial_process_probe() {
-        assert!(should_probe_foreground_job(ProcessProbeInput {
-            has_process_probe: false,
-            ..process_probe_input()
-        }));
-    }
-
-    #[test]
-    fn stable_unidentified_foreground_group_has_no_safety_process_probe() {
-        assert!(!should_probe_foreground_job(ProcessProbeInput {
-            elapsed_since_process_check: PROCESS_RECHECK_MISSING_FOREGROUND_GROUP,
-            ..process_probe_input()
-        }));
-    }
-
-    #[test]
-    fn unidentified_pane_without_foreground_group_uses_safety_process_probe() {
-        assert!(!should_probe_foreground_job(ProcessProbeInput {
-            foreground_pgid: None,
-            last_foreground_pgid: None,
-            ..process_probe_input()
-        }));
-        assert!(should_probe_foreground_job(ProcessProbeInput {
-            foreground_pgid: None,
-            last_foreground_pgid: None,
-            elapsed_since_process_check: PROCESS_RECHECK_MISSING_FOREGROUND_GROUP,
-            ..process_probe_input()
-        }));
-    }
-
-    #[test]
-    fn unidentified_pane_probes_when_foreground_group_disappears() {
-        assert!(should_probe_foreground_job(ProcessProbeInput {
-            foreground_pgid: None,
-            last_foreground_pgid: Some(42),
-            ..process_probe_input()
-        }));
-    }
-
-    #[test]
-    fn inferred_group_does_not_trigger_a_probe_on_every_tick() {
-        let tracked = process_group_for_change_tracking(None, Some(300));
-        assert_eq!(tracked, None);
-        assert!(!should_probe_foreground_job(ProcessProbeInput {
-            current_agent: Some(Agent::Claude),
-            foreground_pgid: None,
-            last_foreground_pgid: tracked,
-            elapsed_since_process_check: std::time::Duration::from_millis(300),
-            ..process_probe_input()
-        }));
-    }
-
-    #[test]
-    fn pending_shell_clear_and_restore_force_process_probes() {
-        assert!(should_probe_foreground_job(ProcessProbeInput {
-            current_agent: Some(Agent::Codex),
-            pending_foreground_shell_clear: true,
-            ..process_probe_input()
-        }));
-        assert!(should_probe_foreground_job(ProcessProbeInput {
-            current_agent: Some(Agent::Codex),
-            pending_restore_probe: true,
-            ..process_probe_input()
-        }));
-    }
-
-    #[test]
-    fn lifecycle_authority_skips_stable_routine_process_probe() {
-        assert!(should_skip_process_probe_for_lifecycle_authority(
-            true,
-            ProcessProbeInput {
-                current_agent: Some(Agent::Pi),
-                elapsed_since_process_check: PROCESS_RECHECK_IDENTIFIED,
-                ..process_probe_input()
-            }
-        ));
-        assert!(!should_skip_process_probe_for_lifecycle_authority(
-            false,
-            ProcessProbeInput {
-                current_agent: Some(Agent::Pi),
-                elapsed_since_process_check: PROCESS_RECHECK_IDENTIFIED,
-                ..process_probe_input()
-            }
-        ));
-    }
-
-    #[test]
-    fn lifecycle_authority_keeps_periodic_probes_without_an_observed_group() {
-        let input = ProcessProbeInput {
-            current_agent: Some(Agent::Pi),
-            foreground_pgid: None,
-            last_foreground_pgid: None,
-            elapsed_since_process_check: PROCESS_RECHECK_IDENTIFIED,
-            ..process_probe_input()
-        };
-        assert!(!should_skip_process_probe_for_lifecycle_authority(
-            true, input
-        ));
-        assert!(should_probe_foreground_job(input));
-    }
-
-    #[test]
-    fn lifecycle_authority_preserves_process_exit_and_release_probes() {
-        assert!(!should_skip_process_probe_for_lifecycle_authority(
-            true,
-            ProcessProbeInput {
-                current_agent: Some(Agent::Pi),
-                pending_foreground_shell_clear: true,
-                ..process_probe_input()
-            }
-        ));
-        assert!(!should_skip_process_probe_for_lifecycle_authority(
-            true,
-            ProcessProbeInput {
-                current_agent: Some(Agent::Pi),
-                suppressed_agent: Some(Agent::Pi),
-                ..process_probe_input()
-            }
-        ));
-    }
-
-    #[test]
-    fn lifecycle_authority_preserves_initial_and_foreground_group_change_probes() {
-        assert!(!should_skip_process_probe_for_lifecycle_authority(
-            true,
-            ProcessProbeInput {
-                current_agent: None,
-                has_process_probe: false,
-                ..process_probe_input()
-            }
-        ));
-        assert!(!should_skip_process_probe_for_lifecycle_authority(
-            true,
-            ProcessProbeInput {
-                current_agent: Some(Agent::Pi),
-                foreground_pgid: Some(43),
-                ..process_probe_input()
-            }
-        ));
-    }
-
-    #[test]
-    fn pending_release_forces_initial_process_probe() {
-        assert!(should_probe_foreground_job(ProcessProbeInput {
-            current_agent: Some(Agent::Codex),
-            suppressed_agent: Some(Agent::Codex),
-            has_process_probe: false,
-            ..process_probe_input()
-        }));
-    }
-
-    #[test]
-    fn pending_release_forces_process_probe_after_runtime_identity_clears() {
-        assert!(should_probe_foreground_job(ProcessProbeInput {
-            current_agent: None,
-            suppressed_agent: Some(Agent::Codex),
-            has_process_probe: false,
-            ..process_probe_input()
-        }));
-    }
-
-    #[test]
-    fn pending_release_skips_repeated_probe_when_foreground_group_is_stable() {
-        assert!(!should_probe_foreground_job(ProcessProbeInput {
-            current_agent: None,
-            suppressed_agent: Some(Agent::Codex),
-            ..process_probe_input()
-        }));
-    }
-
-    #[test]
-    fn pending_release_probes_when_foreground_group_changes() {
-        assert!(should_probe_foreground_job(ProcessProbeInput {
-            current_agent: None,
-            suppressed_agent: Some(Agent::Codex),
-            foreground_pgid: Some(43),
-            ..process_probe_input()
-        }));
-    }
-
-    #[test]
-    fn acquisition_window_catches_delayed_same_group_wrapper_startup() {
-        assert!(!should_probe_foreground_job(ProcessProbeInput {
-            current_agent: None,
-            acquisition_age: Some(std::time::Duration::from_millis(1250)),
-            elapsed_since_process_check: PROCESS_ACQUISITION_FAST_RECHECK
-                - std::time::Duration::from_millis(1),
-            ..process_probe_input()
-        }));
-        assert!(should_probe_foreground_job(ProcessProbeInput {
-            current_agent: None,
-            acquisition_age: Some(std::time::Duration::from_millis(1250)),
-            elapsed_since_process_check: PROCESS_ACQUISITION_FAST_RECHECK,
-            ..process_probe_input()
-        }));
-        assert!(should_probe_foreground_job(ProcessProbeInput {
-            current_agent: None,
-            acquisition_age: Some(std::time::Duration::from_secs(5)),
-            elapsed_since_process_check: PROCESS_ACQUISITION_SLOW_RECHECK,
-            ..process_probe_input()
-        }));
-        assert!(!should_probe_foreground_job(ProcessProbeInput {
-            current_agent: None,
-            acquisition_age: Some(PROCESS_ACQUISITION_WINDOW + std::time::Duration::from_millis(1),),
-            elapsed_since_process_check: PROCESS_ACQUISITION_SLOW_RECHECK,
-            ..process_probe_input()
-        }));
-    }
-
-    #[test]
-    fn content_change_starts_bounded_unidentified_acquisition_window() {
-        let now = std::time::Instant::now();
-        let mut acquisition_started_at = None;
-        let mut last_content_change_at = None;
-
-        sync_content_change_acquisition(
-            None,
-            None,
-            false,
-            true,
-            now,
-            &mut acquisition_started_at,
-            &mut last_content_change_at,
-        );
-        assert_eq!(acquisition_started_at, Some(now));
-        assert_eq!(last_content_change_at, Some(now));
-
-        let later = now + std::time::Duration::from_secs(1);
-        sync_content_change_acquisition(
-            None,
-            None,
-            false,
-            true,
-            later,
-            &mut acquisition_started_at,
-            &mut last_content_change_at,
-        );
-        assert_eq!(
-            acquisition_started_at,
-            Some(now),
-            "changed frames should not refresh the acquisition window"
-        );
-        assert_eq!(last_content_change_at, Some(later));
-
-        let quiet_after_window =
-            later + PROCESS_ACQUISITION_WINDOW + PROCESS_ACQUISITION_IDLE_RESET;
-        sync_content_change_acquisition(
-            None,
-            None,
-            false,
-            false,
-            quiet_after_window,
-            &mut acquisition_started_at,
-            &mut last_content_change_at,
-        );
-        assert_eq!(acquisition_started_at, None);
-        assert_eq!(last_content_change_at, None);
-
-        let next_burst = quiet_after_window + std::time::Duration::from_secs(1);
-        sync_content_change_acquisition(
-            None,
-            None,
-            false,
-            true,
-            next_burst,
-            &mut acquisition_started_at,
-            &mut last_content_change_at,
-        );
-        assert_eq!(acquisition_started_at, Some(next_burst));
-        assert_eq!(last_content_change_at, Some(next_burst));
-    }
-
-    #[test]
-    fn content_change_does_not_start_acquisition_when_process_probe_has_other_signal() {
-        let now = std::time::Instant::now();
-        let mut acquisition_started_at = None;
-        let mut last_content_change_at = None;
-
-        sync_content_change_acquisition(
-            Some(Agent::Codex),
-            None,
-            false,
-            true,
-            now,
-            &mut acquisition_started_at,
-            &mut last_content_change_at,
-        );
-        assert_eq!(acquisition_started_at, None);
-        assert_eq!(last_content_change_at, None);
-
-        sync_content_change_acquisition(
-            None,
-            Some(Agent::Codex),
-            false,
-            true,
-            now,
-            &mut acquisition_started_at,
-            &mut last_content_change_at,
-        );
-        assert_eq!(acquisition_started_at, None);
-        assert_eq!(last_content_change_at, None);
-
-        sync_content_change_acquisition(
-            None,
-            None,
-            true,
-            true,
-            now,
-            &mut acquisition_started_at,
-            &mut last_content_change_at,
-        );
-        assert_eq!(acquisition_started_at, None);
-        assert_eq!(last_content_change_at, None);
-    }
-
-    #[test]
-    fn content_change_restarts_stale_process_group_acquisition_window() {
-        let now = std::time::Instant::now();
-        let stale_start = now - PROCESS_ACQUISITION_WINDOW - std::time::Duration::from_millis(1);
-        let mut acquisition_started_at = Some(stale_start);
-        let mut last_content_change_at = None;
-
-        sync_content_change_acquisition(
-            None,
-            None,
-            false,
-            true,
-            now,
-            &mut acquisition_started_at,
-            &mut last_content_change_at,
-        );
-
-        assert_eq!(acquisition_started_at, Some(now));
-        assert_eq!(last_content_change_at, Some(now));
-    }
-
-    #[test]
-    fn release_expiry_can_force_reacquire_probe_by_resetting_probe_state() {
-        assert!(should_probe_foreground_job(ProcessProbeInput {
-            current_agent: None,
-            has_process_probe: false,
-            ..process_probe_input()
-        }));
-    }
-
-    #[test]
-    fn identified_agent_uses_shorter_safety_process_probe() {
-        assert!(!should_probe_foreground_job(ProcessProbeInput {
-            current_agent: Some(Agent::Codex),
-            elapsed_since_process_check: PROCESS_RECHECK_IDENTIFIED
-                - std::time::Duration::from_millis(1),
-            ..process_probe_input()
-        }));
-        assert!(should_probe_foreground_job(ProcessProbeInput {
-            current_agent: Some(Agent::Codex),
-            elapsed_since_process_check: PROCESS_RECHECK_IDENTIFIED,
-            ..process_probe_input()
-        }));
-    }
-
-    #[test]
-    fn identified_agent_probes_when_foreground_group_disappears() {
-        assert!(should_probe_foreground_job(ProcessProbeInput {
-            current_agent: Some(Agent::Codex),
-            foreground_pgid: None,
-            last_foreground_pgid: Some(42),
-            elapsed_since_process_check: PROCESS_RECHECK_IDENTIFIED
-                - std::time::Duration::from_millis(1),
-            ..process_probe_input()
-        }));
-    }
-
-    #[test]
-    fn stable_missing_foreground_group_uses_safety_process_probe() {
-        assert!(!should_probe_foreground_job(ProcessProbeInput {
-            current_agent: Some(Agent::Codex),
-            foreground_pgid: None,
-            last_foreground_pgid: None,
-            elapsed_since_process_check: PROCESS_RECHECK_IDENTIFIED
-                - std::time::Duration::from_millis(1),
-            ..process_probe_input()
-        }));
-        assert!(should_probe_foreground_job(ProcessProbeInput {
-            current_agent: Some(Agent::Codex),
-            foreground_pgid: None,
-            last_foreground_pgid: None,
-            elapsed_since_process_check: PROCESS_RECHECK_IDENTIFIED,
-            ..process_probe_input()
-        }));
-    }
-
-    #[test]
-    fn transient_process_miss_keeps_current_agent_detected() {
-        let mut presence = AgentDetectionPresence::from_agent(Some(Agent::Pi));
-
-        let changed = presence.observe_process_probe(None);
-
-        assert!(!changed, "one miss should not clear the detected agent");
-        assert_eq!(presence.current_agent(), Some(Agent::Pi));
-    }
-
-    #[test]
-    fn agent_only_clears_after_confirmation_misses() {
-        let mut presence = AgentDetectionPresence::from_agent(Some(Agent::Pi));
-
-        for attempt in 1..AGENT_MISS_CONFIRMATION_ATTEMPTS {
-            let changed = presence.observe_process_probe(None);
-            assert!(
-                !changed,
-                "miss {attempt} should stay in the confirmation window"
-            );
-            assert_eq!(presence.current_agent(), Some(Agent::Pi));
-        }
-
-        let changed = presence.observe_process_probe(None);
-        assert!(changed, "last confirmation miss should clear the agent");
-        assert_eq!(presence.current_agent(), None);
-    }
-
-    #[tokio::test]
-    async fn set_full_lifecycle_authority_active_notifies_only_on_activation_transitions() {
-        let runtime = PaneRuntime::test_with_screen_bytes(80, 24, b"");
-        let reset_notify = runtime.agent_detection_reset_notify_for_test();
-
-        runtime.set_full_lifecycle_authority_active(true);
-        tokio::time::timeout(
-            std::time::Duration::from_millis(50),
-            reset_notify.notified(),
-        )
-        .await
-        .expect("false-to-true transition should notify detection reset");
-
-        runtime.set_full_lifecycle_authority_active(true);
-        assert!(
-            tokio::time::timeout(
-                std::time::Duration::from_millis(20),
-                reset_notify.notified()
-            )
-            .await
-            .is_err(),
-            "repeated true-to-true sync should not notify detection reset"
-        );
-
-        runtime.set_full_lifecycle_authority_active(false);
-        assert!(
-            tokio::time::timeout(
-                std::time::Duration::from_millis(20),
-                reset_notify.notified()
-            )
-            .await
-            .is_err(),
-            "true-to-false transition should not notify detection reset"
-        );
-
-        runtime.set_full_lifecycle_authority_active(true);
-        tokio::time::timeout(
-            std::time::Duration::from_millis(50),
-            reset_notify.notified(),
-        )
-        .await
-        .expect("re-entering active authority should notify detection reset");
-    }
-
-    #[cfg(unix)]
-    #[tokio::test]
-    async fn spawned_pty_reader_aggregates_terminal_bells() {
-        let (events, mut event_rx) = mpsc::channel(8);
-        let pane_id = PaneId::from_raw(42);
-        let runtime = PaneRuntime::spawn_shell_command(
-            pane_id,
-            24,
-            80,
-            std::env::temp_dir(),
-            "printf '\\a\\a'; sleep 0.05",
-            &PaneLaunchEnv::default(),
-            AgentDetection::Disabled,
-            0,
-            crate::terminal_theme::TerminalTheme::default(),
-            None,
-            events,
-            Arc::new(Notify::new()),
-            Arc::new(RenderSignal::new()),
-        )
-        .unwrap();
-
-        let bell = tokio::time::timeout(std::time::Duration::from_secs(2), async {
-            loop {
-                if let Some(AppEvent::TerminalBell {
-                    pane_id: delivered_pane,
-                    count,
-                }) = event_rx.recv().await
-                {
-                    break (delivered_pane, count);
-                }
-            }
-        })
-        .await
-        .expect("PTY reader should publish terminal bells");
-
-        assert_eq!(bell, (pane_id, 2));
-        runtime.shutdown();
-    }
-
-    #[tokio::test]
-    async fn state_changed_event_waits_for_queue_space_instead_of_dropping() {
-        let (tx, mut rx) = mpsc::channel(1);
-        let pane_id = PaneId::from_raw(42);
-
-        tx.try_send(AppEvent::TerminalBell { pane_id, count: 1 })
-            .unwrap();
-
-        let publish = publish_state_changed_event(
-            tx.clone(),
-            pane_id,
-            Some(Agent::Pi),
-            AgentState::Idle,
-            false,
-            false,
-            false,
-            std::time::Instant::now(),
-        );
-        tokio::pin!(publish);
-
-        let blocked = tokio::time::timeout(std::time::Duration::from_millis(20), async {
-            (&mut publish).await;
-        })
-        .await;
-        assert!(
-            blocked.is_err(),
-            "publisher should wait for queue space instead of dropping StateChanged"
-        );
-
-        let first = tokio::time::timeout(std::time::Duration::from_millis(50), rx.recv())
-            .await
-            .expect("queue should yield first event")
-            .expect("sender still alive");
-        assert!(matches!(first, AppEvent::TerminalBell { .. }));
-
-        tokio::time::timeout(std::time::Duration::from_millis(50), async {
-            (&mut publish).await;
-        })
-        .await
-        .expect("publisher should complete once queue space is available");
-
-        let second = tokio::time::timeout(std::time::Duration::from_millis(50), rx.recv())
-            .await
-            .expect("queue should yield second event")
-            .expect("sender still alive");
-        assert!(matches!(
-            second,
-            AppEvent::StateChanged {
-                pane_id: delivered_pane,
-                agent: Some(Agent::Pi),
-                state: AgentState::Idle,
-                visible_blocker: false,
-                visible_working: false,
-                process_exited: false,
-                observed_at: _,
-            } if delivered_pane == pane_id
-        ));
     }
 }

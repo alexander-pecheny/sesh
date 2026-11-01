@@ -4,7 +4,14 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 
 const GHOSTTY_VERSION: &str = "1.3.2-HEAD-+44f2a44df";
-const GHOSTTY_PARTS: &[&str] = &["build.zig", "build.zig.zon", "include", "pkg", "src", "dist"];
+const GHOSTTY_PARTS: &[&str] = &[
+    "build.zig",
+    "build.zig.zon",
+    "include",
+    "pkg",
+    "src",
+    "dist",
+];
 
 fn zig_target(target: &str) -> &str {
     match target {
@@ -106,7 +113,10 @@ fn main() {
     let status = command.current_dir(&source).status().unwrap_or_else(|err| {
         panic!("failed to run {zig:?} (libghostty-vt needs Zig 0.16.0; set ZIG): {err}")
     });
-    assert!(status.success(), "zig build for libghostty-vt failed: {status}");
+    assert!(
+        status.success(),
+        "zig build for libghostty-vt failed: {status}"
+    );
 
     let lib_dir = prefix.join("lib");
     println!("cargo:rustc-link-search=native={}", lib_dir.display());

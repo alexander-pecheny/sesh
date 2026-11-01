@@ -20,16 +20,7 @@ impl HostAppearance {
     }
 }
 
-impl RgbColor {
-    pub fn inferred_appearance(self) -> HostAppearance {
-        let luminance = u32::from(self.r) * 299 + u32::from(self.g) * 587 + u32::from(self.b) * 114;
-        if luminance >= 128_000 {
-            HostAppearance::Light
-        } else {
-            HostAppearance::Dark
-        }
-    }
-}
+impl RgbColor {}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct TerminalTheme {
@@ -54,41 +45,10 @@ pub enum DefaultColorKind {
     Background,
 }
 
-pub const HOST_COLOR_QUERY_SEQUENCE: &str = "\x1b]10;?\x1b\\\x1b]11;?\x1b\\";
-#[cfg(any(not(windows), test))]
-pub const HOST_COLOR_SCHEME_QUERY_SEQUENCE: &str = "\x1b[?996n";
-pub const HOST_COLOR_SCHEME_REPORT_ENABLE_SEQUENCE: &str = "\x1b[?2031h";
-pub const HOST_COLOR_SCHEME_REPORT_DISABLE_SEQUENCE: &str = "\x1b[?2031l";
-
 impl TerminalTheme {
-    pub fn with_color(mut self, kind: DefaultColorKind, color: RgbColor) -> Self {
-        match kind {
-            DefaultColorKind::Foreground => self.foreground = Some(color),
-            DefaultColorKind::Background => self.background = Some(color),
-        }
-        self
-    }
-
-    pub fn with_palette_color(mut self, index: u8, color: RgbColor) -> Self {
-        self.palette[usize::from(index)] = Some(color);
-        self
-    }
-
     pub fn is_empty(self) -> bool {
         self.foreground.is_none() && self.background.is_none()
     }
-}
-
-pub fn host_terminal_theme_query_sequence(include_palette: bool) -> String {
-    use std::fmt::Write as _;
-
-    let mut sequence = String::from(HOST_COLOR_QUERY_SEQUENCE);
-    if include_palette {
-        for index in 0..=u8::MAX {
-            let _ = write!(sequence, "\x1b]4;{index};?\x1b\\");
-        }
-    }
-    sequence
 }
 
 pub fn parse_default_color_response(sequence: &str) -> Option<(DefaultColorKind, RgbColor)> {
@@ -207,32 +167,6 @@ mod tests {
     }
 
     #[test]
-    fn parses_palette_responses_and_builds_full_query() {
-        assert_eq!(
-            parse_palette_color_response("\x1b]4;255;rgb:1111/2222/3333\x1b\\"),
-            Some((
-                255,
-                RgbColor {
-                    r: 0x11,
-                    g: 0x22,
-                    b: 0x33,
-                }
-            ))
-        );
-
-        let query = host_terminal_theme_query_sequence(true);
-        assert!(query.starts_with(HOST_COLOR_QUERY_SEQUENCE));
-        assert!(query.contains("\x1b]4;0;?\x1b\\"));
-        assert!(query.ends_with("\x1b]4;255;?\x1b\\"));
-        assert_eq!(query.matches("\x1b]4;").count(), 256);
-
-        assert_eq!(
-            host_terminal_theme_query_sequence(false),
-            HOST_COLOR_QUERY_SEQUENCE
-        );
-    }
-
-    #[test]
     fn default_color_reset_sequences_use_xterm_osc_numbers() {
         assert_eq!(
             osc_reset_default_color_sequence(DefaultColorKind::Foreground),
@@ -242,13 +176,5 @@ mod tests {
             osc_reset_default_color_sequence(DefaultColorKind::Background),
             "\x1b]111\x1b\\"
         );
-    }
-
-    #[test]
-    fn scales_short_hex_components() {
-        assert_eq!(parse_hex_component("f"), Some(255));
-        assert_eq!(parse_hex_component("80"), Some(128));
-        assert_eq!(parse_hex_component("800"), Some(128));
-        assert_eq!(parse_hex_component("8000"), Some(128));
     }
 }

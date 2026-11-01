@@ -240,7 +240,7 @@ impl App {
                 encode_error(
                     id,
                     "not_linked_worktree",
-                    "workspace is not a Herdr-managed worktree checkout",
+                    "workspace is not a sesh-mux-managed worktree checkout",
                 ),
             );
             return;
@@ -255,27 +255,6 @@ impl App {
                 ),
             );
             return;
-        }
-
-        #[cfg(windows)]
-        {
-            if !params.force
-                && crate::worktree::checkout_has_dirty_files(
-                    &space.checkout_path,
-                    params.trust_repository,
-                )
-                .unwrap_or(false)
-            {
-                Self::send_api_response(
-                    respond_to,
-                    encode_error(
-                        id,
-                        "dirty_worktree_requires_force",
-                        crate::worktree::worktree_dirty_remove_message(&space.checkout_path),
-                    ),
-                );
-                return;
-            }
         }
 
         let workspace_internal_id = self.state.workspaces[ws_idx].id.clone();

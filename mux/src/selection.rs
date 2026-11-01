@@ -56,34 +56,11 @@ impl<P> Selection<P> {
         }
     }
 
-    pub(crate) fn absolute_anchor(pane_id: P, anchor: (u32, u16)) -> Self {
-        Self {
-            pane_id,
-            anchor,
-            cursor: anchor,
-            phase: Phase::Anchored,
-        }
-    }
-
     pub(crate) fn absolute_range(pane_id: P, anchor: (u32, u16), cursor: (u32, u16)) -> Self {
         Self {
             pane_id,
             anchor,
             cursor,
-            phase: Phase::Dragging,
-        }
-    }
-
-    pub(crate) fn line_range(pane_id: P, anchor_row: u32, cursor_row: u32, end_col: u16) -> Self {
-        let (anchor_col, cursor_col) = if anchor_row <= cursor_row {
-            (0, end_col)
-        } else {
-            (end_col, 0)
-        };
-        Self {
-            pane_id,
-            anchor: (anchor_row, anchor_col),
-            cursor: (cursor_row, cursor_col),
             phase: Phase::Dragging,
         }
     }
@@ -143,17 +120,6 @@ impl<P> Selection<P> {
         self.phase == Phase::Dragging || self.phase == Phase::Done
     }
 
-    /// Whether this selection was already finalized.
-    #[cfg(test)]
-    pub fn is_finalized(&self) -> bool {
-        self.phase == Phase::Done
-    }
-
-    /// Whether the user just clicked without dragging (not a selection).
-    pub fn is_just_click(&self) -> bool {
-        self.phase == Phase::Anchored
-    }
-
     /// Force the selection into Dragging phase, used when the mouse
     /// has moved off the anchor cell but drag() couldn't transition
     /// because the cursor was clamped to the same cell as the anchor.
@@ -186,55 +152,6 @@ impl<P> Selection<P> {
 
     pub(crate) fn ordered_cells(&self) -> ((u32, u16), (u32, u16)) {
         self.ordered()
-    }
-
-    pub(crate) fn visible_rects(&self, inner: Rect, metrics: Option<ScrollMetrics>) -> [Rect; 3] {
-        let mut rects = [Rect::default(); 3];
-        if !self.is_visible() || inner.is_empty() {
-            return rects;
-        }
-        let ((start_row, start_col), (end_row, end_col)) = self.ordered();
-        let top = viewport_top_row(metrics);
-        let bottom = top.saturating_add(u32::from(inner.height));
-        let rect = |first: u32, end: u32, left: u16, right: u16| {
-            let first = first.max(top);
-            let end = end.min(bottom);
-            let left = left.min(inner.width);
-            let right = right.min(inner.width);
-            if first >= end || left >= right {
-                Rect::default()
-            } else {
-                Rect::new(
-                    inner.x + left,
-                    inner.y + (first - top) as u16,
-                    right - left,
-                    (end - first) as u16,
-                )
-            }
-        };
-        if start_row == end_row {
-            rects[0] = rect(
-                start_row,
-                start_row.saturating_add(1),
-                start_col,
-                end_col.saturating_add(1),
-            );
-        } else {
-            rects[0] = rect(
-                start_row,
-                start_row.saturating_add(1),
-                start_col,
-                inner.width,
-            );
-            rects[1] = rect(start_row.saturating_add(1), end_row, 0, inner.width);
-            rects[2] = rect(
-                end_row,
-                end_row.saturating_add(1),
-                0,
-                end_col.saturating_add(1),
-            );
-        }
-        rects
     }
 
     /// Check whether a pane-relative cell (row, col) is inside the selection.
@@ -356,7 +273,7 @@ fn should_prefer_osc52() -> bool {
 ///
 /// OSC 52 format: `ESC ] 52 ; c ; <base64> BEL`
 ///
-/// Some terminals still only honor BEL-terminated OSC 52 writes, so herdr
+/// Some terminals still only honor BEL-terminated OSC 52 writes, so sesh-mux
 /// emits BEL here even though ST works in newer emulators.
 pub fn write_osc52_bytes(bytes: &[u8]) {
     if !should_prefer_osc52() && crate::platform::write_clipboard(bytes) {
@@ -371,39 +288,6 @@ pub fn write_osc52_bytes(bytes: &[u8]) {
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn visible_rects_match_selection_cells_when_scrolled_and_reversed() {
-        let inner = Rect::new(10, 5, 8, 6);
-        for (start, end) in [
-            ((0, 2), (0, 5)),
-            ((1, 3), (4, 2)),
-            ((4, 2), (1, 3)),
-            ((0, 0), (20, 7)),
-            ((20, 0), (22, 7)),
-        ] {
-            let selection = Selection::absolute_range((), start, end);
-            for top in [0, 2, 5, 20] {
-                let metrics = Some(ScrollMetrics {
-                    offset_from_bottom: 0,
-                    max_offset_from_bottom: top,
-                    viewport_rows: 6,
-                });
-                let rects = selection.visible_rects(inner, metrics);
-                for row in 0..inner.height {
-                    for col in 0..inner.width {
-                        assert_eq!(
-                            rects
-                                .iter()
-                                .any(|rect| rect.contains((inner.x + col, inner.y + row).into())),
-                            selection.contains(row, col, metrics),
-                            "start={start:?} end={end:?} top={top} row={row} col={col}",
-                        );
-                    }
-                }
-            }
-        }
-    }
 
     fn make_sel(sr: u32, sc: u16, er: u32, ec: u16) -> Selection {
         let mut sel = Selection::anchor(PaneId::from_raw(0), sr as u16, sc, None);
@@ -546,24 +430,6 @@ mod tests {
         let sel = Selection::anchor(PaneId::from_raw(0), 5, 10, None);
         assert!(!sel.is_visible());
         assert!(!sel.contains(5, 10, None));
-    }
-
-    #[test]
-    fn click_without_drag() {
-        let mut sel = Selection::anchor(PaneId::from_raw(0), 5, 10, None);
-        assert!(sel.is_just_click());
-        let copied = sel.finish();
-        assert!(!copied);
-    }
-
-    #[test]
-    fn drag_then_finish() {
-        let mut sel = Selection::anchor(PaneId::from_raw(0), 5, 10, None);
-        sel.drag(20, 7, Rect::new(10, 5, 80, 24), None);
-        assert!(sel.is_visible());
-        assert!(!sel.is_just_click());
-        let copied = sel.finish();
-        assert!(copied);
     }
 
     #[test]

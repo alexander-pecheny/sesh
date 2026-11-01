@@ -1,9 +1,8 @@
 use crate::api::schema::{
-    EmptyParams, Method, PaneFocusDirectionParams, PaneInputSetParams, PaneMoveParams,
-    PaneRenameParams, PaneResizeParams, PaneSplitParams, PaneSwapParams, PaneTarget,
-    PaneZoomParams, Request, TabCreateParams, TabListParams, TabRenameParams, TabTarget,
-    WorkspaceCloseParams, WorkspaceCreateParams, WorkspaceRenameParams, WorkspaceTarget,
-    WorktreeCreateParams, WorktreeListParams, WorktreeOpenParams, WorktreeRemoveParams,
+    EmptyParams, Method, PaneRenameParams, PaneTarget, Request, TabCreateParams, TabListParams,
+    TabRenameParams, TabTarget, WorkspaceCloseParams, WorkspaceCreateParams, WorkspaceRenameParams,
+    WorkspaceTarget, WorktreeCreateParams, WorktreeListParams, WorktreeOpenParams,
+    WorktreeRemoveParams,
 };
 
 fn print_method_response(id: &'static str, method: Method) -> std::io::Result<i32> {
@@ -31,13 +30,6 @@ pub(super) fn workspace_get(workspace_id: String) -> std::io::Result<i32> {
     )
 }
 
-pub(super) fn workspace_focus(workspace_id: String) -> std::io::Result<i32> {
-    print_method_response(
-        "cli:workspace:focus",
-        Method::WorkspaceFocus(WorkspaceTarget { workspace_id }),
-    )
-}
-
 pub(super) fn workspace_rename(params: WorkspaceRenameParams) -> std::io::Result<i32> {
     print_method_response("cli:workspace:rename", Method::WorkspaceRename(params))
 }
@@ -56,10 +48,6 @@ pub(super) fn tab_create(params: TabCreateParams) -> std::io::Result<i32> {
 
 pub(super) fn tab_get(tab_id: String) -> std::io::Result<i32> {
     print_method_response("cli:tab:get", Method::TabGet(TabTarget { tab_id }))
-}
-
-pub(super) fn tab_focus(tab_id: String) -> std::io::Result<i32> {
-    print_method_response("cli:tab:focus", Method::TabFocus(TabTarget { tab_id }))
 }
 
 pub(super) fn tab_rename(params: TabRenameParams) -> std::io::Result<i32> {
@@ -86,36 +74,8 @@ pub(super) fn worktree_remove(params: WorktreeRemoveParams) -> std::io::Result<i
     print_method_response("cli:worktree:remove", Method::WorktreeRemove(params))
 }
 
-pub(super) fn pane_focus(params: PaneFocusDirectionParams) -> std::io::Result<i32> {
-    print_method_response("cli:pane:focus", Method::PaneFocusDirection(params))
-}
-
-pub(super) fn pane_resize(params: PaneResizeParams) -> std::io::Result<i32> {
-    print_method_response("cli:pane:resize", Method::PaneResize(params))
-}
-
-pub(super) fn pane_zoom(params: PaneZoomParams) -> std::io::Result<i32> {
-    print_method_response("cli:pane:zoom", Method::PaneZoom(params))
-}
-
 pub(super) fn pane_rename(params: PaneRenameParams) -> std::io::Result<i32> {
     print_method_response("cli:pane:rename", Method::PaneRename(params))
-}
-
-pub(super) fn pane_input_set(params: PaneInputSetParams) -> std::io::Result<i32> {
-    print_method_response("cli:pane:input:set", Method::PaneInputSet(params))
-}
-
-pub(super) fn pane_split(params: PaneSplitParams) -> std::io::Result<i32> {
-    print_method_response("cli:pane:split", Method::PaneSplit(params))
-}
-
-pub(super) fn pane_swap(params: PaneSwapParams) -> std::io::Result<i32> {
-    print_method_response("cli:pane:swap", Method::PaneSwap(params))
-}
-
-pub(super) fn pane_move(params: PaneMoveParams) -> std::io::Result<i32> {
-    print_method_response("cli:pane:move", Method::PaneMove(params))
 }
 
 pub(super) fn pane_close(pane_id: String) -> std::io::Result<i32> {

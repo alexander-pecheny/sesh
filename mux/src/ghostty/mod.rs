@@ -815,8 +815,6 @@ pub(crate) enum LinkTarget {
 pub struct Terminal {
     raw: ffi::GhosttyTerminal,
     max_scrollback: usize,
-    #[cfg(windows)]
-    tracked_row: ffi::GhosttyTrackedGridRef,
     callback_state: Box<TerminalCallbackState>,
     kitty_fingerprints: Mutex<HashMap<u32, KittyImageFingerprintEntry>>,
     kitty_empty_generation: Cell<Option<u64>>,
@@ -1197,22 +1195,6 @@ impl Terminal {
             offset: out.offset as usize,
             len: out.len as usize,
         })
-    }
-
-    #[cfg(windows)]
-    pub(crate) fn track_row(&mut self, y: u32) -> Option<usize> {
-        let mut point = ffi::GhosttyPointCoordinate::default();
-        let tag = ffi::GhosttyPointTag_GHOSTTY_POINT_TAG_SCREEN;
-        let result =
-            unsafe { ffi::ghostty_tracked_grid_ref_point(self.tracked_row, tag, &mut point) };
-        let terminal = self.raw;
-        let target = ghostty_viewport_point(0, y);
-        unsafe {
-            ffi::ghostty_tracked_grid_ref_free(self.tracked_row);
-            self.tracked_row = ptr::null_mut();
-            let _ = ffi::ghostty_terminal_grid_ref_track(terminal, target, &mut self.tracked_row);
-        }
-        (result == ffi::GhosttyResult_GHOSTTY_SUCCESS).then_some(point.y as usize)
     }
 
     pub fn screen_cell(&self, x: u16, y: u32) -> Result<(CellWide, Vec<u32>), Error> {
@@ -2145,8 +2127,6 @@ impl Drop for Terminal {
     fn drop(&mut self) {
         // SAFETY: freeing a null or live handle is allowed by the C API.
         unsafe {
-            #[cfg(windows)]
-            ffi::ghostty_tracked_grid_ref_free(self.tracked_row);
             ffi::ghostty_terminal_free(self.raw);
         }
     }
@@ -2372,10 +2352,9 @@ fn kitty_placeholder_color_to_id(color: CellColor) -> u32 {
 
 fn kitty_placeholder_diacritic_index(codepoint: u32) -> Option<u32> {
     let map = KITTY_PLACEHOLDER_DIACRITICS.get_or_init(|| {
-        // Reuse Ghostty's vendored table so Herdr decodes the same placeholder
+        // Reuse Ghostty's vendored table so sesh-mux decodes the same placeholder
         // row/column diacritics that libghostty accepts.
-        let source =
-            include_str!("../../vendor/ghostty/src/terminal/kitty/graphics_unicode.zig");
+        let source = include_str!("../../vendor/ghostty/src/terminal/kitty/graphics_unicode.zig");
         let mut map = HashMap::new();
         let mut in_table = false;
         for line in source.lines() {
@@ -3067,41 +3046,6 @@ impl<'a> RowIter<'a> {
         Ok(dirty)
     }
 
-    #[cfg(windows)]
-    pub fn wrap_state(&self) -> Result<(bool, bool), Error> {
-        let mut row = 0;
-        // SAFETY: row output matches requested row data type.
-        unsafe {
-            ffi::ghostty_render_state_row_get(
-                self.iterator.raw,
-                ffi::GhosttyRenderStateRowData_GHOSTTY_RENDER_STATE_ROW_DATA_RAW,
-                (&mut row as *mut ffi::GhosttyRow).cast(),
-            )
-            .into_result()?;
-        }
-        let mut soft_wrapped = false;
-        // SAFETY: wrap output matches requested row data type.
-        unsafe {
-            ffi::ghostty_row_get(
-                row,
-                ffi::GhosttyRowData_GHOSTTY_ROW_DATA_WRAP,
-                (&mut soft_wrapped as *mut bool).cast(),
-            )
-            .into_result()?;
-        }
-        let mut wrap_continuation = false;
-        // SAFETY: wrap continuation output matches requested row data type.
-        unsafe {
-            ffi::ghostty_row_get(
-                row,
-                ffi::GhosttyRowData_GHOSTTY_ROW_DATA_WRAP_CONTINUATION,
-                (&mut wrap_continuation as *mut bool).cast(),
-            )
-            .into_result()?;
-        }
-        Ok((soft_wrapped, wrap_continuation))
-    }
-
     pub fn clear_dirty(&mut self) -> Result<(), Error> {
         self.set_dirty(false)
     }
@@ -3771,78 +3715,6 @@ mod tests {
             .unwrap());
     }
 
-    #[test]
-    fn kitty_graphics_file_medium_rgba_placement_is_queryable() {
-        use base64::Engine;
-
-        let dir = std::env::temp_dir().join(format!(
-            "herdr-kitty-file-medium-test-{}",
-            std::process::id()
-        ));
-        std::fs::create_dir_all(&dir).unwrap();
-        let path = dir.join("pixel.rgba");
-        std::fs::write(&path, [255, 0, 0, 255]).unwrap();
-
-        let mut terminal = Terminal::new(10, 5, 0).unwrap();
-        terminal.enable_kitty_graphics().unwrap();
-        terminal.resize(10, 5, 8, 16).unwrap();
-        let encoded_path =
-            base64::engine::general_purpose::STANDARD.encode(path.as_os_str().as_encoded_bytes());
-        let command =
-            format!("\x1b_Ga=T,f=32,t=f,i=9,p=4,s=1,v=1,c=10,r=5,q=2;{encoded_path}\x1b\\");
-        terminal.write(command.as_bytes());
-        terminal.write(b"\x1b_Ga=p,U=1,i=9,c=10,r=5\x1b\\");
-
-        let placements = terminal.kitty_image_placements().unwrap();
-        assert_eq!(placements.len(), 1);
-        assert_eq!(placements[0].image_id, 9);
-        assert_eq!(placements[0].placement_id, 4);
-        assert_eq!(placements[0].image_width, 1);
-        assert_eq!(placements[0].image_height, 1);
-        assert_eq!(placements[0].format, KittyImageFormat::Rgba);
-        assert_eq!(placements[0].data, [255, 0, 0, 255]);
-        assert_eq!(placements[0].render.grid_cols, 10);
-        assert_eq!(placements[0].render.grid_rows, 5);
-
-        let _ = std::fs::remove_dir_all(dir);
-    }
-
-    #[cfg(unix)]
-    #[test]
-    fn kitty_graphics_file_upload_can_be_placed_later() {
-        let dir = std::env::temp_dir().join(format!(
-            "herdr-kitty-file-upload-test-{}",
-            std::process::id()
-        ));
-        std::fs::create_dir_all(&dir).unwrap();
-        let path = dir.join("pixel.rgba");
-        std::fs::write(&path, [255, 0, 0, 255]).unwrap();
-
-        let mut terminal = Terminal::new(10, 5, 0).unwrap();
-        terminal.enable_kitty_graphics().unwrap();
-        terminal.resize(10, 5, 8, 16).unwrap();
-        let mut upload = Vec::new();
-        crate::kitty_graphics::encode_kitty_regular_file(
-            &mut upload,
-            &[],
-            "a=t,f=32,s=1,v=1,i=10,q=0",
-            path.to_str().unwrap(),
-        );
-        terminal.write(&upload);
-        assert!(terminal.kitty_image_placements().unwrap().is_empty());
-
-        terminal.write(b"\x1b_Ga=p,i=10,p=5,c=10,r=5,C=1,q=2\x1b\\");
-        let placements = terminal.kitty_image_placements().unwrap();
-        assert_eq!(placements.len(), 1);
-        assert_eq!(placements[0].image_id, 10);
-        assert_eq!(placements[0].placement_id, 5);
-        assert_eq!(placements[0].image_width, 1);
-        assert_eq!(placements[0].image_height, 1);
-        assert_eq!(placements[0].format, KittyImageFormat::Rgba);
-        assert_eq!(placements[0].data, [255, 0, 0, 255]);
-
-        let _ = std::fs::remove_dir_all(dir);
-    }
 
     #[test]
     fn kitty_graphics_unicode_placeholder_placement_is_queryable() {
@@ -3914,12 +3786,15 @@ mod tests {
             .set_write_pty_callback(move |bytes| sink.lock().unwrap().extend_from_slice(bytes))
             .unwrap();
 
-        terminal.write(b"\x1b[6n\x1b]7;file:///tmp/herdr\x07");
+        terminal.write(b"\x1b[6n\x1b]7;file:///tmp/sesh-mux\x07");
 
         let output = responses.lock().unwrap().clone();
         assert!(!output.is_empty());
         assert!(String::from_utf8_lossy(&output).contains("R"));
-        assert_eq!(terminal.take_pwd_changes(), [b"file:///tmp/herdr".to_vec()]);
+        assert_eq!(
+            terminal.take_pwd_changes(),
+            [b"file:///tmp/sesh-mux".to_vec()]
+        );
     }
 
     #[test]

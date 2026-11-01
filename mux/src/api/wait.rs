@@ -221,12 +221,6 @@ pub(super) fn prompt_agent(
         id: request_id.clone(),
         method: Method::AgentPrompt(params),
     };
-    #[cfg(windows)]
-    let prompt_response = dispatch_to_app_with_caller_timeout(
-        prompt_request,
-        api_tx,
-        remaining_timeout_ms(wait.timeout_ms, wait_started).map(std::time::Duration::from_millis),
-    );
     #[cfg(not(windows))]
     let prompt_response = dispatch_to_app_with_timeout(prompt_request, api_tx, None);
     let Ok(prompted) = agent_from_response(&request_id, &prompt_response) else {

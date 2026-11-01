@@ -292,15 +292,6 @@ impl TerminalState {
             agent_released: false,
         })
     }
-    pub fn effective_title(&self) -> Option<String> {
-        self.effective_presentation_for_state_at(self.state, Instant::now())
-            .title
-    }
-
-    pub fn effective_display_agent(&self) -> Option<String> {
-        self.effective_presentation_for_state_at(self.state, Instant::now())
-            .display_agent
-    }
 
     pub fn effective_presentation(&self) -> EffectivePresentation {
         self.effective_presentation_for_state_at(self.state, Instant::now())
@@ -615,7 +606,7 @@ mod tests {
     fn user_agent_metadata_overrides_presentation_fields_only() {
         let mut terminal = test_terminal();
         terminal.set_hook_authority(
-            "herdr:claude".into(),
+            "sesh-mux:claude".into(),
             "claude".into(),
             AgentState::Working,
             None,
@@ -625,7 +616,7 @@ mod tests {
         let mutation = terminal.set_agent_metadata(AgentMetadataReport {
             source: "user:presentation".into(),
             agent_label: Some("claude".into()),
-            applies_to_source: Some("herdr:claude".into()),
+            applies_to_source: Some("sesh-mux:claude".into()),
             title: Some("Refactor auth".into()),
             display_agent: Some("Claude: auth".into()),
             state_labels: HashMap::from([("working".into(), "deep in the mines".into())]),
@@ -649,111 +640,10 @@ mod tests {
     }
 
     #[test]
-    fn metadata_title_takes_pane_border_priority() {
-        let mut terminal = test_terminal();
-        terminal.set_detected_state(Some(Agent::Claude), AgentState::Idle);
-        terminal.set_manual_label("manual".into());
-        terminal.set_agent_metadata(AgentMetadataReport {
-            source: "user:presentation".into(),
-            agent_label: Some("claude".into()),
-            applies_to_source: None,
-            title: Some("Prompt title".into()),
-            display_agent: None,
-            state_labels: HashMap::new(),
-            clear_title: false,
-            clear_display_agent: false,
-            clear_state_labels: false,
-            ttl: None,
-            seq: None,
-        });
-
-        assert_eq!(
-            terminal.border_label(false).as_deref(),
-            Some("Prompt title")
-        );
-        assert_eq!(terminal.border_label(true).as_deref(), Some("Prompt title"));
-    }
-
-    #[test]
-    fn metadata_without_sequence_can_update_same_source() {
-        let mut terminal = test_terminal();
-        terminal.set_hook_authority(
-            "herdr:claude".into(),
-            "claude".into(),
-            AgentState::Working,
-            None,
-            None,
-        );
-
-        for title in ["first", "second"] {
-            terminal.set_agent_metadata(AgentMetadataReport {
-                source: "user:claude-title".into(),
-                agent_label: Some("claude".into()),
-                applies_to_source: Some("herdr:claude".into()),
-                title: Some(title.into()),
-                display_agent: None,
-                state_labels: HashMap::new(),
-                clear_title: false,
-                clear_display_agent: false,
-                clear_state_labels: false,
-                ttl: None,
-                seq: None,
-            });
-        }
-
-        assert_eq!(terminal.effective_title().as_deref(), Some("second"));
-    }
-
-    #[test]
-    fn metadata_resolves_newest_value_per_presentation_field() {
-        let mut terminal = test_terminal();
-        terminal.set_hook_authority(
-            "herdr:claude".into(),
-            "claude".into(),
-            AgentState::Working,
-            None,
-            None,
-        );
-        terminal.set_agent_metadata(AgentMetadataReport {
-            source: "user:title".into(),
-            agent_label: Some("claude".into()),
-            applies_to_source: Some("herdr:claude".into()),
-            title: Some("Prompt title".into()),
-            display_agent: None,
-            state_labels: HashMap::new(),
-            clear_title: false,
-            clear_display_agent: false,
-            clear_state_labels: false,
-            ttl: None,
-            seq: Some(1),
-        });
-        terminal.set_agent_metadata(AgentMetadataReport {
-            source: "user:status".into(),
-            agent_label: Some("claude".into()),
-            applies_to_source: Some("herdr:claude".into()),
-            title: None,
-            display_agent: Some("Claude activity".into()),
-            state_labels: HashMap::new(),
-            clear_title: false,
-            clear_display_agent: false,
-            clear_state_labels: false,
-            ttl: None,
-            seq: Some(1),
-        });
-
-        let presentation = terminal.effective_presentation();
-        assert_eq!(presentation.title.as_deref(), Some("Prompt title"));
-        assert_eq!(
-            presentation.display_agent.as_deref(),
-            Some("Claude activity")
-        );
-    }
-
-    #[test]
     fn partial_update_does_not_refresh_unchanged_field_precedence() {
         let mut terminal = test_terminal();
         terminal.set_hook_authority(
-            "herdr:claude".into(),
+            "sesh-mux:claude".into(),
             "claude".into(),
             AgentState::Working,
             None,
@@ -762,7 +652,7 @@ mod tests {
         terminal.set_agent_metadata(AgentMetadataReport {
             source: "user:first".into(),
             agent_label: Some("claude".into()),
-            applies_to_source: Some("herdr:claude".into()),
+            applies_to_source: Some("sesh-mux:claude".into()),
             title: None,
             display_agent: Some("First display".into()),
             state_labels: HashMap::new(),
@@ -775,7 +665,7 @@ mod tests {
         terminal.set_agent_metadata(AgentMetadataReport {
             source: "user:first".into(),
             agent_label: Some("claude".into()),
-            applies_to_source: Some("herdr:claude".into()),
+            applies_to_source: Some("sesh-mux:claude".into()),
             title: Some("Fresh title".into()),
             display_agent: None,
             state_labels: HashMap::new(),
@@ -792,345 +682,10 @@ mod tests {
     }
 
     #[test]
-    fn metadata_clear_plus_set_without_ttl_does_not_keep_old_ttl() {
-        let mut terminal = test_terminal();
-        terminal.set_hook_authority(
-            "herdr:claude".into(),
-            "claude".into(),
-            AgentState::Working,
-            None,
-            None,
-        );
-        terminal.set_agent_metadata(AgentMetadataReport {
-            source: "user:status".into(),
-            agent_label: Some("claude".into()),
-            applies_to_source: Some("herdr:claude".into()),
-            title: Some("Old title".into()),
-            display_agent: None,
-            state_labels: HashMap::new(),
-            clear_title: false,
-            clear_display_agent: false,
-            clear_state_labels: false,
-            ttl: Some(Duration::from_millis(1)),
-            seq: None,
-        });
-        let old_deadline = terminal.next_agent_metadata_expiry().unwrap();
-
-        terminal.set_agent_metadata(AgentMetadataReport {
-            source: "user:status".into(),
-            agent_label: Some("claude".into()),
-            applies_to_source: Some("herdr:claude".into()),
-            title: Some("Fresh title".into()),
-            display_agent: None,
-            state_labels: HashMap::new(),
-            clear_title: false,
-            clear_display_agent: false,
-            clear_state_labels: false,
-            ttl: None,
-            seq: None,
-        });
-
-        assert_eq!(terminal.next_agent_metadata_expiry(), None);
-        assert_eq!(terminal.effective_title().as_deref(), Some("Fresh title"));
-        assert!(terminal
-            .expire_agent_metadata_at(
-                old_deadline + Duration::from_millis(1),
-                old_deadline + Duration::from_millis(1)
-            )
-            .is_none());
-        assert_eq!(terminal.effective_title().as_deref(), Some("Fresh title"));
-    }
-
-    #[test]
-    fn metadata_clear_only_without_ttl_does_not_extend_old_ttl() {
-        let mut terminal = test_terminal();
-        terminal.set_hook_authority(
-            "herdr:claude".into(),
-            "claude".into(),
-            AgentState::Working,
-            None,
-            None,
-        );
-        terminal.set_agent_metadata(AgentMetadataReport {
-            source: "user:status".into(),
-            agent_label: Some("claude".into()),
-            applies_to_source: Some("herdr:claude".into()),
-            title: Some("Prompt title".into()),
-            display_agent: Some("Old display".into()),
-            state_labels: HashMap::new(),
-            clear_title: false,
-            clear_display_agent: false,
-            clear_state_labels: false,
-            // Expiry is forced with the captured deadline below; keep the
-            // no-extension assertion independent of wall-clock scheduling.
-            ttl: Some(Duration::from_secs(60)),
-            seq: None,
-        });
-        let old_deadline = terminal.next_agent_metadata_expiry().unwrap();
-
-        terminal.set_agent_metadata(AgentMetadataReport {
-            source: "user:status".into(),
-            agent_label: None,
-            applies_to_source: None,
-            title: None,
-            display_agent: None,
-            state_labels: HashMap::new(),
-            clear_title: false,
-            clear_display_agent: true,
-            clear_state_labels: false,
-            ttl: None,
-            seq: None,
-        });
-
-        assert_eq!(terminal.next_agent_metadata_expiry(), Some(old_deadline));
-        let presentation = terminal.effective_presentation_for_state_at(
-            terminal.state,
-            old_deadline - Duration::from_millis(1),
-        );
-        assert_eq!(presentation.title.as_deref(), Some("Prompt title"));
-        assert_eq!(presentation.display_agent, None);
-
-        let mutation = terminal
-            .expire_agent_metadata_at(old_deadline, old_deadline)
-            .unwrap();
-        assert!(mutation.effective_state_change.is_some());
-        assert_eq!(terminal.effective_presentation().title, None);
-    }
-
-    #[test]
-    fn metadata_ttl_expiry_reports_presentation_change() {
-        let mut terminal = test_terminal();
-        terminal.set_hook_authority(
-            "herdr:claude".into(),
-            "claude".into(),
-            AgentState::Working,
-            None,
-            None,
-        );
-        terminal.set_agent_metadata(AgentMetadataReport {
-            source: "user:status".into(),
-            agent_label: Some("claude".into()),
-            applies_to_source: Some("herdr:claude".into()),
-            title: Some("Activity".into()),
-            display_agent: None,
-            state_labels: HashMap::new(),
-            clear_title: false,
-            clear_display_agent: false,
-            clear_state_labels: false,
-            ttl: Some(Duration::from_millis(1)),
-            seq: None,
-        });
-
-        let deadline = terminal.next_agent_metadata_expiry().unwrap();
-        let mutation = terminal
-            .expire_agent_metadata_at(deadline, deadline)
-            .unwrap();
-        let change = mutation.effective_state_change.unwrap();
-
-        assert_eq!(change.previous_state, AgentState::Working);
-        assert_eq!(change.state, AgentState::Working);
-        assert_eq!(
-            change.previous_presentation.title.as_deref(),
-            Some("Activity")
-        );
-        assert_eq!(change.presentation.title, None);
-        assert_eq!(terminal.effective_title(), None);
-    }
-
-    #[test]
-    fn stale_guarded_metadata_expiry_does_not_report_visible_change() {
-        let mut terminal = test_terminal();
-        terminal.set_hook_authority(
-            "herdr:codex".into(),
-            "codex".into(),
-            AgentState::Working,
-            None,
-            None,
-        );
-        terminal.set_agent_metadata(AgentMetadataReport {
-            source: "user:status".into(),
-            agent_label: Some("claude".into()),
-            applies_to_source: Some("herdr:claude".into()),
-            title: Some("Stale".into()),
-            display_agent: None,
-            state_labels: HashMap::new(),
-            clear_title: false,
-            clear_display_agent: false,
-            clear_state_labels: false,
-            ttl: Some(Duration::from_millis(1)),
-            seq: None,
-        });
-        let deadline = terminal
-            .agent_metadata
-            .get("user:status")
-            .and_then(|metadata| terminal.agent_metadata_expiry(metadata))
-            .unwrap();
-        assert_eq!(terminal.next_agent_metadata_expiry(), None);
-        assert_eq!(terminal.effective_title(), None);
-
-        terminal.set_hook_authority(
-            "herdr:claude".into(),
-            "claude".into(),
-            AgentState::Working,
-            None,
-            None,
-        );
-        let mutation = terminal.expire_agent_metadata_at(
-            deadline + Duration::from_millis(1),
-            deadline + Duration::from_millis(1),
-        );
-
-        assert!(mutation.is_none());
-        assert!(!terminal.agent_metadata.contains_key("user:status"));
-        assert_eq!(terminal.effective_title(), None);
-    }
-
-    #[test]
-    fn late_metadata_expiry_reports_all_due_visible_changes() {
-        let mut terminal = test_terminal();
-        terminal.set_hook_authority(
-            "herdr:claude".into(),
-            "claude".into(),
-            AgentState::Working,
-            None,
-            None,
-        );
-        terminal.set_agent_metadata(AgentMetadataReport {
-            source: "user:first".into(),
-            agent_label: Some("claude".into()),
-            applies_to_source: Some("herdr:claude".into()),
-            title: Some("First".into()),
-            display_agent: None,
-            state_labels: HashMap::new(),
-            clear_title: false,
-            clear_display_agent: false,
-            clear_state_labels: false,
-            ttl: Some(Duration::from_millis(1)),
-            seq: None,
-        });
-        let first_deadline = terminal.next_agent_metadata_expiry().unwrap();
-        terminal.set_agent_metadata(AgentMetadataReport {
-            source: "user:second".into(),
-            agent_label: Some("claude".into()),
-            applies_to_source: Some("herdr:claude".into()),
-            title: None,
-            display_agent: Some("Second".into()),
-            state_labels: HashMap::new(),
-            clear_title: false,
-            clear_display_agent: false,
-            clear_state_labels: false,
-            ttl: Some(Duration::from_millis(2)),
-            seq: None,
-        });
-        let second_deadline = terminal
-            .agent_metadata
-            .get("user:second")
-            .and_then(|metadata| terminal.agent_metadata_expiry(metadata))
-            .unwrap();
-
-        let mutation = terminal
-            .expire_agent_metadata_at(first_deadline, second_deadline)
-            .unwrap();
-        let change = mutation.effective_state_change.unwrap();
-
-        assert_eq!(change.previous_presentation.title.as_deref(), Some("First"));
-        assert_eq!(
-            change.previous_presentation.display_agent.as_deref(),
-            Some("Second")
-        );
-        assert_eq!(change.presentation, EffectivePresentation::empty());
-        assert!(terminal.agent_metadata.is_empty());
-    }
-
-    #[test]
-    fn immediately_expired_visible_metadata_still_schedules_expiry_event() {
-        let mut terminal = test_terminal();
-        terminal.set_hook_authority(
-            "herdr:claude".into(),
-            "claude".into(),
-            AgentState::Working,
-            None,
-            None,
-        );
-        terminal.set_agent_metadata(AgentMetadataReport {
-            source: "user:status".into(),
-            agent_label: Some("claude".into()),
-            applies_to_source: Some("herdr:claude".into()),
-            title: Some("Instant".into()),
-            display_agent: None,
-            state_labels: HashMap::new(),
-            clear_title: false,
-            clear_display_agent: false,
-            clear_state_labels: false,
-            ttl: Some(Duration::ZERO),
-            seq: None,
-        });
-
-        let deadline = terminal
-            .next_agent_metadata_expiry()
-            .expect("pending expiry should be scheduled");
-        let mutation = terminal
-            .expire_agent_metadata_at(deadline, Instant::now())
-            .unwrap();
-        let change = mutation.effective_state_change.unwrap();
-
-        assert_eq!(
-            change.previous_presentation.title.as_deref(),
-            Some("Instant")
-        );
-        assert_eq!(change.presentation.title, None);
-        assert_eq!(terminal.effective_title(), None);
-    }
-
-    #[test]
-    fn pending_metadata_expiry_clears_when_lifecycle_guard_hides_metadata() {
-        let mut terminal = test_terminal();
-        terminal.set_hook_authority(
-            "herdr:claude".into(),
-            "claude".into(),
-            AgentState::Working,
-            None,
-            None,
-        );
-        terminal.set_agent_metadata(AgentMetadataReport {
-            source: "user:status".into(),
-            agent_label: Some("claude".into()),
-            applies_to_source: Some("herdr:claude".into()),
-            title: Some("Instant".into()),
-            display_agent: None,
-            state_labels: HashMap::new(),
-            clear_title: false,
-            clear_display_agent: false,
-            clear_state_labels: false,
-            ttl: Some(Duration::ZERO),
-            seq: None,
-        });
-        assert!(terminal.next_agent_metadata_expiry().is_some());
-
-        terminal.set_hook_authority(
-            "herdr:codex".into(),
-            "codex".into(),
-            AgentState::Working,
-            None,
-            None,
-        );
-        terminal.set_hook_authority(
-            "herdr:claude".into(),
-            "claude".into(),
-            AgentState::Working,
-            None,
-            None,
-        );
-
-        assert_eq!(terminal.next_agent_metadata_expiry(), None);
-        assert_eq!(terminal.effective_title(), None);
-    }
-
-    #[test]
     fn partial_update_does_not_resurrect_expired_hidden_metadata_fields() {
         let mut terminal = test_terminal();
         terminal.set_hook_authority(
-            "herdr:codex".into(),
+            "sesh-mux:codex".into(),
             "codex".into(),
             AgentState::Working,
             None,
@@ -1139,7 +694,7 @@ mod tests {
         terminal.set_agent_metadata(AgentMetadataReport {
             source: "user:status".into(),
             agent_label: Some("claude".into()),
-            applies_to_source: Some("herdr:claude".into()),
+            applies_to_source: Some("sesh-mux:claude".into()),
             title: Some("Expired title".into()),
             display_agent: None,
             state_labels: HashMap::new(),
@@ -1154,7 +709,7 @@ mod tests {
         terminal.set_agent_metadata(AgentMetadataReport {
             source: "user:status".into(),
             agent_label: Some("claude".into()),
-            applies_to_source: Some("herdr:claude".into()),
+            applies_to_source: Some("sesh-mux:claude".into()),
             title: None,
             display_agent: Some("Fresh display".into()),
             state_labels: HashMap::new(),
@@ -1165,7 +720,7 @@ mod tests {
             seq: None,
         });
         terminal.set_hook_authority(
-            "herdr:claude".into(),
+            "sesh-mux:claude".into(),
             "claude".into(),
             AgentState::Working,
             None,

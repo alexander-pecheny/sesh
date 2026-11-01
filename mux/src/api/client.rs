@@ -3,7 +3,6 @@ use std::io::{self, BufRead, BufReader, Read, Write};
 use std::path::PathBuf;
 use std::time::{Duration, Instant};
 
-use interprocess::local_socket::traits::Stream as _;
 use serde::de::DeserializeOwned;
 
 use crate::api::schema::{
@@ -21,14 +20,13 @@ pub enum ConnectionTarget {
 impl ConnectionTarget {
     fn socket_path(&self) -> PathBuf {
         match self {
-            Self::LocalSession(None) => crate::api::socket_path(),
-            Self::LocalSession(Some(name)) => crate::session::api_socket_path_for(Some(name)),
+            Self::LocalSession(_) => crate::api::socket_path(),
             Self::SocketPath(path) => path.clone(),
         }
     }
 }
 
-/// Reusable client for Herdr's newline-delimited JSON API.
+/// Reusable client for sesh-mux's newline-delimited JSON API.
 #[derive(Debug, Clone)]
 pub struct ApiClient {
     target: ConnectionTarget,
@@ -54,20 +52,6 @@ impl ApiClient {
 
     pub fn request_value(&self, request: &Request) -> Result<serde_json::Value, ApiClientError> {
         let mut stream = self.connect()?;
-        write_request(&mut stream, request)?;
-
-        let mut reader = BufReader::new(stream);
-        read_json_line(&mut reader)
-    }
-
-    pub fn request_value_with_timeout(
-        &self,
-        request: &Request,
-        timeout: Duration,
-    ) -> Result<serde_json::Value, ApiClientError> {
-        let mut stream = self.connect()?;
-        set_timeout_best_effort(&stream, TimeoutKind::Send, timeout)?;
-        set_timeout_best_effort(&stream, TimeoutKind::Recv, timeout)?;
         write_request(&mut stream, request)?;
 
         let mut reader = BufReader::new(stream);
@@ -115,28 +99,6 @@ impl ApiClient {
 
     fn connect(&self) -> io::Result<LocalStream> {
         crate::ipc::connect_local_stream(&self.socket_path())
-    }
-}
-
-enum TimeoutKind {
-    Send,
-    Recv,
-}
-
-fn set_timeout_best_effort(
-    stream: &LocalStream,
-    kind: TimeoutKind,
-    timeout: Duration,
-) -> io::Result<()> {
-    let result = match kind {
-        TimeoutKind::Send => stream.set_send_timeout(Some(timeout)),
-        TimeoutKind::Recv => stream.set_recv_timeout(Some(timeout)),
-    };
-    match result {
-        Ok(()) => Ok(()),
-        #[cfg(windows)]
-        Err(err) if err.kind() == io::ErrorKind::Unsupported => Ok(()),
-        Err(err) => Err(err),
     }
 }
 
@@ -242,16 +204,12 @@ mod tests {
     use super::*;
 
     #[test]
-    fn local_session_target_resolves_named_session_socket() {
-        let client = ApiClient::for_target(ConnectionTarget::LocalSession(Some("work".into())));
-        assert!(client.socket_path().ends_with("sessions/work/herdr.sock"));
-    }
-
-    #[test]
     fn status_timeout_closes_a_stalled_probe() {
         use interprocess::local_socket::traits::Listener as _;
-        let path =
-            std::env::temp_dir().join(format!("herdr-status-timeout-{}.sock", std::process::id()));
+        let path = std::env::temp_dir().join(format!(
+            "sesh-mux-status-timeout-{}.sock",
+            std::process::id()
+        ));
         let listener = crate::ipc::bind_private_local_listener(&path).unwrap();
         let server = std::thread::spawn(move || {
             let stream = listener.accept().unwrap();
@@ -277,7 +235,7 @@ mod tests {
 
     #[test]
     fn socket_path_target_uses_explicit_path() {
-        let path = PathBuf::from("/tmp/herdr-test.sock");
+        let path = PathBuf::from("/tmp/sesh-mux-test.sock");
         let client = ApiClient::for_target(ConnectionTarget::SocketPath(path.clone()));
         assert_eq!(client.socket_path(), path);
     }

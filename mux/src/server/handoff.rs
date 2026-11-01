@@ -1,38 +1,24 @@
-#[cfg(unix)]
 use std::io::{self, Read, Write};
-#[cfg(unix)]
 use std::os::fd::{AsRawFd, RawFd};
-#[cfg(unix)]
 use std::os::unix::net::{UnixListener, UnixStream};
-#[cfg(unix)]
 use std::path::{Path, PathBuf};
-#[cfg(unix)]
 use std::process::{Child, Command};
-#[cfg(unix)]
 use std::time::Duration;
 
-#[cfg(unix)]
 use serde::{Deserialize, Serialize};
-#[cfg(unix)]
 use tracing::{info, warn};
 
-#[cfg(unix)]
 const HANDOFF_VERSION: u32 = 1;
-#[cfg(unix)]
+const SOURCE_NAME: &str = "sesh-mux";
 const READY_TIMEOUT: Duration = Duration::from_secs(30);
-#[cfg(unix)]
 const OWNED_ACK_TIMEOUT: Duration = Duration::from_millis(500);
 // Descriptors are transferred in batches of this size. A single SCM_RIGHTS
 // control message caps out at 253 descriptors on Linux and 254 on macOS, so the
 // batch stays well below both limits and the number of panes stays unbounded.
-#[cfg(unix)]
 const FDS_PER_MESSAGE: usize = 64;
-#[cfg(unix)]
 pub(crate) const MAX_REPLAY_BYTES_PER_PANE: usize = 8 * 1024;
-#[cfg(unix)]
 pub(crate) const COMMIT_TIMEOUT: Duration = READY_TIMEOUT;
 
-#[cfg(unix)]
 #[derive(Serialize, Deserialize)]
 pub(crate) struct HandoffManifest {
     pub version: u32,
@@ -42,26 +28,21 @@ pub(crate) struct HandoffManifest {
     pub expected_protocol: Option<u32>,
     pub snapshot: crate::persist::SessionSnapshot,
     pub panes: Vec<crate::handoff_runtime::HandoffRuntimeState>,
-    /// An outer window title set over the API outlives the server that took the
-    /// call, so a handoff carries it rather than falling back to the config.
-    /// Absent from manifests written before this field existed.
-    #[serde(default)]
-    pub api_window_title: Option<String>,
+    /// "sesh-mux"; absent from manifests written by older servers.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub source_name: Option<String>,
 }
 
-#[cfg(unix)]
 pub(crate) struct ReceivedHandoff {
     pub manifest: HandoffManifest,
     pub fds: Vec<RawFd>,
     pub stream: UnixStream,
 }
 
-#[cfg(unix)]
 pub(crate) fn handoff_socket_path() -> PathBuf {
-    crate::session::data_dir().join(format!("herdr-handoff-{}.sock", std::process::id()))
+    crate::session::data_dir().join(format!("handoff-{}.sock", std::process::id()))
 }
 
-#[cfg(unix)]
 pub(crate) fn spawn_handoff_import(
     import_exe: Option<&Path>,
     socket_path: &Path,
@@ -74,7 +55,7 @@ pub(crate) fn spawn_handoff_import(
         fallback_exe = std::env::current_exe().map_err(|err| {
             io::Error::new(
                 err.kind(),
-                format!("failed to determine herdr executable path: {err}"),
+                format!("failed to determine sesh-mux executable path: {err}"),
             )
         })?;
         &fallback_exe
@@ -88,13 +69,6 @@ pub(crate) fn spawn_handoff_import(
         .stdin(std::process::Stdio::null())
         .stdout(std::process::Stdio::null())
         .stderr(std::process::Stdio::null());
-    if crate::session::explicit_session_requested() {
-        // The import child no longer has the original `--session` argument, so
-        // stale socket overrides must not mask the inherited HERDR_SESSION.
-        command
-            .env_remove(crate::api::SOCKET_PATH_ENV_VAR)
-            .env_remove(crate::server::socket_paths::CLIENT_SOCKET_PATH_ENV_VAR);
-    }
     crate::platform::detach_server_daemon_command(&mut command);
     command.spawn().map_err(|err| {
         io::Error::new(
@@ -107,7 +81,6 @@ pub(crate) fn spawn_handoff_import(
     })
 }
 
-#[cfg(unix)]
 pub(crate) fn cleanup_failed_import_child(child: &mut Child) {
     let pid = child.id();
     match child.try_wait() {
@@ -134,7 +107,6 @@ pub(crate) fn cleanup_failed_import_child(child: &mut Child) {
     }
 }
 
-#[cfg(unix)]
 pub(crate) fn bind_listener(socket_path: &Path) -> io::Result<UnixListener> {
     let _ = std::fs::remove_file(socket_path);
     let listener = UnixListener::bind(socket_path)?;
@@ -143,7 +115,6 @@ pub(crate) fn bind_listener(socket_path: &Path) -> io::Result<UnixListener> {
     Ok(listener)
 }
 
-#[cfg(unix)]
 pub(crate) fn accept_and_validate_on(
     listener: UnixListener,
     socket_path: &Path,
@@ -175,7 +146,6 @@ pub(crate) fn accept_and_validate_on(
     Ok(stream)
 }
 
-#[cfg(unix)]
 pub(crate) fn send_fds_and_wait_restored(stream: &mut UnixStream, fds: &[RawFd]) -> io::Result<()> {
     send_fds(stream, fds)?;
 
@@ -189,7 +159,6 @@ pub(crate) fn send_fds_and_wait_restored(stream: &mut UnixStream, fds: &[RawFd])
     Ok(())
 }
 
-#[cfg(unix)]
 pub(crate) fn wait_ready(stream: &mut UnixStream) -> io::Result<()> {
     stream.set_read_timeout(Some(READY_TIMEOUT))?;
     let ready = read_line_unbuffered(&mut *stream)?;
@@ -199,13 +168,11 @@ pub(crate) fn wait_ready(stream: &mut UnixStream) -> io::Result<()> {
     Ok(())
 }
 
-#[cfg(unix)]
 pub(crate) fn report_committed(stream: &mut UnixStream) -> io::Result<()> {
     stream.write_all(b"committed\n")?;
     stream.flush()
 }
 
-#[cfg(unix)]
 pub(crate) fn wait_owned_ack(stream: &mut UnixStream) {
     if let Err(err) = stream.set_read_timeout(Some(OWNED_ACK_TIMEOUT)) {
         warn!(err = %err, "failed to set handoff ownership ack timeout");
@@ -225,7 +192,6 @@ pub(crate) fn wait_owned_ack(stream: &mut UnixStream) {
     }
 }
 
-#[cfg(unix)]
 pub(crate) fn receive(socket_path: &Path, token: &str) -> io::Result<ReceivedHandoff> {
     let mut stream = UnixStream::connect(socket_path)?;
     stream.write_all(token.as_bytes())?;
@@ -257,7 +223,7 @@ pub(crate) fn receive(socket_path: &Path, token: &str) -> io::Result<ReceivedHan
         .is_some_and(|version| version != crate::build_info::version())
     {
         return Err(io::Error::other(format!(
-            "handoff expected herdr v{}, but this server is v{}",
+            "handoff expected sesh-mux v{}, but this server is v{}",
             manifest.expected_version.as_deref().unwrap_or("unknown"),
             crate::build_info::version()
         )));
@@ -272,19 +238,16 @@ pub(crate) fn receive(socket_path: &Path, token: &str) -> io::Result<ReceivedHan
     })
 }
 
-#[cfg(unix)]
 pub(crate) fn report_restored(stream: &mut UnixStream) -> io::Result<()> {
     stream.write_all(b"restored\n")?;
     stream.flush()
 }
 
-#[cfg(unix)]
 pub(crate) fn report_ready(stream: &mut UnixStream) -> io::Result<()> {
     stream.write_all(b"ready\n")?;
     stream.flush()
 }
 
-#[cfg(unix)]
 pub(crate) fn wait_committed(stream: &mut UnixStream) -> io::Result<()> {
     stream.set_read_timeout(Some(READY_TIMEOUT))?;
     let committed = read_line_unbuffered(&mut *stream)?;
@@ -294,19 +257,21 @@ pub(crate) fn wait_committed(stream: &mut UnixStream) -> io::Result<()> {
     Ok(())
 }
 
-#[cfg(unix)]
 pub(crate) fn report_owned(stream: &mut UnixStream) -> io::Result<()> {
     stream.write_all(b"owned\n")?;
     stream.flush()
 }
 
-#[cfg(unix)]
+/// A manifest from the server Sesh ran before sesh-mux, whose agents keep its environment and hooks.
+pub(crate) fn is_legacy_manifest(manifest: &HandoffManifest) -> bool {
+    manifest.source_name.as_deref() != Some(SOURCE_NAME)
+}
+
 pub(crate) fn manifest_for(
     snapshot: crate::persist::SessionSnapshot,
     panes: Vec<crate::handoff_runtime::HandoffRuntimeState>,
     expected_protocol: Option<u32>,
     expected_version: Option<String>,
-    api_window_title: Option<String>,
 ) -> HandoffManifest {
     HandoffManifest {
         version: HANDOFF_VERSION,
@@ -316,18 +281,16 @@ pub(crate) fn manifest_for(
         expected_protocol,
         snapshot,
         panes,
-        api_window_title,
+        source_name: Some(SOURCE_NAME.to_owned()),
     }
 }
 
-#[cfg(unix)]
 fn restrict_socket_permissions(path: &Path) -> io::Result<()> {
     use std::os::unix::fs::PermissionsExt;
 
     std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o600))
 }
 
-#[cfg(unix)]
 fn accept_with_timeout(
     listener: &UnixListener,
     timeout: Duration,
@@ -351,7 +314,6 @@ fn accept_with_timeout(
     }
 }
 
-#[cfg(unix)]
 fn read_line_unbuffered(stream: &mut UnixStream) -> io::Result<String> {
     let mut bytes = Vec::new();
     let mut byte = [0u8; 1];
@@ -377,7 +339,6 @@ fn read_line_unbuffered(stream: &mut UnixStream) -> io::Result<String> {
     }
 }
 
-#[cfg(unix)]
 fn send_fds(stream: &UnixStream, fds: &[RawFd]) -> io::Result<()> {
     for batch in fds.chunks(FDS_PER_MESSAGE) {
         send_fd_batch(stream, batch)?;
@@ -385,7 +346,6 @@ fn send_fds(stream: &UnixStream, fds: &[RawFd]) -> io::Result<()> {
     Ok(())
 }
 
-#[cfg(unix)]
 fn send_fd_batch(stream: &UnixStream, fds: &[RawFd]) -> io::Result<()> {
     if fds.is_empty() {
         return Ok(());
@@ -419,14 +379,12 @@ fn send_fd_batch(stream: &UnixStream, fds: &[RawFd]) -> io::Result<()> {
     Ok(())
 }
 
-#[cfg(unix)]
 fn close_raw_fds(fds: &[RawFd]) {
     for fd in fds {
         let _ = unsafe { libc::close(*fd) };
     }
 }
 
-#[cfg(unix)]
 fn recv_fds(stream: &UnixStream, expected: usize) -> io::Result<Vec<RawFd>> {
     let mut out: Vec<RawFd> = Vec::with_capacity(expected);
     while out.len() < expected {
@@ -453,7 +411,6 @@ fn recv_fds(stream: &UnixStream, expected: usize) -> io::Result<Vec<RawFd>> {
     Ok(out)
 }
 
-#[cfg(unix)]
 fn recv_fd_batch(stream: &UnixStream, wanted: usize) -> io::Result<Vec<RawFd>> {
     let mut byte = [0u8; 1];
     let mut iov = [libc::iovec {
@@ -520,12 +477,11 @@ fn recv_fd_batch(stream: &UnixStream, wanted: usize) -> io::Result<Vec<RawFd>> {
     Ok(out)
 }
 
-#[cfg(unix)]
 pub(crate) fn log_import_result(panes: usize) {
     info!(panes, "handoff import ready");
 }
 
-#[cfg(all(test, unix))]
+#[cfg(test)]
 mod tests {
     use super::*;
 
@@ -542,36 +498,17 @@ mod tests {
     }
 
     #[test]
-    fn a_handoff_carries_an_api_set_window_title() {
-        let manifest = manifest_for(
-            empty_snapshot(),
-            Vec::new(),
-            None,
-            None,
-            Some("deploying".to_string()),
-        );
-
-        assert_eq!(manifest.api_window_title.as_deref(), Some("deploying"));
-    }
-
-    #[test]
-    fn a_manifest_written_before_the_title_field_still_loads() {
-        let manifest = manifest_for(
-            empty_snapshot(),
-            Vec::new(),
-            None,
-            None,
-            Some("deploying".to_string()),
-        );
+    fn manifests_say_whether_an_older_server_wrote_them() {
+        let manifest = manifest_for(empty_snapshot(), Vec::new(), None, None);
+        assert!(!is_legacy_manifest(&manifest));
         let mut value = serde_json::to_value(&manifest).expect("manifest should serialize");
-        value
+        let object = value
             .as_object_mut()
-            .expect("manifest should be a json object")
-            .remove("api_window_title");
-
-        let older: HandoffManifest =
-            serde_json::from_value(value).expect("an older manifest should still load");
-
-        assert!(older.api_window_title.is_none());
+            .expect("manifest should be a json object");
+        object.remove("source_name");
+        object.insert("api_window_title".into(), serde_json::json!("deploying"));
+        let legacy: HandoffManifest =
+            serde_json::from_value(value).expect("a legacy manifest should load");
+        assert!(is_legacy_manifest(&legacy));
     }
 }

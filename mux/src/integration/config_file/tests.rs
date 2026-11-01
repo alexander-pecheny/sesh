@@ -6,7 +6,7 @@ struct Directory(PathBuf);
 impl Directory {
     fn new() -> Self {
         let path = std::env::temp_dir().join(format!(
-            "herdr-config-write-{}-{}",
+            "sesh-mux-config-write-{}-{}",
             std::process::id(),
             std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)
@@ -25,10 +25,7 @@ impl Drop for Directory {
 }
 
 // Windows existing files have separate native backup/recovery coverage.
-#[cfg(unix)]
 const ATOMIC_CASES: &[bool] = &[false, true];
-#[cfg(windows)]
-const ATOMIC_CASES: &[bool] = &[false];
 
 #[test]
 fn config_publication_keeps_old_content_until_commit() {
@@ -83,10 +80,8 @@ fn hard_links_are_rejected_before_staging_and_rechecked_before_commit() {
     let path = dir.0.join("config");
     let alias = dir.0.join("alias");
     fs::write(&path, b"original").unwrap();
-    #[cfg(unix)]
     let staged = Replacement::prepare(&path, b"new").unwrap();
     fs::hard_link(&path, &alias).unwrap();
-    #[cfg(unix)]
     assert!(staged
         .commit()
         .unwrap_err()
@@ -146,7 +141,6 @@ fn existing_permissions_and_new_file_defaults_are_preserved() {
     let dir = Directory::new();
     let path = dir.0.join("existing");
     fs::write(&path, b"original").unwrap();
-    #[cfg(unix)]
     {
         use std::os::unix::fs::PermissionsExt;
         fs::set_permissions(&path, fs::Permissions::from_mode(0o640)).unwrap();
@@ -164,11 +158,10 @@ fn existing_permissions_and_new_file_defaults_are_preserved() {
     );
 }
 
-#[cfg(unix)]
 #[test]
 fn writable_directory_does_not_bypass_read_only_config() {
     use std::os::unix::{fs::PermissionsExt, process::CommandExt};
-    const CHILD: &str = "HERDR_CONFIG_READ_ONLY_TEST";
+    const CHILD: &str = "SESH_MUX_CONFIG_READ_ONLY_TEST";
     if let Some(path) = std::env::var_os(CHILD) {
         let error = write_config(Path::new(&path), b"must not replace").unwrap_err();
         assert_eq!(error.kind(), io::ErrorKind::PermissionDenied);
@@ -199,15 +192,14 @@ fn writable_directory_does_not_bypass_read_only_config() {
     assert_eq!(fs::read_dir(&dir.0).unwrap().count(), 1);
 }
 
-#[cfg(unix)]
 #[test]
 fn partial_write_errors_preserve_files_and_do_not_remove_collisions() {
-    const CHILD: &str = "HERDR_CONFIG_PARTIAL_WRITE_TEST";
+    const CHILD: &str = "SESH_MUX_CONFIG_PARTIAL_WRITE_TEST";
     if let Some(path) = std::env::var_os(CHILD) {
         let dir = PathBuf::from(path);
         // This process runs only this test. A collision must neither be used nor removed.
         NEXT_TEMP.store(0, Ordering::Relaxed);
-        let collision = dir.join(format!(".herdr-config-{}-0.tmp", std::process::id()));
+        let collision = dir.join(format!(".sesh-mux-config-{}-0.tmp", std::process::id()));
         fs::write(&collision, b"unrelated file").unwrap();
         for name in ["existing", "new"] {
             let error = write_config(&dir.join(name), vec![b'x'; 8192]).unwrap_err();
@@ -220,7 +212,7 @@ fn partial_write_errors_preserve_files_and_do_not_remove_collisions() {
     let dir = Directory::new();
     fs::write(dir.0.join("existing"), b"original").unwrap();
     let output = std::process::Command::new("bash")
-        .args(["-c", "trap '' XFSZ; ulimit -f 1; exec \"$@\"", "herdr-test"])
+        .args(["-c", "trap '' XFSZ; ulimit -f 1; exec \"$@\"", "sesh-mux-test"])
         .arg(std::env::current_exe().unwrap())
         .args(["--exact", "integration::config_file::tests::partial_write_errors_preserve_files_and_do_not_remove_collisions", "--nocapture"])
         .env(CHILD, &dir.0)

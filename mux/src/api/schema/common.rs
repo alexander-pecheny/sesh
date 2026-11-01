@@ -46,17 +46,6 @@ pub struct AgentTarget {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
-pub struct ClientWindowTitleSetParams {
-    pub title: String,
-}
-
-/// Updates whether the requesting client shell receives and controls pane presentation.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
-pub struct ClientShellSurfaceSetParams {
-    pub active: bool,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum SplitDirection {
     Right,
@@ -87,52 +76,6 @@ pub enum ReadFormat {
     #[default]
     Text,
     Ansi,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
-pub struct NotificationShowParams {
-    pub title: String,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub body: Option<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub position: Option<crate::config::ToastHerdrPosition>,
-    #[serde(default, skip_serializing_if = "NotificationShowSound::is_none")]
-    pub sound: NotificationShowSound,
-}
-
-#[derive(
-    Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema, Default,
-)]
-#[serde(rename_all = "snake_case")]
-pub enum NotificationShowSound {
-    #[default]
-    None,
-    Done,
-    Request,
-}
-
-impl NotificationShowSound {
-    pub fn is_none(&self) -> bool {
-        matches!(self, Self::None)
-    }
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(rename_all = "snake_case")]
-pub enum NotificationShowReason {
-    Shown,
-    Disabled,
-    RateLimited,
-    NoForegroundClient,
-    Busy,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(rename_all = "snake_case")]
-pub enum ClientWindowTitleReason {
-    Set,
-    Cleared,
-    NoForegroundClient,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]

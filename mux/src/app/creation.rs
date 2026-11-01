@@ -2,7 +2,7 @@ use std::path::PathBuf;
 
 use super::{
     api_helpers::{pane_agent_status, tab_attention_priority},
-    App, Mode,
+    App,
 };
 use crate::api::schema::{EventData, EventEnvelope, EventKind};
 use crate::{config::NewTerminalCwdConfig, workspace::Workspace};
@@ -101,12 +101,6 @@ impl App {
     }
 
     pub(super) fn workspace_creation_source(&self) -> Option<usize> {
-        if self.state.mode == Mode::Navigate
-            && self.state.workspaces.get(self.state.selected).is_some()
-        {
-            return Some(self.state.selected);
-        }
-
         self.state.active.or_else(|| {
             self.state
                 .workspaces
@@ -154,7 +148,6 @@ impl App {
         crate::logging::workspace_created(&workspace_id, root_pane);
         if focus || self.state.active.is_none() {
             self.state.switch_workspace(idx);
-            self.state.mode = Mode::Terminal;
         }
         self.schedule_session_save();
         Ok(idx)
@@ -243,7 +236,6 @@ impl App {
             },
         });
         self.emit_tab_and_pane_created_events(tab, root_pane);
-        self.emit_layout_updated_event(ws_idx, 0);
     }
 
     pub(crate) fn emit_tab_created_events(&mut self, ws_idx: usize, tab_idx: usize) {
@@ -254,7 +246,6 @@ impl App {
             return;
         };
         self.emit_tab_and_pane_created_events(tab, root_pane);
-        self.emit_layout_updated_event(ws_idx, tab_idx);
     }
 
     fn emit_tab_and_pane_created_events(

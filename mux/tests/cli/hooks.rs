@@ -2,7 +2,7 @@ use super::harness::*;
 
 fn run_claude_hook(action: &str, hook_input: &str) -> Option<serde_json::Value> {
     run_shell_hook(
-        "src/integration/assets/claude/herdr-agent-state.sh",
+        "src/integration/assets/claude/sesh-mux-agent-state.sh",
         &[action],
         hook_input,
     )
@@ -10,7 +10,7 @@ fn run_claude_hook(action: &str, hook_input: &str) -> Option<serde_json::Value> 
 
 fn run_codex_hook(action: &str, hook_input: &str) -> Option<serde_json::Value> {
     run_shell_hook(
-        "src/integration/assets/codex/herdr-agent-state.sh",
+        "src/integration/assets/codex/sesh-mux-agent-state.sh",
         &[action],
         hook_input,
     )
@@ -18,7 +18,7 @@ fn run_codex_hook(action: &str, hook_input: &str) -> Option<serde_json::Value> {
 
 fn run_copilot_hook(hook_input: &str) -> Option<serde_json::Value> {
     run_shell_hook(
-        "src/integration/assets/copilot/herdr-agent-state.sh",
+        "src/integration/assets/copilot/sesh-mux-agent-state.sh",
         &[],
         hook_input,
     )
@@ -30,7 +30,7 @@ fn run_devin_hook(
     envs: &[(&str, &str)],
 ) -> Option<serde_json::Value> {
     run_shell_hook_with_env(
-        "src/integration/assets/devin/herdr-agent-state.sh",
+        "src/integration/assets/devin/sesh-mux-agent-state.sh",
         &[action],
         hook_input,
         envs,
@@ -39,7 +39,7 @@ fn run_devin_hook(
 
 fn run_grok_hook(hook_input: &str, envs: &[(&str, &str)]) -> Option<serde_json::Value> {
     run_shell_hook_with_env(
-        "src/integration/assets/grok/herdr-agent-state.sh",
+        "src/integration/assets/grok/sesh-mux-agent-state.sh",
         &["session"],
         hook_input,
         envs,
@@ -58,7 +58,7 @@ fn run_shell_hook_with_env(
 ) -> Option<serde_json::Value> {
     let base = unique_test_dir();
     fs::create_dir_all(&base).unwrap();
-    let socket_path = base.join("herdr.sock");
+    let socket_path = base.join("sesh-mux.sock");
     let listener = UnixListener::bind(&socket_path).unwrap();
 
     let server = thread::spawn(move || {
@@ -89,9 +89,9 @@ fn run_shell_hook_with_env(
     command
         .arg(hook_path)
         .args(args)
-        .env("HERDR_ENV", "1")
-        .env("HERDR_SOCKET_PATH", &socket_path)
-        .env("HERDR_PANE_ID", "p_test")
+        .env("SESH_MUX_ENV", "1")
+        .env("SESH_MUX_SOCKET_PATH", &socket_path)
+        .env("SESH_MUX_PANE_ID", "p_test")
         .env_remove("CODEX_THREAD_ID")
         .env_remove("CURSOR_VERSION")
         .stdin(Stdio::piped())
@@ -176,7 +176,7 @@ fn claude_hook_ignores_cursor_compatibility_payloads() {
 
     for cursor_version in ["2026.08.11-e8db854", ""] {
         assert!(run_shell_hook_with_env(
-            "src/integration/assets/claude/herdr-agent-state.sh",
+            "src/integration/assets/claude/sesh-mux-agent-state.sh",
             &["session"],
             r#"{"hook_event_name":"SessionStart","session_id":"cursor-session"}"#,
             &[("CURSOR_VERSION", cursor_version)],
@@ -202,7 +202,7 @@ fn codex_hook_reports_persisted_root_session_and_ignores_ephemeral_or_nested_ses
     assert!(request["params"].get("state").is_none());
 
     let matching_request = run_shell_hook_with_env(
-        "src/integration/assets/codex/herdr-agent-state.sh",
+        "src/integration/assets/codex/sesh-mux-agent-state.sh",
         &["session"],
         r#"{"hook_event_name":"SessionStart","session_id":"codex-session","transcript_path":"/tmp/codex-session.jsonl"}"#,
         &[("CODEX_THREAD_ID", "codex-session")],
@@ -220,7 +220,7 @@ fn codex_hook_reports_persisted_root_session_and_ignores_ephemeral_or_nested_ses
     .is_none());
 
     assert!(run_shell_hook_with_env(
-        "src/integration/assets/codex/herdr-agent-state.sh",
+        "src/integration/assets/codex/sesh-mux-agent-state.sh",
         &["session"],
         r#"{"hook_event_name":"SessionStart","session_id":"nested-session","transcript_path":"/tmp/nested-session.jsonl"}"#,
         &[("CODEX_THREAD_ID", "parent-session")],
@@ -287,7 +287,7 @@ fn devin_hook_ignores_prompt_session_list_fallback() {
         &[
             ("DEVIN_PROJECT_DIR", "/tmp/project"),
             (
-                "HERDR_DEVIN_LIST_JSON",
+                "SESH_MUX_DEVIN_LIST_JSON",
                 r#"[{"id":"older-session","working_directory":"/tmp/other"},{"id":"devin-session","working_directory":"/tmp/project"}]"#,
             ),
         ],
@@ -301,7 +301,7 @@ fn devin_hook_reports_session_id_from_stdin_without_state() {
     let request = run_devin_hook(
         "session",
         r#"{"hook_event_name":"SessionStart","session_id":"devin-session","source":"startup"}"#,
-        &[("HERDR_DEVIN_LIST_JSON", r#"[{"id":"older-session"}]"#)],
+        &[("SESH_MUX_DEVIN_LIST_JSON", r#"[{"id":"older-session"}]"#)],
     )
     .expect("devin session start should report session identity");
 
@@ -319,7 +319,7 @@ fn devin_hook_prefers_hook_session_id_over_list() {
         &[
             ("DEVIN_PROJECT_DIR", "/tmp/project"),
             (
-                "HERDR_DEVIN_LIST_JSON",
+                "SESH_MUX_DEVIN_LIST_JSON",
                 r#"[{"id":"older-session","working_directory":"/tmp/project"}]"#,
             ),
         ],
@@ -339,7 +339,7 @@ fn devin_hook_reports_tool_session_from_list_without_state() {
         &[
             ("DEVIN_PROJECT_DIR", "/tmp/project"),
             (
-                "HERDR_DEVIN_LIST_JSON",
+                "SESH_MUX_DEVIN_LIST_JSON",
                 r#"[{"id":"older-session","working_directory":"/tmp/other"},{"id":"devin-session","working_directory":"/tmp/project"}]"#,
             ),
         ],
@@ -360,7 +360,7 @@ fn devin_hook_ignores_startup_session_list_fallback() {
         &[
             ("DEVIN_PROJECT_DIR", "/tmp/project"),
             (
-                "HERDR_DEVIN_LIST_JSON",
+                "SESH_MUX_DEVIN_LIST_JSON",
                 r#"[{"id":"stale-session","working_directory":"/tmp/project"}]"#,
             ),
         ],
@@ -377,7 +377,7 @@ fn devin_hook_ignores_non_matching_session_list_entries() {
         &[
             ("DEVIN_PROJECT_DIR", "/tmp/project"),
             (
-                "HERDR_DEVIN_LIST_JSON",
+                "SESH_MUX_DEVIN_LIST_JSON",
                 r#"[{"id":"other-session","working_directory":"/tmp/other"}]"#,
             ),
         ],

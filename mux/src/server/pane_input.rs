@@ -3,45 +3,10 @@ use crossterm::event::{KeyCode, KeyEventKind, KeyModifiers, MouseEventKind};
 
 use crate::protocol::{AttachScrollDirection, AttachScrollSource, ClientPaneInputEvent};
 
-pub(super) fn downgrade_ineligible_pixel_mouse(
-    events: &mut [ClientPaneInputEvent],
-    pixel_mouse: bool,
-    runtime_size: (u16, u16),
-    runtime_pixels: Option<(u32, u32)>,
-) {
-    let (runtime_rows, runtime_cols) = runtime_size;
-    for event in events {
-        let ClientPaneInputEvent::Mouse {
-            position, geometry, ..
-        } = event
-        else {
-            continue;
-        };
-        let crate::protocol::ClientMousePosition::Pixels { x, y, column, row } = *position else {
-            continue;
-        };
-        let exact = pixel_mouse
-            && geometry.is_some_and(|geometry| {
-                (runtime_rows, runtime_cols) == (geometry.rows, geometry.cols)
-                    && runtime_pixels == Some((geometry.width_px, geometry.height_px))
-                    && column < geometry.cols
-                    && row < geometry.rows
-                    && x > 0
-                    && y > 0
-                    && x <= geometry.width_px
-                    && y <= geometry.height_px
-            });
-        if !exact {
-            *position = crate::protocol::ClientMousePosition::Cell { column, row };
-            *geometry = None;
-        }
-    }
-}
-
 pub(super) fn terminal_attach_mouse_position(
     runtime: &crate::terminal::TerminalRuntime,
     terminal_size: (u16, u16),
-    cell_size: crate::kitty_graphics::HostCellSize,
+    cell_size: crate::server::clients::CellSize,
     pixel_mouse: bool,
     host_sgr_pixels_active: bool,
     position: crate::protocol::ClientMousePosition,
@@ -207,13 +172,6 @@ pub(super) fn apply_client_pane_input_events(
     apply_client_terminal_input_events(runtime, events, true)
 }
 
-pub(super) fn apply_client_popup_input_events(
-    runtime: &crate::terminal::TerminalRuntime,
-    events: &[ClientPaneInputEvent],
-) -> Result<(), String> {
-    apply_client_terminal_input_events(runtime, events, false)
-}
-
 fn apply_client_terminal_input_events(
     runtime: &crate::terminal::TerminalRuntime,
     events: &[ClientPaneInputEvent],
@@ -363,7 +321,7 @@ mod tests {
             terminal_attach_mouse_position(
                 &runtime,
                 (20, 5),
-                crate::kitty_graphics::HostCellSize {
+                crate::server::clients::CellSize {
                     width_px: 10,
                     height_px: 20,
                 },
@@ -383,7 +341,7 @@ mod tests {
             terminal_attach_mouse_position(
                 &runtime,
                 (20, 5),
-                crate::kitty_graphics::HostCellSize {
+                crate::server::clients::CellSize {
                     width_px: 10,
                     height_px: 20,
                 },
@@ -408,7 +366,7 @@ mod tests {
             terminal_attach_mouse_position(
                 &runtime,
                 (80, 24),
-                crate::kitty_graphics::HostCellSize::default(),
+                crate::server::clients::CellSize::default(),
                 false,
                 false,
                 crate::protocol::ClientMousePosition::Cell { column: 12, row: 4 },
@@ -416,100 +374,5 @@ mod tests {
             ),
             Some(crate::protocol::ClientMousePosition::Cell { column: 12, row: 4 })
         );
-    }
-
-    #[test]
-    fn ineligible_shell_pixel_mouse_uses_its_canonical_cell_position() {
-        let mut events = vec![ClientPaneInputEvent::Mouse {
-            kind: crate::protocol::ClientMouseKind::Down(crate::protocol::ClientMouseButton::Left),
-            position: crate::protocol::ClientMousePosition::Pixels {
-                x: 121,
-                y: 81,
-                column: 12,
-                row: 4,
-            },
-            geometry: Some(crate::protocol::ClientMouseGeometry {
-                cols: 20,
-                rows: 5,
-                width_px: 200,
-                height_px: 100,
-            }),
-            modifiers: 0,
-            lines: 1,
-        }];
-
-        downgrade_ineligible_pixel_mouse(&mut events, false, (5, 20), Some((200, 100)));
-
-        assert!(matches!(
-            events.as_slice(),
-            [ClientPaneInputEvent::Mouse {
-                position: crate::protocol::ClientMousePosition::Cell { column: 12, row: 4 },
-                ..
-            }]
-        ));
-    }
-
-    #[test]
-    fn eligible_shell_pixel_mouse_remains_exact() {
-        let position = crate::protocol::ClientMousePosition::Pixels {
-            x: 121,
-            y: 81,
-            column: 12,
-            row: 4,
-        };
-        let mut events = vec![ClientPaneInputEvent::Mouse {
-            kind: crate::protocol::ClientMouseKind::Moved,
-            position,
-            geometry: Some(crate::protocol::ClientMouseGeometry {
-                cols: 20,
-                rows: 5,
-                width_px: 200,
-                height_px: 100,
-            }),
-            modifiers: 0,
-            lines: 1,
-        }];
-
-        downgrade_ineligible_pixel_mouse(&mut events, true, (5, 20), Some((200, 100)));
-
-        assert!(matches!(
-            events.as_slice(),
-            [ClientPaneInputEvent::Mouse {
-                position: current,
-                ..
-            }] if *current == position
-        ));
-    }
-
-    #[test]
-    fn stale_shell_pixel_geometry_downgrades_to_its_canonical_cell() {
-        let mut events = vec![ClientPaneInputEvent::Mouse {
-            kind: crate::protocol::ClientMouseKind::Moved,
-            position: crate::protocol::ClientMousePosition::Pixels {
-                x: 121,
-                y: 81,
-                column: 12,
-                row: 4,
-            },
-            geometry: Some(crate::protocol::ClientMouseGeometry {
-                cols: 20,
-                rows: 5,
-                width_px: 200,
-                height_px: 100,
-            }),
-            modifiers: 0,
-            lines: 1,
-        }];
-
-        downgrade_ineligible_pixel_mouse(&mut events, true, (6, 20), Some((200, 120)));
-
-        assert!(matches!(
-            events.as_slice(),
-            [ClientPaneInputEvent::Mouse {
-                position: crate::protocol::ClientMousePosition::Cell { column: 12, row: 4 },
-                geometry: None,
-                ..
-            }]
-        ));
     }
 }

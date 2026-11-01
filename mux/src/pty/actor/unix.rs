@@ -176,24 +176,6 @@ impl PtyIoActorHandle {
         Ok(reply_rx)
     }
 
-    pub(crate) fn write_terminal_response(&self, response: impl FnOnce() -> Option<Bytes>) {
-        let _order = self
-            .response_order
-            .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner());
-        let Some(bytes) = response() else {
-            return;
-        };
-        if !bytes.is_empty() {
-            self.controls
-                .lock()
-                .unwrap_or_else(|poisoned| poisoned.into_inner())
-                .terminal_responses
-                .push(bytes);
-            self.wake_actor();
-        }
-    }
-
     pub(crate) fn resize(
         &self,
         rows: u16,
@@ -424,7 +406,7 @@ impl PtyIoActor {
             poll_observer,
         };
         std::thread::Builder::new()
-            .name(format!("herdr-pty-{}", config.pane_id))
+            .name(format!("sesh-mux-pty-{}", config.pane_id))
             .spawn(move || runner.run())
             .map_err(|err| std::io::Error::other(err.to_string()))?;
 
@@ -1040,7 +1022,6 @@ mod tests {
         io::{Read, Write},
         os::fd::{AsRawFd, FromRawFd, IntoRawFd},
         os::unix::net::UnixStream,
-        sync::atomic::{AtomicBool, Ordering},
     };
 
     fn test_wake_pair() -> (fd::WakeWriter, OwnedFd) {
@@ -1598,141 +1579,6 @@ mod tests {
             .expect("actor still reads after duplicate closes");
         assert_eq!(read, Bytes::from_static(b"still-live"));
         handle.shutdown();
-    }
-
-    #[test]
-    fn resize_and_nudge_keep_latest_request_when_command_queue_is_full() {
-        let (data_tx, _data_rx) = mpsc::channel(1);
-        let (control_tx, _control_rx) = std_mpsc::channel();
-        data_tx
-            .try_send(PtyIoDataCommand::WriteUserInput(Bytes::from_static(
-                b"fill",
-            )))
-            .expect("fill command queue");
-        let controls = Arc::new(Mutex::new(SharedPtyControls::default()));
-        let (wake, _wake_read_fd) = test_wake_pair();
-        let handle = PtyIoActorHandle {
-            data_tx,
-            control_tx,
-            wake,
-            user_writes: Arc::new(Mutex::new(UserWriteGate { accepting: true })),
-            controls: Arc::clone(&controls),
-            response_order: Arc::new(Mutex::new(())),
-        };
-
-        handle.resize(20, 80, 8, 16, vec![Bytes::from_static(b"old")]);
-        handle.resize(40, 120, 9, 18, vec![Bytes::from_static(b"new")]);
-        handle.nudge_child_redraw_after_handoff(41, 121, 10, 20);
-        handle.write_terminal_response(|| Some(Bytes::from_static(b"response")));
-
-        let controls = controls.lock().expect("controls lock");
-        assert_eq!(
-            controls.resize,
-            Some(PtyResizeRequest {
-                resize: PtyResize {
-                    rows: 40,
-                    cols: 120,
-                    cell_width_px: 9,
-                    cell_height_px: 18,
-                },
-                terminal_responses: vec![Bytes::from_static(b"new")],
-            })
-        );
-        assert_eq!(
-            controls.nudge,
-            Some(PtyResize {
-                rows: 41,
-                cols: 121,
-                cell_width_px: 10,
-                cell_height_px: 20,
-            })
-        );
-        assert_eq!(
-            controls.terminal_responses,
-            vec![Bytes::from_static(b"response")]
-        );
-    }
-
-    #[test]
-    fn appearance_transition_report_precedes_query_of_new_scheme() {
-        let (actor_socket, mut peer) = UnixStream::pair().expect("socket pair");
-        actor_socket
-            .set_nonblocking(true)
-            .expect("actor socket nonblocking");
-        let owned = unsafe { OwnedFd::from_raw_fd(actor_socket.into_raw_fd()) };
-        let (data_tx, data_rx) = mpsc::channel(ACTOR_COMMAND_BUFFER);
-        let (control_tx, control_rx) = std_mpsc::channel();
-        let wake_pipe = fd::create_wake_pipe().expect("wake pipe");
-        let controls = Arc::new(Mutex::new(SharedPtyControls::default()));
-        let response_order = Arc::new(Mutex::new(()));
-        let light = Arc::new(AtomicBool::new(false));
-        let query_light = Arc::clone(&light);
-        let runner = PtyIoActorRunner {
-            pane_id: 1,
-            file: std::fs::File::from(owned),
-            data_rx,
-            control_rx,
-            state: ActorState::Running,
-            pending_writes: VecDeque::new(),
-            current_write_offset: 0,
-            active_submission: None,
-            pending_handoff: None,
-            wake_read_fd: wake_pipe.read_fd,
-            controls: Arc::clone(&controls),
-            response_order: Arc::clone(&response_order),
-            on_read: Box::new(move |_| PtyReadResult {
-                terminal_responses: vec![if query_light.load(Ordering::Acquire) {
-                    Bytes::from_static(b"query-light")
-                } else {
-                    Bytes::from_static(b"query-dark")
-                }],
-            }),
-            on_reader_exit: None,
-            poll_observer: None,
-        };
-        let handle = PtyIoActorHandle {
-            data_tx,
-            control_tx,
-            wake: wake_pipe.writer,
-            user_writes: Arc::new(Mutex::new(UserWriteGate { accepting: true })),
-            controls,
-            response_order,
-        };
-        let (changed_tx, changed_rx) = std_mpsc::channel();
-        let (continue_tx, continue_rx) = std_mpsc::channel();
-
-        let appearance = std::thread::spawn(move || {
-            handle.write_terminal_response(|| {
-                light.store(true, Ordering::Release);
-                changed_tx.send(()).expect("notify appearance change");
-                continue_rx.recv().expect("continue appearance report");
-                Some(Bytes::from_static(b"live-light"))
-            });
-        });
-        changed_rx.recv().expect("appearance changed");
-        peer.write_all(b"query").expect("write query");
-        let reader = std::thread::spawn(move || {
-            let mut runner = runner;
-            assert!(runner.read_once());
-            runner
-        });
-        continue_tx.send(()).expect("release appearance report");
-        appearance.join().expect("appearance thread joins");
-        let runner = reader.join().expect("reader thread joins");
-
-        assert_eq!(
-            runner.pending_writes,
-            VecDeque::from([
-                PendingWrite {
-                    bytes: Bytes::from_static(b"live-light"),
-                    boundary: None,
-                },
-                PendingWrite {
-                    bytes: Bytes::from_static(b"query-light"),
-                    boundary: None,
-                },
-            ])
-        );
     }
 
     #[test]

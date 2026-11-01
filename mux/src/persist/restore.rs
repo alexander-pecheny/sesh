@@ -91,7 +91,6 @@ pub fn restore(
     )
 }
 
-#[cfg(unix)]
 pub fn restore_handoff(
     snapshot: &SessionSnapshot,
     scrollback_limit_bytes: usize,
@@ -117,7 +116,6 @@ pub fn restore_handoff(
     )
 }
 
-#[cfg(unix)]
 pub fn handoff_pane_aliases(
     snapshot: &SessionSnapshot,
     workspaces: &[Workspace],
@@ -137,14 +135,12 @@ pub fn handoff_pane_aliases(
     aliases
 }
 
-#[cfg(unix)]
 fn collect_snapshot_pane_ids(node: &LayoutSnapshot) -> Vec<u32> {
     let mut ids = Vec::new();
     collect_snapshot_ids_inner(node, &mut ids);
     ids
 }
 
-#[cfg(unix)]
 fn collect_snapshot_ids_inner(node: &LayoutSnapshot, ids: &mut Vec<u32>) {
     match node {
         LayoutSnapshot::Pane(id) => ids.push(*id),
@@ -184,7 +180,6 @@ fn collect_layout_snapshot_pane_ids(node: &LayoutSnapshot, ids: &mut Vec<u32>) {
     }
 }
 
-#[cfg(unix)]
 fn restore_with_imports_strict(
     snapshot: &SessionSnapshot,
     history: Option<&SessionHistorySnapshot>,
@@ -606,7 +601,6 @@ fn restore_tab(
         }
 
         let runtime_result = {
-            #[cfg(unix)]
             if let Some(imported) = imported_runtime {
                 TerminalRuntime::from_handoff_fd(
                     crate::handoff_runtime::ImportedHandoffRuntime {
@@ -968,12 +962,6 @@ mod tests {
             .to_string()
     }
 
-    #[cfg(windows)]
-    fn test_restore_shell() -> &'static str {
-        "C:\\Windows\\System32\\whoami.exe"
-    }
-
-    #[cfg(not(windows))]
     fn test_restore_shell() -> &'static str {
         "/bin/sh"
     }
@@ -1040,10 +1028,10 @@ mod tests {
     #[test]
     fn restored_worktree_space_membership_drops_missing_checkout() {
         let missing =
-            std::env::temp_dir().join(format!("herdr-missing-worktree-{}", std::process::id()));
+            std::env::temp_dir().join(format!("sesh-mux-missing-worktree-{}", std::process::id()));
         let membership = crate::workspace::WorktreeSpaceMembership {
             key: "repo-key".into(),
-            label: "herdr".into(),
+            label: "sesh-mux".into(),
             repo_root: missing.join("repo"),
             checkout_path: missing.join("checkout"),
             is_linked_worktree: true,
@@ -1056,7 +1044,7 @@ mod tests {
     fn restore_plan_respects_opt_in_and_allowlist() {
         let pi_session_path = test_session_path("pi-session.jsonl");
         let session = super::super::snapshot::PaneAgentSessionSnapshot {
-            source: "herdr:pi".into(),
+            source: "sesh-mux:pi".into(),
             agent: "pi".into(),
             kind: crate::agent_resume::AgentSessionRefKind::Path,
             value: pi_session_path.clone(),
@@ -1070,7 +1058,7 @@ mod tests {
         );
 
         let unsupported_path = super::super::snapshot::PaneAgentSessionSnapshot {
-            source: "herdr:claude".into(),
+            source: "sesh-mux:claude".into(),
             agent: "claude".into(),
             kind: crate::agent_resume::AgentSessionRefKind::Path,
             value: test_session_path("claude-session"),
@@ -1083,7 +1071,7 @@ mod tests {
     fn restore_plan_selection_suppresses_duplicates() {
         let pi_session_path = test_session_path("pi-session.jsonl");
         let session = super::super::snapshot::PaneAgentSessionSnapshot {
-            source: "herdr:pi".into(),
+            source: "sesh-mux:pi".into(),
             agent: "pi".into(),
             kind: crate::agent_resume::AgentSessionRefKind::Path,
             value: pi_session_path.clone(),
@@ -1106,7 +1094,7 @@ mod tests {
     #[test]
     fn pane_restore_startup_suppresses_history_for_native_agent_resume() {
         let session = super::super::snapshot::PaneAgentSessionSnapshot {
-            source: "herdr:pi".into(),
+            source: "sesh-mux:pi".into(),
             agent: "pi".into(),
             kind: crate::agent_resume::AgentSessionRefKind::Path,
             value: test_session_path("pi-session.jsonl"),
@@ -1132,7 +1120,7 @@ mod tests {
     #[test]
     fn pane_restore_startup_suppresses_history_for_duplicate_native_agent_session() {
         let session = super::super::snapshot::PaneAgentSessionSnapshot {
-            source: "herdr:pi".into(),
+            source: "sesh-mux:pi".into(),
             agent: "pi".into(),
             kind: crate::agent_resume::AgentSessionRefKind::Path,
             value: test_session_path("pi-session.jsonl"),
@@ -1161,7 +1149,7 @@ mod tests {
     #[test]
     fn pane_restore_startup_keeps_history_without_native_agent_resume() {
         let session = super::super::snapshot::PaneAgentSessionSnapshot {
-            source: "herdr:pi".into(),
+            source: "sesh-mux:pi".into(),
             agent: "pi".into(),
             kind: crate::agent_resume::AgentSessionRefKind::Path,
             value: test_session_path("pi-session.jsonl"),
@@ -1188,7 +1176,7 @@ mod tests {
     #[test]
     fn restore_rehydrates_agent_session_metadata() {
         let session = super::super::snapshot::PaneAgentSessionSnapshot {
-            source: "herdr:hermes".into(),
+            source: "sesh-mux:hermes".into(),
             agent: "hermes".into(),
             kind: crate::agent_resume::AgentSessionRefKind::Id,
             value: "hermes-session".into(),
@@ -1197,7 +1185,7 @@ mod tests {
 
         let preserved = restored_terminal_agent_session(Some(&session), false)
             .expect("restore should preserve metadata");
-        assert_eq!(preserved.source, "herdr:hermes");
+        assert_eq!(preserved.source, "sesh-mux:hermes");
         assert_eq!(preserved.agent, "hermes");
         assert_eq!(preserved.session_ref.value, "hermes-session");
     }
@@ -1205,7 +1193,7 @@ mod tests {
     #[test]
     fn restore_does_not_rehydrate_duplicate_agent_session_metadata() {
         let session = super::super::snapshot::PaneAgentSessionSnapshot {
-            source: "herdr:pi".into(),
+            source: "sesh-mux:pi".into(),
             agent: "pi".into(),
             kind: crate::agent_resume::AgentSessionRefKind::Path,
             value: test_session_path("pi-session.jsonl"),
@@ -1216,93 +1204,6 @@ mod tests {
         assert!(take_restore_plan_for_snapshot(&session, true, &mut resumed).is_none());
 
         assert!(restored_terminal_agent_session(Some(&session), true).is_none());
-    }
-
-    #[tokio::test]
-    async fn failed_cold_restore_preserves_panes_and_saved_directories() {
-        for missing_shell in [false, true] {
-            let mut snapshot: SessionSnapshot = serde_json::from_str(include_str!(
-                "../../tests/fixtures/session/current-herdr-session.json"
-            ))
-            .unwrap();
-            let cwd = std::env::current_dir().unwrap();
-            let missing = cwd.join("__herdr_missing_restore_directory__");
-            assert!(!missing.exists());
-            for workspace in &mut snapshot.workspaces {
-                workspace.identity_cwd = cwd.clone();
-                for tab in &mut workspace.tabs {
-                    for pane in tab.panes.values_mut() {
-                        pane.cwd = cwd.clone();
-                    }
-                }
-            }
-            let failed = snapshot.workspaces[0].tabs[0].panes.get_mut(&1).unwrap();
-            failed.cwd = missing.clone();
-            failed.label = Some("keep my pane".into());
-            failed.agent_session = Some(super::super::snapshot::PaneAgentSessionSnapshot {
-                source: "herdr:opencode".into(),
-                agent: "opencode".into(),
-                kind: crate::agent_resume::AgentSessionRefKind::Id,
-                value: "keep-my-session".into(),
-                path: None,
-            });
-            let (events, _rx) = mpsc::channel(32);
-            let (workspaces, terminals, runtimes) = restore(
-                &snapshot,
-                None,
-                24,
-                80,
-                0,
-                if missing_shell {
-                    "__herdr_missing_restore_shell__"
-                } else {
-                    test_restore_shell()
-                },
-                crate::config::ShellModeConfig::NonLogin,
-                false,
-                events,
-                Arc::new(Notify::new()),
-                Arc::new(RenderSignal::new()),
-            );
-            let runtimes = crate::terminal::TerminalRuntimeRegistry::from(runtimes);
-            let captured = crate::persist::capture(&workspaces, &terminals, &runtimes, Some(0), 0);
-            assert_eq!(
-                captured.workspaces.len(),
-                2,
-                "a launch failure must not delete a workspace"
-            );
-            assert_eq!(captured.workspaces[0].tabs.len(), 2);
-            let pane = captured.workspaces[0].tabs[0]
-                .panes
-                .values()
-                .next()
-                .unwrap();
-            assert_eq!(
-                pane.cwd, missing,
-                "fallback cwd must not replace saved intent"
-            );
-            assert_eq!(pane.label.as_deref(), Some("keep my pane"));
-            assert_eq!(
-                pane.agent_session.as_ref().unwrap().value,
-                "keep-my-session"
-            );
-            let root = workspaces[0].tabs[0].root_pane;
-            let terminal_id = workspaces[0].tabs[0].terminal_id(root).unwrap();
-            assert!(
-                runtimes.get(terminal_id).is_none(),
-                "do not open a replacement shell elsewhere"
-            );
-            let healthy = workspaces[1].tabs[0]
-                .terminal_id(workspaces[1].tabs[0].root_pane)
-                .unwrap();
-            assert_eq!(runtimes.get(healthy).is_some(), !missing_shell);
-            assert!(terminals[terminal_id].restore_error.is_some());
-            let mut state = crate::app::AppState::test_new();
-            state.workspaces = workspaces;
-            state.terminals = terminals;
-            state.active = Some(0);
-            state.assert_invariants_for_test();
-        }
     }
 
     #[tokio::test]
@@ -1330,7 +1231,7 @@ mod tests {
                             agent_name: Some("reviewer".into()),
                             managed_agent_kind: Some("opencode".into()),
                             agent_session: Some(super::super::snapshot::PaneAgentSessionSnapshot {
-                                source: "herdr:opencode".into(),
+                                source: "sesh-mux:opencode".into(),
                                 agent: "opencode".into(),
                                 kind: crate::agent_resume::AgentSessionRefKind::Id,
                                 value: "opencode-session".into(),
@@ -1381,7 +1282,7 @@ mod tests {
             .persisted_agent_session
             .as_ref()
             .expect("persisted agent session should survive restore");
-        assert_eq!(session.source, "herdr:opencode");
+        assert_eq!(session.source, "sesh-mux:opencode");
         assert_eq!(session.agent, "opencode");
         assert_eq!(session.session_ref.value, "opencode-session");
     }
@@ -1469,118 +1370,6 @@ mod tests {
         assert_eq!(workspace.next_public_tab_number, 6);
     }
 
-    #[tokio::test]
-    async fn cold_restore_with_gapped_public_tab_numbers_drops_unmanaged_agent_name() {
-        let cwd = std::env::current_dir().unwrap();
-        let pane_snap = |id: &str| {
-            (
-                id.parse::<u32>().unwrap(),
-                super::super::snapshot::PaneSnapshot {
-                    cwd: cwd.clone(),
-                    label: None,
-                    agent_name: None,
-                    managed_agent_kind: None,
-                    agent_session: None,
-                    launch_argv: None,
-                },
-            )
-        };
-        let final_pane = super::super::snapshot::PaneSnapshot {
-            cwd: cwd.clone(),
-            label: Some("planner".into()),
-            agent_name: Some("planner".into()),
-            managed_agent_kind: None,
-            agent_session: Some(super::super::snapshot::PaneAgentSessionSnapshot {
-                source: "herdr:codex".into(),
-                agent: "codex".into(),
-                kind: crate::agent_resume::AgentSessionRefKind::Id,
-                value: "codex-session".into(),
-                path: None,
-            }),
-            launch_argv: None,
-        };
-        let snapshot = SessionSnapshot {
-            version: super::super::snapshot::SNAPSHOT_VERSION,
-            workspaces: vec![WorkspaceSnapshot {
-                id: Some("w1".into()),
-                custom_name: None,
-                identity_cwd: cwd.clone(),
-                worktree_space: None,
-                public_pane_numbers: HashMap::from([(10, 1), (11, 2), (12, 3), (13, 4)]),
-                next_public_pane_number: 5,
-                public_tab_numbers: vec![1, 3, 4, 5],
-                next_public_tab_number: 6,
-                tabs: vec![
-                    TabSnapshot {
-                        custom_name: None,
-                        layout: LayoutSnapshot::Pane(10),
-                        panes: HashMap::from([pane_snap("10")]),
-                        zoomed: false,
-                        focused: Some(10),
-                        root_pane: Some(10),
-                    },
-                    TabSnapshot {
-                        custom_name: None,
-                        layout: LayoutSnapshot::Pane(11),
-                        panes: HashMap::from([pane_snap("11")]),
-                        zoomed: false,
-                        focused: Some(11),
-                        root_pane: Some(11),
-                    },
-                    TabSnapshot {
-                        custom_name: None,
-                        layout: LayoutSnapshot::Pane(12),
-                        panes: HashMap::from([pane_snap("12")]),
-                        zoomed: false,
-                        focused: Some(12),
-                        root_pane: Some(12),
-                    },
-                    TabSnapshot {
-                        custom_name: None,
-                        layout: LayoutSnapshot::Pane(13),
-                        panes: HashMap::from([(13, final_pane)]),
-                        zoomed: false,
-                        focused: Some(13),
-                        root_pane: Some(13),
-                    },
-                ],
-                active_tab: 3,
-            }],
-            active: Some(0),
-            selected: 0,
-            sidebar_width: None,
-            sidebar_section_split: None,
-            collapsed_space_keys: Default::default(),
-        };
-        let (events, _event_rx) = mpsc::channel(4);
-
-        let (workspaces, terminals, _runtimes) = restore(
-            &snapshot,
-            None,
-            24,
-            80,
-            0,
-            test_restore_shell(),
-            crate::config::ShellModeConfig::NonLogin,
-            false,
-            events,
-            Arc::new(Notify::new()),
-            Arc::new(RenderSignal::new()),
-        );
-
-        let workspace = workspaces.first().expect("workspace should restore");
-        assert_eq!(workspace.active_tab, 3);
-        assert_eq!(workspace.tabs[3].number, 5);
-        let agent_pane = workspace.tabs[3].root_pane;
-        let terminal_id = &workspace.tabs[3].panes[&agent_pane].attached_terminal_id;
-        assert!(terminals[terminal_id].agent_name.is_none());
-        assert_eq!(terminals[terminal_id].managed_agent_kind(), None);
-        assert!(workspace
-            .pane_details(&terminals)
-            .into_iter()
-            .all(|detail| detail.pane_id != agent_pane));
-    }
-
     #[test]
     fn legacy_restore_precomputes_missing_public_pane_numbers() {
         let cwd = std::env::current_dir().unwrap();
@@ -1618,7 +1407,6 @@ mod tests {
     }
 
     #[tokio::test]
-    #[cfg(unix)]
     async fn native_agent_restore_defers_runtime_launch() {
         let cwd = std::env::current_dir().unwrap();
         let snapshot = SessionSnapshot {
@@ -1643,7 +1431,7 @@ mod tests {
                             agent_name: None,
                             managed_agent_kind: None,
                             agent_session: Some(super::super::snapshot::PaneAgentSessionSnapshot {
-                                source: "herdr:codex".into(),
+                                source: "sesh-mux:codex".into(),
                                 agent: "codex".into(),
                                 kind: crate::agent_resume::AgentSessionRefKind::Id,
                                 value: "codex-session".into(),

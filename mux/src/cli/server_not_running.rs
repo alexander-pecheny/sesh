@@ -4,10 +4,7 @@ use std::path::Path;
 use crate::api::schema::{ErrorBody, ErrorResponse};
 
 /// Marker error signalling a dead API socket. Carries the `ErrorResponse` that
-/// should be printed at the edge that finally surfaces the error, so callers
-/// that recover (e.g. plugin offline fallback) print nothing. Mirrors
-/// `ProtocolMismatchReported`, except printing is deferred because several CLI
-/// commands recover from a dead server instead of reporting it.
+/// should be printed at the edge that finally surfaces the error.
 #[derive(Debug)]
 pub(super) struct ServerNotRunningReported {
     pub(super) response: ErrorResponse,
@@ -26,29 +23,15 @@ impl std::error::Error for ServerNotRunningReported {}
 /// Builds the friendly `server_not_running` ErrorResponse shown when no
 /// server is listening on the resolved API socket.
 pub(super) fn response(request_id: &str, socket_path: &Path) -> ErrorResponse {
-    let attach_command = startup_command(socket_path);
     ErrorResponse {
         id: request_id.to_string(),
         error: ErrorBody {
             code: "server_not_running".into(),
             message: format!(
-                "no herdr server is running at {}; run `{attach_command}` to start or attach it",
+                "no sesh-mux server is running at {}; start it with `sesh-mux server`",
                 socket_path.display()
             ),
         },
-    }
-}
-
-fn startup_command(socket_path: &Path) -> String {
-    let session_socket =
-        crate::session::api_socket_path_for(crate::session::active_name().as_deref());
-    if socket_path == session_socket {
-        crate::session::local_attach_command()
-    } else {
-        // A socket override wins over an inherited HERDR_SESSION. Keep the
-        // command in the current environment so it starts the overridden
-        // target instead of directing the user to an unrelated session.
-        "herdr".to_string()
     }
 }
 

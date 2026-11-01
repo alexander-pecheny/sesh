@@ -21,7 +21,6 @@ pub(super) fn wait_for_live_handoff_response_write(
 }
 
 impl HeadlessServer {
-    #[cfg(unix)]
     pub(super) fn perform_live_handoff(
         &mut self,
         params: crate::api::schema::ServerLiveHandoffParams,
@@ -104,7 +103,6 @@ impl HeadlessServer {
             panes,
             params.expected_protocol,
             params.expected_version,
-            self.api_window_title.clone(),
         );
         let mut import_child = match crate::server::handoff::spawn_handoff_import(
             import_exe.as_deref(),
@@ -224,15 +222,6 @@ impl HeadlessServer {
         info!("live handoff completed; old server exiting");
     }
 
-    #[cfg(not(unix))]
-    pub(super) fn perform_live_handoff(
-        &mut self,
-        _params: crate::api::schema::ServerLiveHandoffParams,
-    ) -> io::Result<()> {
-        Err(io::Error::other("live handoff is only supported on Unix"))
-    }
-
-    #[cfg(unix)]
     fn restore_public_sockets_after_failed_handoff(&mut self) -> io::Result<()> {
         let api_tx = self
             .api_tx
@@ -258,14 +247,12 @@ impl HeadlessServer {
         Ok(())
     }
 
-    #[cfg(unix)]
     fn wait_then_restore_public_sockets_after_failed_handoff(&mut self) -> io::Result<()> {
         let timeout = crate::server::handoff::COMMIT_TIMEOUT + Duration::from_secs(2);
         wait_for_old_public_sockets_to_close(timeout)?;
         self.restore_public_sockets_after_failed_handoff()
     }
 
-    #[cfg(unix)]
     fn rollback_handoff_before_commit(
         &mut self,
         socket_path: &Path,
@@ -280,19 +267,6 @@ impl HeadlessServer {
         let _ = std::fs::remove_file(socket_path);
     }
 
-    #[cfg(unix)]
-    pub(super) fn nudge_handoff_panes_on_first_client_attach(&mut self) {
-        if !self.pending_handoff_repaint_nudge {
-            return;
-        }
-        self.pending_handoff_repaint_nudge = false;
-        self.app
-            .terminal_runtimes
-            .nudge_child_redraw_after_handoff();
-    }
-
-    #[cfg(not(unix))]
-    pub(super) fn nudge_handoff_panes_on_first_client_attach(&mut self) {}
     /// Initiates graceful shutdown.
     pub(super) fn initiate_shutdown(&mut self) {
         if self.shutting_down {
@@ -363,7 +337,6 @@ impl HeadlessServer {
     }
 }
 
-#[cfg(unix)]
 pub(super) fn wait_for_old_public_sockets_to_close(timeout: Duration) -> io::Result<()> {
     let deadline = Instant::now() + timeout;
     let api_socket = api::socket_path();

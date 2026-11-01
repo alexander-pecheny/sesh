@@ -78,13 +78,6 @@ pub(super) fn clear_path(path: &Path) -> std::io::Result<()> {
     }
 }
 
-pub fn clear_history() {
-    let path = session_history_path();
-    if let Err(err) = clear_path(&path) {
-        crate::logging::session_clear_failed(&path, &err.to_string());
-    }
-}
-
 pub fn load() -> Option<SessionSnapshot> {
     let path = session_path();
     let content = match std::fs::read_to_string(&path) {
@@ -112,7 +105,7 @@ pub fn load() -> Option<SessionSnapshot> {
                     warn!(
                         event = "persist.restore", subsystem = "persist", outcome = "unsupported_version",
                         path = %path.display(), file_version = version, supported = SNAPSHOT_VERSION,
-                        "session file is from a newer herdr version, ignoring"
+                        "session file is from a newer sesh-mux version, ignoring"
                     );
                     return None;
                 }
@@ -146,7 +139,7 @@ pub fn load_history() -> Option<SessionHistorySnapshot> {
                     warn!(
                         file_version = version,
                         supported = SNAPSHOT_VERSION,
-                        "session history file is from a newer herdr version, ignoring"
+                        "session history file is from a newer sesh-mux version, ignoring"
                     );
                     return None;
                 }
@@ -166,7 +159,7 @@ mod tests {
 
     fn temp_session_path(name: &str) -> PathBuf {
         let unique = format!(
-            "herdr-session-tests-{}-{}-{}",
+            "sesh-mux-session-tests-{}-{}-{}",
             name,
             std::process::id(),
             std::time::SystemTime::now()
@@ -258,7 +251,6 @@ mod tests {
         assert!(!path.exists());
     }
 
-    #[cfg(unix)]
     #[test]
     fn save_to_path_preserves_existing_symlink() {
         let target = temp_session_path("symlink-target");
@@ -278,7 +270,6 @@ mod tests {
         assert_eq!(parsed.selected, 7);
     }
 
-    #[cfg(unix)]
     #[test]
     fn save_to_path_writes_through_dangling_symlink() {
         let target = temp_session_path("dangling-target");
@@ -295,7 +286,6 @@ mod tests {
         assert!(target.exists());
     }
 
-    #[cfg(unix)]
     #[test]
     fn save_to_path_resolves_relative_symlink() {
         let session = temp_session_path("relative-symlink");

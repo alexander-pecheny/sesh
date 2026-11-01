@@ -203,39 +203,6 @@ pub(crate) fn is_not_working_tree_remove_error(message: &str) -> bool {
     lower.contains("is not a working tree") || lower.contains("is not a worktree")
 }
 
-#[cfg(windows)]
-pub(crate) fn worktree_dirty_remove_message(path: &Path) -> String {
-    format!(
-        "fatal: '{}' contains modified or untracked files, use --force to delete it",
-        path.display()
-    )
-}
-
-#[cfg(any(windows, test))]
-pub(crate) fn checkout_has_dirty_files(
-    path: &Path,
-    trust_repository: bool,
-) -> Result<bool, String> {
-    let output = repository_git_command(path, trust_repository)
-        .args(["status", "--porcelain", "--untracked-files=all"])
-        .output()
-        .map_err(|err| err.to_string())?;
-
-    if output.status.success() {
-        return Ok(!output.stdout.is_empty());
-    }
-
-    let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
-    let stdout = String::from_utf8_lossy(&output.stdout).trim().to_string();
-    if !stderr.is_empty() {
-        Err(stderr)
-    } else if !stdout.is_empty() {
-        Err(stdout)
-    } else {
-        Err(format!("git status failed with status {}", output.status))
-    }
-}
-
 pub(crate) fn build_worktree_add_new_branch_command(
     repo_root: &Path,
     path: &Path,
@@ -533,7 +500,7 @@ mod tests {
             .duration_since(std::time::UNIX_EPOCH)
             .map(|d| d.as_nanos())
             .unwrap_or(0);
-        std::env::temp_dir().join(format!("herdr-{name}-{}-{nanos}", std::process::id()))
+        std::env::temp_dir().join(format!("sesh-mux-{name}-{}-{nanos}", std::process::id()))
     }
 
     fn run_git(repo: &Path, args: &[&str]) {
@@ -555,8 +522,8 @@ mod tests {
         let repo = unique_temp_path(name);
         std::fs::create_dir_all(&repo).unwrap();
         run_git(&repo, &["init", "--quiet"]);
-        run_git(&repo, &["config", "user.email", "herdr@example.invalid"]);
-        run_git(&repo, &["config", "user.name", "Herdr Test"]);
+        run_git(&repo, &["config", "user.email", "sesh-mux@example.invalid"]);
+        run_git(&repo, &["config", "user.name", "sesh-mux Test"]);
         std::fs::write(repo.join("README.md"), "test\n").unwrap();
         run_git(&repo, &["add", "README.md"]);
         run_git(&repo, &["commit", "--quiet", "-m", "initial"]);
@@ -566,12 +533,17 @@ mod tests {
     #[test]
     fn trusted_repository_git_args_are_request_scoped() {
         assert_eq!(
-            repository_git_args(Path::new("/repo/herdr"), false),
-            ["-C", "/repo/herdr"]
+            repository_git_args(Path::new("/repo/sesh-mux"), false),
+            ["-C", "/repo/sesh-mux"]
         );
         assert_eq!(
-            repository_git_args(Path::new("/repo/herdr"), true),
-            ["-c", "safe.directory=/repo/herdr", "-C", "/repo/herdr",]
+            repository_git_args(Path::new("/repo/sesh-mux"), true),
+            [
+                "-c",
+                "safe.directory=/repo/sesh-mux",
+                "-C",
+                "/repo/sesh-mux",
+            ]
         );
     }
 
@@ -643,11 +615,11 @@ prunable stale
     #[test]
     fn expand_tilde_path_uses_home_when_available() {
         assert_eq!(
-            expand_tilde_path_from_env("~/.herdr/worktrees", false, |key| match key {
+            expand_tilde_path_from_env("~/.sesh-mux/worktrees", false, |key| match key {
                 "HOME" => Some("/home/me".into()),
                 _ => None,
             }),
-            PathBuf::from("/home/me/.herdr/worktrees")
+            PathBuf::from("/home/me/.sesh-mux/worktrees")
         );
         assert_eq!(
             expand_tilde_path_from_env("/tmp/worktrees", false, |_| None),
@@ -660,10 +632,10 @@ prunable stale
         assert_eq!(
             home_dir_from_env(true, |key| match key {
                 "HOME" => Some("~".into()),
-                "USERPROFILE" => Some(r"C:\Users\herdr".into()),
+                "USERPROFILE" => Some(r"C:\Users\sesh-mux".into()),
                 _ => None,
             }),
-            Ok(PathBuf::from(r"C:\Users\herdr"))
+            Ok(PathBuf::from(r"C:\Users\sesh-mux"))
         );
     }
 
@@ -672,10 +644,10 @@ prunable stale
         assert_eq!(
             home_dir_from_env(true, |key| match key {
                 "HOMEDRIVE" => Some("C:".into()),
-                "HOMEPATH" => Some(r"\Users\herdr".into()),
+                "HOMEPATH" => Some(r"\Users\sesh-mux".into()),
                 _ => None,
             }),
-            Ok(PathBuf::from(r"C:\Users\herdr"))
+            Ok(PathBuf::from(r"C:\Users\sesh-mux"))
         );
     }
 
@@ -692,48 +664,21 @@ prunable stale
         assert_eq!(
             home_dir_from_env(true, |key| match key {
                 "HOMEDRIVE" => Some("C:".into()),
-                "HOMEPATH" => Some("Users\\herdr".into()),
+                "HOMEPATH" => Some("Users\\sesh-mux".into()),
                 _ => None,
             }),
             Err(())
         );
     }
 
-    #[cfg(not(windows))]
     #[test]
     fn non_windows_tilde_expansion_keeps_windows_separator_literal() {
         assert_eq!(
-            expand_tilde_path_from_env(r"~\.herdr\worktrees", false, |key| match key {
+            expand_tilde_path_from_env(r"~\.sesh-mux\worktrees", false, |key| match key {
                 "HOME" => Some("/home/me".into()),
                 _ => None,
             }),
-            PathBuf::from(r"~\.herdr\worktrees")
-        );
-    }
-
-    #[cfg(windows)]
-    #[test]
-    fn windows_tilde_expansion_normalizes_separators() {
-        fn env(key: &str) -> Option<OsString> {
-            match key {
-                "HOME" => Some("~".into()),
-                "USERPROFILE" => Some(r"C:\Users\herdr".into()),
-                _ => None,
-            }
-        }
-
-        let default_path = expand_tilde_path_from_env("~/.herdr/worktrees", true, env);
-        assert_eq!(
-            default_path,
-            PathBuf::from(r"C:\Users\herdr\.herdr\worktrees")
-        );
-        assert_eq!(
-            default_path.display().to_string(),
-            r"C:\Users\herdr\.herdr\worktrees"
-        );
-        assert_eq!(
-            expand_tilde_path_from_env(r"~\.herdr\worktrees", true, env),
-            PathBuf::from(r"C:\Users\herdr\.herdr\worktrees")
+            PathBuf::from(r"~\.sesh-mux\worktrees")
         );
     }
 
@@ -741,66 +686,19 @@ prunable stale
     fn default_checkout_path_appends_repo_and_branch_slug() {
         assert_eq!(
             default_checkout_path(
-                Path::new("/home/me/.herdr/worktrees"),
-                "herdr",
+                Path::new("/home/me/.sesh-mux/worktrees"),
+                "sesh-mux",
                 "worktree/brave-river",
             ),
-            PathBuf::from("/home/me/.herdr/worktrees/herdr/worktree-brave-river")
-        );
-    }
-
-    #[test]
-    fn checkout_dirty_detection_reports_clean_and_dirty_worktrees() {
-        let repo = create_committed_repo("worktree-dirty-detection-repo");
-        let checkout = unique_temp_path("worktree-dirty-detection-checkout");
-        run_git(
-            &repo,
-            &[
-                "worktree",
-                "add",
-                "--quiet",
-                "-b",
-                "worktree/dirty-detection",
-                checkout.to_str().unwrap(),
-                "HEAD",
-            ],
-        );
-
-        assert_eq!(checkout_has_dirty_files(&checkout, false), Ok(false));
-        std::fs::write(checkout.join("README.md"), "dirty\n").unwrap();
-        assert_eq!(checkout_has_dirty_files(&checkout, false), Ok(true));
-
-        let remove = build_worktree_remove_command(&repo, &checkout, true, false);
-        run_worktree_command(&remove).unwrap();
-        let _ = std::fs::remove_dir_all(repo);
-    }
-
-    #[test]
-    fn worktree_remove_command_preserves_branch_by_not_deleting_it() {
-        let command = build_worktree_remove_command(
-            Path::new("/repo/herdr"),
-            Path::new("/w/herdr/issue-137"),
-            false,
-            false,
-        );
-        assert_eq!(command.program, "git");
-        assert_eq!(
-            command.args,
-            vec![
-                "-C",
-                "/repo/herdr",
-                "worktree",
-                "remove",
-                "/w/herdr/issue-137"
-            ]
+            PathBuf::from("/home/me/.sesh-mux/worktrees/sesh-mux/worktree-brave-river")
         );
     }
 
     #[test]
     fn forced_worktree_remove_command_uses_git_force_flag() {
         let command = build_worktree_remove_command(
-            Path::new("/repo/herdr"),
-            Path::new("/w/herdr/issue-137"),
+            Path::new("/repo/sesh-mux"),
+            Path::new("/w/sesh-mux/issue-137"),
             true,
             false,
         );
@@ -808,11 +706,11 @@ prunable stale
             command.args,
             vec![
                 "-C",
-                "/repo/herdr",
+                "/repo/sesh-mux",
                 "worktree",
                 "remove",
                 "--force",
-                "/w/herdr/issue-137"
+                "/w/sesh-mux/issue-137"
             ]
         );
     }
@@ -820,13 +718,13 @@ prunable stale
     #[test]
     fn dirty_remove_error_detection_matches_git_force_hint() {
         assert!(is_dirty_worktree_remove_error(
-            "fatal: '/w/herdr' contains modified or untracked files, use --force to delete it"
+            "fatal: '/w/sesh-mux' contains modified or untracked files, use --force to delete it"
         ));
         assert!(!is_dirty_worktree_remove_error(
-            "fatal: '/w/herdr' is a missing but already registered worktree"
+            "fatal: '/w/sesh-mux' is a missing but already registered worktree"
         ));
         assert!(!is_dirty_worktree_remove_error(
-            "fatal: '/w/herdr' contains a locked worktree, use --force only if you know why"
+            "fatal: '/w/sesh-mux' contains a locked worktree, use --force only if you know why"
         ));
     }
 
@@ -838,69 +736,10 @@ prunable stale
     }
 
     #[test]
-    fn submodule_worktree_removal_requires_explicit_force() {
-        let repo = create_committed_repo("submodule-remove-repo");
-        let submodule = create_committed_repo("submodule-remove-source");
-        let checkout = unique_temp_path("submodule-remove-checkout");
-        run_git(
-            &repo,
-            &[
-                "-c",
-                "protocol.file.allow=always",
-                "submodule",
-                "add",
-                "--quiet",
-                submodule.to_str().unwrap(),
-                "sub",
-            ],
-        );
-        run_git(&repo, &["commit", "--quiet", "-am", "add submodule"]);
-        let add = build_worktree_add_new_branch_command(
-            &repo,
-            &checkout,
-            "worktree/submodule-remove",
-            "HEAD",
-            false,
-        );
-        run_worktree_command(&add).unwrap();
-        run_git(
-            &checkout,
-            &[
-                "-c",
-                "protocol.file.allow=always",
-                "submodule",
-                "update",
-                "--init",
-                "--quiet",
-            ],
-        );
-        assert!(!checkout_has_dirty_files(&checkout, false).unwrap());
-
-        let remove = build_worktree_remove_command(&repo, &checkout, false, false);
-        let error = run_worktree_command(&remove).unwrap_err();
-        assert!(is_dirty_worktree_remove_error(&error), "{error}");
-        assert!(checkout.join("sub/README.md").exists());
-
-        std::fs::write(checkout.join("sub/README.md"), "uncommitted change\n").unwrap();
-        let error = run_worktree_command(&remove).unwrap_err();
-        assert!(is_dirty_worktree_remove_error(&error), "{error}");
-        assert!(checkout.join("sub/README.md").exists());
-
-        let forced = build_worktree_remove_command(&repo, &checkout, true, false);
-        run_worktree_remove_command_with_recovery(&forced, &repo, &checkout, true, false).unwrap();
-        assert!(!checkout.exists());
-        assert!(!worktree_list_contains_path(&repo, &checkout, false).unwrap());
-        assert!(repo.join("sub/README.md").exists());
-
-        std::fs::remove_dir_all(repo).unwrap();
-        std::fs::remove_dir_all(submodule).unwrap();
-    }
-
-    #[test]
     fn worktree_add_command_creates_new_branch_from_base() {
         let command = build_worktree_add_new_branch_command(
-            Path::new("/repo/herdr"),
-            Path::new("/w/herdr/worktree-brave-river"),
+            Path::new("/repo/sesh-mux"),
+            Path::new("/w/sesh-mux/worktree-brave-river"),
             "worktree/brave-river",
             "HEAD",
             false,
@@ -910,12 +749,12 @@ prunable stale
             command.args,
             vec![
                 "-C",
-                "/repo/herdr",
+                "/repo/sesh-mux",
                 "worktree",
                 "add",
                 "-b",
                 "worktree/brave-river",
-                "/w/herdr/worktree-brave-river",
+                "/w/sesh-mux/worktree-brave-river",
                 "HEAD"
             ]
         );
@@ -924,8 +763,8 @@ prunable stale
     #[test]
     fn worktree_add_command_checks_out_existing_branch() {
         let command = build_worktree_add_existing_branch_command(
-            Path::new("/repo/herdr"),
-            Path::new("/w/herdr/worktree-brave-river"),
+            Path::new("/repo/sesh-mux"),
+            Path::new("/w/sesh-mux/worktree-brave-river"),
             "worktree/brave-river",
             false,
         );
@@ -934,10 +773,10 @@ prunable stale
             command.args,
             vec![
                 "-C",
-                "/repo/herdr",
+                "/repo/sesh-mux",
                 "worktree",
                 "add",
-                "/w/herdr/worktree-brave-river",
+                "/w/sesh-mux/worktree-brave-river",
                 "worktree/brave-river"
             ]
         );

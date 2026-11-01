@@ -21,12 +21,6 @@ pub struct GitWorktreeInfo {
     pub is_linked_worktree: bool,
 }
 
-pub fn derive_label_from_cwd(cwd: &Path) -> String {
-    git_repo_root(cwd)
-        .map(|repo_root| automatic_workspace_label(cwd, &repo_root))
-        .unwrap_or_else(|| fallback_label_from_cwd(cwd))
-}
-
 pub fn fallback_label_from_cwd(cwd: &Path) -> String {
     if let Ok(home) = std::env::var("HOME") {
         let home = Path::new(&home);
@@ -223,16 +217,8 @@ fn path_is_git_dir_layout(path: &Path) -> bool {
     path.join("HEAD").is_file() && path.join("objects").is_dir() && path.join("refs").is_dir()
 }
 
-pub(super) fn git_symbolic_head_full(repo_root: &Path) -> Option<String> {
-    git_trimmed_stdout(repo_root, &["symbolic-ref", "--quiet", "HEAD"])
-}
-
 fn git_symbolic_head_short(repo_root: &Path) -> Option<String> {
     git_trimmed_stdout(repo_root, &["symbolic-ref", "--quiet", "--short", "HEAD"])
-}
-
-pub(super) fn git_rev_parse_verify(repo_root: &Path, revision: &str) -> Option<String> {
-    git_trimmed_stdout(repo_root, &["rev-parse", "--verify", revision])
 }
 
 pub(super) fn git_ref_storage_is_reftable(git_common_dir: &Path) -> bool {
@@ -328,45 +314,9 @@ pub(super) fn git_repo_root(start: &Path) -> Option<PathBuf> {
     }
 }
 
-pub(super) fn read_ref_oid(common_dir: &Path, full_ref: &str) -> Option<String> {
-    let loose_ref = common_dir.join(full_ref);
-    match read_git_ref_file_state(&loose_ref) {
-        RefFileRead::Content(contents) => {
-            let oid = contents.trim();
-            if oid.is_empty() {
-                // An empty loose ref is present but broken. Git does not fall
-                // back to an older same-name packed ref in this case.
-                return None;
-            }
-            return Some(oid.to_string());
-        }
-        // A loose ref that exists — or whose existence cannot be ruled out
-        // because of a metadata or I/O error — must not fall back to
-        // packed-refs: that could resurrect a stale same-name OID into the
-        // status fingerprint. Report the ref as unavailable instead.
-        RefFileRead::Unavailable => return None,
-        RefFileRead::Absent => {}
-    }
-
-    let packed_refs = std::fs::read_to_string(common_dir.join("packed-refs")).ok()?;
-    for line in packed_refs.lines() {
-        let line = line.trim();
-        if line.is_empty() || line.starts_with('#') || line.starts_with('^') {
-            continue;
-        }
-        let mut parts = line.split_whitespace();
-        let oid = parts.next()?;
-        let name = parts.next()?;
-        if name == full_ref {
-            return Some(oid.to_string());
-        }
-    }
-    None
-}
-
 #[cfg(test)]
 mod tests {
-    use std::path::{Path, PathBuf};
+    use std::path::PathBuf;
     use std::time::{SystemTime, UNIX_EPOCH};
 
     use super::*;
@@ -374,7 +324,7 @@ mod tests {
 
     fn temp_test_dir(name: &str) -> PathBuf {
         let unique = format!(
-            "herdr-workspace-tests-{}-{}-{}",
+            "sesh-mux-workspace-tests-{}-{}-{}",
             name,
             std::process::id(),
             SystemTime::now()
@@ -396,175 +346,6 @@ mod tests {
         assert_eq!(git_branch(&root).as_deref(), Some("main"));
 
         std::fs::remove_dir_all(root).unwrap();
-    }
-
-    #[test]
-    fn oversized_loose_ref_is_unavailable_not_absent() {
-        let root = temp_test_dir("oversized-loose-ref");
-        let refs_dir = root.join("refs/heads");
-        std::fs::create_dir_all(&refs_dir).unwrap();
-        std::fs::write(
-            root.join("packed-refs"),
-            "# pack-refs with: peeled fully-peeled sorted \naaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa refs/heads/main\n",
-        )
-        .unwrap();
-        let loose = refs_dir.join("main");
-        std::fs::write(&loose, "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb\n").unwrap();
-        std::fs::OpenOptions::new()
-            .write(true)
-            .open(loose)
-            .unwrap()
-            .set_len(8 * 1024 * 1024)
-            .unwrap();
-
-        let oid = read_ref_oid(&root, "refs/heads/main");
-        std::fs::remove_dir_all(root).unwrap();
-        assert_eq!(
-            oid, None,
-            "an oversized loose ref must make the ref unavailable, not fall back to the stale packed OID"
-        );
-    }
-
-    #[test]
-    fn empty_or_whitespace_loose_ref_is_unavailable_not_absent() {
-        let root = temp_test_dir("empty-loose-ref");
-        let refs_dir = root.join("refs/heads");
-        std::fs::create_dir_all(&refs_dir).unwrap();
-        std::fs::write(
-            root.join("packed-refs"),
-            "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa refs/heads/main\n",
-        )
-        .unwrap();
-        let loose = refs_dir.join("main");
-
-        for contents in ["", " \n\t"] {
-            std::fs::write(&loose, contents).unwrap();
-            assert_eq!(
-                read_ref_oid(&root, "refs/heads/main"),
-                None,
-                "an empty or whitespace-only loose ref must not fall back to the stale packed OID"
-            );
-        }
-
-        std::fs::remove_dir_all(root).unwrap();
-    }
-
-    #[cfg(unix)]
-    #[test]
-    fn dangling_symlink_loose_ref_is_unavailable_not_absent() {
-        use std::os::unix::fs::symlink;
-
-        let root = temp_test_dir("dangling-symlink-loose-ref");
-        let refs_dir = root.join("refs/heads");
-        std::fs::create_dir_all(&refs_dir).unwrap();
-        std::fs::write(
-            root.join("packed-refs"),
-            "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa refs/heads/main\n",
-        )
-        .unwrap();
-        symlink("missing-target", refs_dir.join("main")).unwrap();
-
-        let oid = read_ref_oid(&root, "refs/heads/main");
-        std::fs::remove_dir_all(root).unwrap();
-        assert_eq!(
-            oid, None,
-            "a dangling loose ref must not fall back to the stale packed OID"
-        );
-    }
-
-    #[cfg(unix)]
-    #[test]
-    fn dangling_symlink_through_file_is_unavailable_not_absent() {
-        use std::os::unix::fs::symlink;
-
-        let root = temp_test_dir("dangling-symlink-through-file");
-        let refs_dir = root.join("refs/heads");
-        std::fs::create_dir_all(&refs_dir).unwrap();
-        std::fs::write(
-            root.join("packed-refs"),
-            "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa refs/heads/main\n",
-        )
-        .unwrap();
-        std::fs::write(refs_dir.join("target-parent"), "not a directory").unwrap();
-        symlink("target-parent/nested", refs_dir.join("main")).unwrap();
-
-        let oid = read_ref_oid(&root, "refs/heads/main");
-        std::fs::remove_dir_all(root).unwrap();
-        assert_eq!(
-            oid, None,
-            "a dangling loose ref whose target traverses a file must not fall back to the stale packed OID"
-        );
-    }
-
-    #[cfg(unix)]
-    #[test]
-    fn symlink_loop_loose_ref_is_unavailable_not_absent() {
-        use std::os::unix::fs::symlink;
-
-        let root = temp_test_dir("symlink-loop-loose-ref");
-        let refs_dir = root.join("refs/heads");
-        std::fs::create_dir_all(&refs_dir).unwrap();
-        std::fs::write(
-            root.join("packed-refs"),
-            "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa refs/heads/main\n",
-        )
-        .unwrap();
-        // Unlike chmod(000), a symlink loop produces an open error even as root.
-        // It exercises the same unavailable-ref branch as permission errors.
-        let loose_ref = refs_dir.join("main");
-        symlink("main", &loose_ref).unwrap();
-        let open_error = std::fs::File::open(&loose_ref).unwrap_err();
-        let oid = read_ref_oid(&root, "refs/heads/main");
-        std::fs::remove_dir_all(root).unwrap();
-        assert_eq!(open_error.raw_os_error(), Some(libc::ELOOP));
-        assert_eq!(
-            oid, None,
-            "a loose ref behind an open error must be unavailable, not fall back to the stale packed OID"
-        );
-    }
-
-    #[test]
-    fn ref_path_through_a_file_still_reads_packed_refs() {
-        let root = temp_test_dir("ref-path-through-file");
-        let refs_dir = root.join("refs/heads");
-        std::fs::create_dir_all(&refs_dir).unwrap();
-        // refs/heads/main is a file, so refs/heads/main/nested cannot exist as
-        // a loose ref; the packed entry is the legitimate source.
-        std::fs::write(
-            refs_dir.join("main"),
-            "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb\n",
-        )
-        .unwrap();
-        std::fs::write(
-            root.join("packed-refs"),
-            "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa refs/heads/main/nested\n",
-        )
-        .unwrap();
-
-        let oid = read_ref_oid(&root, "refs/heads/main/nested");
-        std::fs::remove_dir_all(root).unwrap();
-        assert_eq!(
-            oid.as_deref(),
-            Some("aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa")
-        );
-    }
-
-    #[test]
-    fn absent_loose_ref_still_reads_packed_refs() {
-        let root = temp_test_dir("packed-only-ref");
-        std::fs::create_dir_all(root.join("refs/heads")).unwrap();
-        std::fs::write(
-            root.join("packed-refs"),
-            "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa refs/heads/main\n",
-        )
-        .unwrap();
-
-        let oid = read_ref_oid(&root, "refs/heads/main");
-        std::fs::remove_dir_all(root).unwrap();
-        assert_eq!(
-            oid.as_deref(),
-            Some("aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa")
-        );
     }
 
     #[test]
@@ -713,8 +494,8 @@ mod tests {
         std::fs::create_dir_all(&seed).unwrap();
         std::fs::create_dir_all(&repo).unwrap();
         run_git(&seed, &["init", "--quiet"]);
-        run_git(&seed, &["config", "user.email", "herdr@example.invalid"]);
-        run_git(&seed, &["config", "user.name", "Herdr Test"]);
+        run_git(&seed, &["config", "user.email", "sesh-mux@example.invalid"]);
+        run_git(&seed, &["config", "user.name", "sesh-mux Test"]);
         run_git(
             &seed,
             &["commit", "--quiet", "--allow-empty", "-m", "initial"],
@@ -769,59 +550,6 @@ mod tests {
         assert_eq!(
             canonicalize_best_effort_path(&metadata.repo_root),
             canonicalize_best_effort_path(&root)
-        );
-
-        std::fs::remove_dir_all(root).unwrap();
-    }
-
-    #[test]
-    fn derive_label_prefers_repo_root_name() {
-        let root = temp_test_dir("label-repo");
-        let nested = root.join("nested");
-        std::fs::create_dir_all(root.join(".git")).unwrap();
-        std::fs::write(root.join(".git/HEAD"), "ref: refs/heads/main\n").unwrap();
-        std::fs::create_dir_all(&nested).unwrap();
-
-        assert_eq!(
-            derive_label_from_cwd(&nested),
-            root.file_name().and_then(|name| name.to_str()).unwrap()
-        );
-
-        std::fs::remove_dir_all(root).unwrap();
-    }
-
-    #[test]
-    fn derive_label_uses_path_name_outside_git() {
-        let root = temp_test_dir("label-plain");
-        let label = root.file_name().and_then(|name| name.to_str()).unwrap();
-
-        assert_eq!(derive_label_from_cwd(Path::new(&root)), label);
-
-        std::fs::remove_dir_all(root).unwrap();
-    }
-
-    #[test]
-    fn git_rev_parse_verify_reads_reftable_refs() {
-        let root = temp_test_dir("reftable-ref-oid");
-        let root_arg = root.to_string_lossy().to_string();
-        let output = std::process::Command::new("git")
-            .args(["init", "--ref-format=reftable", "-b", "main", &root_arg])
-            .output()
-            .unwrap();
-        if !output.status.success() {
-            std::fs::remove_dir_all(root).unwrap();
-            return;
-        }
-
-        run_git(&root, &["config", "user.email", "herdr@example.invalid"]);
-        run_git(&root, &["config", "user.name", "Herdr Test"]);
-        run_git(&root, &["commit", "--allow-empty", "-m", "initial"]);
-
-        let head_oid = git_rev_parse_verify(&root, "HEAD").unwrap();
-
-        assert_eq!(
-            git_rev_parse_verify(&root, "refs/heads/main").as_deref(),
-            Some(head_oid.as_str())
         );
 
         std::fs::remove_dir_all(root).unwrap();

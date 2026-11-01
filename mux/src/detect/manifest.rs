@@ -1,6 +1,6 @@
 use std::{
     path::{Path, PathBuf},
-    sync::{Arc, Mutex, OnceLock, RwLock},
+    sync::{Arc, OnceLock, RwLock},
 };
 
 use regex::Regex;
@@ -46,39 +46,6 @@ pub struct DetectionExplain {
 pub enum ManifestSource {
     Bundled,
     Override(PathBuf),
-}
-
-impl ManifestSource {
-    pub fn label(&self) -> String {
-        match self {
-            Self::Bundled => "bundled".to_string(),
-            Self::Override(path) => path.display().to_string(),
-        }
-    }
-
-    pub fn kind(&self) -> &'static str {
-        match self {
-            Self::Bundled => "bundled",
-            Self::Override(_) => "local override",
-        }
-    }
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub(crate) struct AgentManifestSummary {
-    pub(crate) agent: Agent,
-    pub(crate) active_source: ManifestSource,
-    pub(crate) active_version: Option<String>,
-    pub(crate) warning: Option<String>,
-}
-
-pub(crate) fn manifest_summaries() -> Vec<AgentManifestSummary> {
-    let lock = manifest_cache();
-    let guard = match lock.read() {
-        Ok(guard) => guard,
-        Err(poisoned) => poisoned.into_inner(),
-    };
-    manifest_summaries_from_cache(&guard)
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -227,32 +194,12 @@ fn default_region() -> String {
 }
 
 const BUNDLED_MANIFESTS: &[(&str, &str)] = &[
-    ("amp", include_str!("manifests/amp.toml")),
-    ("agy", include_str!("manifests/antigravity.toml")),
     ("claude", include_str!("manifests/claude.toml")),
-    ("cline", include_str!("manifests/cline.toml")),
     ("codex", include_str!("manifests/codex.toml")),
-    ("cursor", include_str!("manifests/cursor.toml")),
-    ("devin", include_str!("manifests/devin.toml")),
-    ("droid", include_str!("manifests/droid.toml")),
-    ("gemini", include_str!("manifests/gemini.toml")),
-    ("grok", include_str!("manifests/grok.toml")),
-    ("hermes", include_str!("manifests/hermes.toml")),
-    ("kilo", include_str!("manifests/kilo.toml")),
-    ("kimi", include_str!("manifests/kimi.toml")),
-    ("kiro", include_str!("manifests/kiro.toml")),
-    ("letta", include_str!("manifests/letta.toml")),
-    ("maki", include_str!("manifests/maki.toml")),
-    ("muse", include_str!("manifests/muse.toml")),
-    ("opencode", include_str!("manifests/opencode.toml")),
     ("pi", include_str!("manifests/pi.toml")),
-    ("qodercli", include_str!("manifests/qodercli.toml")),
-    ("qwen", include_str!("manifests/qwen.toml")),
-    ("copilot", include_str!("manifests/github-copilot.toml")),
 ];
 
 static MANIFEST_CACHE: OnceLock<RwLock<ManifestCache>> = OnceLock::new();
-static MANIFEST_RELOAD_LOCK: OnceLock<Mutex<()>> = OnceLock::new();
 
 const MAX_RULES_PER_MANIFEST: usize = 128;
 const MAX_GATE_DEPTH: usize = 8;
@@ -260,42 +207,6 @@ const MAX_TOTAL_GATES: usize = 512;
 const MAX_MATCHERS_PER_GATE: usize = 32;
 const MAX_TOTAL_MATCHERS: usize = 1024;
 const MAX_MATCHER_CHARS: usize = 512;
-
-pub(crate) fn reload_manifests() -> Vec<AgentManifestSummary> {
-    let _reload_guard = MANIFEST_RELOAD_LOCK
-        .get_or_init(|| Mutex::new(()))
-        .lock()
-        .unwrap_or_else(|poisoned| poisoned.into_inner());
-    let cache = build_manifest_cache();
-    let summaries = manifest_summaries_from_cache(&cache);
-    let lock = MANIFEST_CACHE.get_or_init(|| RwLock::new(cache.clone()));
-    match lock.write() {
-        Ok(mut guard) => *guard = cache,
-        Err(poisoned) => *poisoned.into_inner() = cache,
-    }
-    summaries
-}
-
-fn manifest_summaries_from_cache(cache: &ManifestCache) -> Vec<AgentManifestSummary> {
-    cache
-        .manifests
-        .iter()
-        .filter_map(|(agent, loaded)| {
-            loaded
-                .clone()
-                .map(|loaded| manifest_summary_from_loaded(*agent, loaded))
-        })
-        .collect()
-}
-
-fn manifest_summary_from_loaded(agent: Agent, loaded: LoadedManifest) -> AgentManifestSummary {
-    AgentManifestSummary {
-        agent,
-        active_version: loaded.manifest.version.as_ref().map(ToString::to_string),
-        active_source: loaded.source,
-        warning: loaded.warning,
-    }
-}
 
 fn manifest_cache() -> &'static RwLock<ManifestCache> {
     MANIFEST_CACHE.get_or_init(|| RwLock::new(build_manifest_cache()))
@@ -310,63 +221,11 @@ fn build_manifest_cache() -> ManifestCache {
     }
 }
 
-#[cfg(test)]
-pub fn detect(agent: Agent, screen_content: &str) -> AgentDetection {
-    detect_with_osc(
-        agent,
-        DetectionInput {
-            screen: screen_content,
-            osc_title: "",
-            osc_progress: "",
-        },
-    )
-}
-
 pub fn detect_with_osc(agent: Agent, input: DetectionInput<'_>) -> AgentDetection {
     let Some(loaded) = load_manifest(agent) else {
         return fallback_explain(Some(agent), None).into_detection();
     };
     evaluate_loaded_manifest(agent, input, loaded).into_detection()
-}
-
-pub fn explain(agent: Agent, screen_content: &str) -> DetectionExplain {
-    explain_with_input(
-        agent,
-        DetectionInput {
-            screen: screen_content,
-            osc_title: "",
-            osc_progress: "",
-        },
-    )
-}
-
-pub fn explain_with_input(agent: Agent, input: DetectionInput<'_>) -> DetectionExplain {
-    let Some(loaded) = load_manifest(agent) else {
-        return fallback_explain(Some(agent), None);
-    };
-    evaluate_loaded_manifest(agent, input, loaded)
-}
-
-pub fn explain_for_label(agent_label: &str, screen_content: &str) -> DetectionExplain {
-    let Some(agent) = parse_agent_label(agent_label) else {
-        return DetectionExplain {
-            agent: Some(agent_label.to_string()),
-            state: AgentState::Unknown,
-            source: None,
-            matched_rule: None,
-            screen_detection_skipped: false,
-            visible_idle: false,
-            visible_blocker: false,
-            visible_working: false,
-            skip_state_update: false,
-            skipped_update_reason: None,
-            fallback_reason: Some("unknown_agent".to_string()),
-            evaluated_rules: Vec::new(),
-            warning: None,
-            manifest_version: None,
-        };
-    };
-    explain(agent, screen_content)
 }
 
 pub fn should_skip_state_update(agent: Agent, screen_content: &str) -> bool {
@@ -601,57 +460,6 @@ pub fn agent_state_label(state: AgentState) -> &'static str {
         AgentState::Blocked => "blocked",
         AgentState::Unknown => "unknown",
     }
-}
-
-pub fn explain_to_json_value(explain: &DetectionExplain) -> serde_json::Value {
-    let matched_rule = explain.matched_rule.as_ref().map(|rule| {
-        serde_json::json!({
-            "id": rule.id,
-            "priority": rule.priority,
-            "region": rule.region,
-            "state": agent_state_label(rule.state),
-        })
-    });
-    let evaluated_rules: Vec<_> = explain
-        .evaluated_rules
-        .iter()
-        .map(|rule| {
-            serde_json::json!({
-                "id": rule.id,
-                "priority": rule.priority,
-                "region": rule.region,
-                "state": agent_state_label(rule.state),
-                "matched": rule.matched,
-                "evidence": {
-                    "contains": &rule.evidence.contains,
-                    "regex": &rule.evidence.regex,
-                    "line_regex": &rule.evidence.line_regex,
-                    "all_count": rule.evidence.all_count,
-                    "any_count": rule.evidence.any_count,
-                    "not_count": rule.evidence.not_count,
-                    "region_bytes": rule.evidence.region_bytes,
-                    "region_preview": &rule.evidence.region_preview,
-                },
-            })
-        })
-        .collect();
-
-    serde_json::json!({
-        "agent": explain.agent,
-        "state": agent_state_label(explain.state),
-        "manifest_source": explain.source.as_ref().map(|source| source.label()),
-        "manifest_version": &explain.manifest_version,
-        "matched_rule": matched_rule,
-        "visible_idle": explain.visible_idle,
-        "visible_blocker": explain.visible_blocker,
-        "visible_working": explain.visible_working,
-        "screen_detection_skipped": explain.screen_detection_skipped,
-        "skip_state_update": explain.skip_state_update,
-        "skipped_update_reason": explain.skipped_update_reason,
-        "fallback_reason": explain.fallback_reason,
-        "warning": explain.warning,
-        "evaluated_rules": evaluated_rules,
-    })
 }
 
 pub(crate) fn parse_manifest(content: &str) -> Result<AgentManifest, String> {

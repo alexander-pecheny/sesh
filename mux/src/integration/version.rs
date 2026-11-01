@@ -11,12 +11,6 @@ pub(crate) fn agent_version_requirement(
     target: crate::api::schema::IntegrationTarget,
 ) -> Option<AgentVersionRequirement> {
     match target {
-        crate::api::schema::IntegrationTarget::Kimi => Some(AgentVersionRequirement {
-            label: "kimi code",
-            binary: "kimi",
-            args: &["--version"],
-            min_version: super::KIMI_MIN_VERSION,
-        }),
         _ => None,
     }
 }
@@ -77,7 +71,7 @@ pub(crate) fn enforce_agent_version(
 
     if found < required {
         return Err(io::Error::other(format!(
-            "{label} {}.{}.{} is too old: herdr hooks require {label} {min} or newer. upgrade {label}, then re-run install",
+            "{label} {}.{}.{} is too old: sesh-mux hooks require {label} {min} or newer. upgrade {label}, then re-run install",
             found.0,
             found.1,
             found.2,

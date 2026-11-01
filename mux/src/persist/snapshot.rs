@@ -11,7 +11,7 @@ use crate::workspace::Workspace;
 /// Current snapshot format version.
 pub(super) const SNAPSHOT_VERSION: u32 = 3;
 
-/// Serializable snapshot of the entire herdr session.
+/// Serializable snapshot of the entire sesh-mux session.
 #[derive(Serialize, Deserialize)]
 pub struct SessionSnapshot {
     /// Format version — used to detect incompatible changes.
@@ -506,20 +506,17 @@ mod tests {
     use std::collections::HashMap;
     use std::path::PathBuf;
 
-    use ratatui::layout::{Direction, Rect};
-
     use super::*;
-    use crate::app::{AppState, Mode};
-    use crate::layout::NavDirection;
+    use crate::app::AppState;
     use crate::workspace::Workspace;
 
     fn session_fixture(name: &str) -> &'static str {
         match name {
-            "current-herdr" => {
-                include_str!("../../tests/fixtures/session/current-herdr-session.json")
+            "current-sesh-mux" => {
+                include_str!("../../tests/fixtures/session/current-sesh-mux-session.json")
             }
-            "current-herdr-dev" => {
-                include_str!("../../tests/fixtures/session/current-herdr-dev-session.json")
+            "current-sesh-mux-dev" => {
+                include_str!("../../tests/fixtures/session/current-sesh-mux-dev-session.json")
             }
             "legacy-pre-tabs-v2" => {
                 include_str!("../../tests/fixtures/session/legacy-pre-tabs-v2.json")
@@ -543,7 +540,6 @@ mod tests {
         if !state.workspaces.is_empty() {
             state.active = Some(0);
             state.selected = 0;
-            state.mode = Mode::Terminal;
         }
         state
     }
@@ -564,21 +560,6 @@ mod tests {
             state.active,
             state.selected,
         )
-    }
-
-    fn capture_history_from_state_with_runtimes(
-        state: &AppState,
-        terminal_runtimes: &TerminalRuntimeRegistry,
-    ) -> SessionHistorySnapshot {
-        let snapshot = capture_from_state_with_runtimes(state, terminal_runtimes);
-        capture_history(&snapshot, &state.workspaces, terminal_runtimes)
-    }
-
-    fn root_split_ratio(tab: &TabSnapshot) -> Option<f32> {
-        match &tab.layout {
-            LayoutSnapshot::Split { ratio, .. } => Some(*ratio),
-            LayoutSnapshot::Pane(_) => None,
-        }
     }
 
     #[test]
@@ -621,7 +602,7 @@ mod tests {
     #[test]
     fn layout_fingerprint_survives_json_round_trip() {
         let mut snapshot = parse_snapshot(include_str!(
-            "../../tests/fixtures/session/current-herdr-session.json"
+            "../../tests/fixtures/session/current-sesh-mux-session.json"
         ))
         .unwrap();
         snapshot.collapsed_space_keys = ["z", "a", "m"].map(String::from).into();
@@ -687,7 +668,7 @@ mod tests {
         panes.insert(
             0,
             PaneSnapshot {
-                cwd: PathBuf::from("/home/can/Projects/herdr"),
+                cwd: PathBuf::from("/home/can/Projects/sesh-mux"),
                 label: None,
                 agent_name: None,
                 managed_agent_kind: None,
@@ -711,7 +692,7 @@ mod tests {
             workspaces: vec![WorkspaceSnapshot {
                 id: Some("wproj".to_string()),
                 custom_name: Some("pi-mono".to_string()),
-                identity_cwd: PathBuf::from("/home/can/Projects/herdr"),
+                identity_cwd: PathBuf::from("/home/can/Projects/sesh-mux"),
                 worktree_space: None,
                 public_pane_numbers: HashMap::from([(0, 1), (1, 2)]),
                 next_public_pane_number: 3,
@@ -753,7 +734,7 @@ mod tests {
         assert_eq!(restored.workspaces[0].tabs[0].panes.len(), 2);
         assert_eq!(
             restored.workspaces[0].tabs[0].panes[&0].cwd,
-            PathBuf::from("/home/can/Projects/herdr")
+            PathBuf::from("/home/can/Projects/sesh-mux")
         );
         assert_eq!(
             restored.workspaces[0].tabs[0].panes[&1].label.as_deref(),
@@ -765,7 +746,7 @@ mod tests {
 
     #[test]
     fn current_session_fixture_parses() {
-        let snap = parse_snapshot(session_fixture("current-herdr")).unwrap();
+        let snap = parse_snapshot(session_fixture("current-sesh-mux")).unwrap();
 
         assert_eq!(snap.version, 3);
         assert_eq!(snap.workspaces.len(), 2);
@@ -782,7 +763,7 @@ mod tests {
 
     #[test]
     fn current_dev_session_fixture_parses_additive_fields() {
-        let snap = parse_snapshot(session_fixture("current-herdr-dev")).unwrap();
+        let snap = parse_snapshot(session_fixture("current-sesh-mux-dev")).unwrap();
 
         assert_eq!(snap.version, 3);
         assert_eq!(snap.workspaces.len(), 2);
@@ -857,27 +838,7 @@ mod tests {
         assert_eq!(ws.tabs[0].focused, Some(1));
         assert_eq!(ws.tabs[0].root_pane, Some(0));
         assert_eq!(ws.tabs[0].panes[&0].cwd, PathBuf::from("/tmp/pion"));
-        assert_eq!(ws.tabs[0].panes[&1].cwd, PathBuf::from("/tmp/herdr"));
-    }
-
-    #[test]
-    fn capture_contract_tracks_workspace_order_active_and_selected() {
-        let mut state = state_with_workspaces(&["a", "b", "c"]);
-        state.active = Some(1);
-        state.selected = 2;
-
-        state.move_workspace(1, 0);
-
-        let snapshot = capture_from_state(&state);
-        let ids: Vec<_> = state.workspaces.iter().map(|ws| ws.id.clone()).collect();
-        let captured_ids: Vec<_> = snapshot
-            .workspaces
-            .iter()
-            .map(|ws| ws.id.clone().unwrap())
-            .collect();
-        assert_eq!(captured_ids, ids);
-        assert_eq!(snapshot.active, state.active);
-        assert_eq!(snapshot.selected, state.selected);
+        assert_eq!(ws.tabs[0].panes[&1].cwd, PathBuf::from("/tmp/sesh-mux"));
     }
 
     #[test]
@@ -926,9 +887,9 @@ mod tests {
         let mut state = state_with_workspaces(&["main"]);
         state.workspaces[0].worktree_space = Some(crate::workspace::WorktreeSpaceMembership {
             key: "repo-key".into(),
-            label: "herdr".into(),
-            repo_root: PathBuf::from("/repo/herdr"),
-            checkout_path: PathBuf::from("/repo/herdr/worktree-a"),
+            label: "sesh-mux".into(),
+            repo_root: PathBuf::from("/repo/sesh-mux"),
+            checkout_path: PathBuf::from("/repo/sesh-mux/worktree-a"),
             is_linked_worktree: true,
         });
 
@@ -938,313 +899,6 @@ mod tests {
             snapshot.workspaces[0].worktree_space,
             state.workspaces[0].worktree_space
         );
-    }
-
-    #[test]
-    fn capture_contract_tracks_layout_focus_zoom_and_root_pane() {
-        let mut state = state_with_workspaces(&["one"]);
-        let root = state.workspaces[0].tabs[0].root_pane;
-        let second = state.workspaces[0].test_split(Direction::Horizontal);
-        state.workspaces[0].tabs[0].layout.focus_pane(second);
-        state.toggle_zoom();
-
-        let snapshot = capture_from_state(&state);
-        let tab = &snapshot.workspaces[0].tabs[0];
-        assert!(matches!(tab.layout, LayoutSnapshot::Split { .. }));
-        assert_eq!(tab.focused, Some(second.raw()));
-        assert_eq!(tab.root_pane, Some(root.raw()));
-        assert!(tab.zoomed);
-        assert_eq!(tab.panes.len(), 2);
-    }
-
-    #[test]
-    fn capture_contract_tracks_focus_navigation() {
-        let mut state = state_with_workspaces(&["one"]);
-        let root = state.workspaces[0].tabs[0].root_pane;
-        let second = state.workspaces[0].test_split(Direction::Horizontal);
-        crate::ui::compute_view_with_runtime_registry(
-            &mut state,
-            &crate::terminal::TerminalRuntimeRegistry::new(),
-            Rect::new(0, 0, 106, 20),
-        );
-
-        state.navigate_pane(NavDirection::Right);
-
-        let snapshot = capture_from_state(&state);
-        assert_eq!(snapshot.workspaces[0].tabs[0].focused, Some(second.raw()));
-        assert_ne!(snapshot.workspaces[0].tabs[0].focused, Some(root.raw()));
-    }
-
-    #[test]
-    fn capture_contract_tracks_resize_ratio_changes() {
-        let mut state = state_with_workspaces(&["one"]);
-        let root = state.workspaces[0].tabs[0].root_pane;
-        state.workspaces[0].test_split(Direction::Horizontal);
-        state.workspaces[0].layout.focus_pane(root);
-        crate::ui::compute_view_with_runtime_registry(
-            &mut state,
-            &crate::terminal::TerminalRuntimeRegistry::new(),
-            Rect::new(0, 0, 106, 20),
-        );
-        let before = capture_from_state(&state);
-
-        state.resize_pane(NavDirection::Right);
-
-        let after = capture_from_state(&state);
-        let before_ratio = root_split_ratio(&before.workspaces[0].tabs[0]).unwrap();
-        let after_ratio = root_split_ratio(&after.workspaces[0].tabs[0]).unwrap();
-        assert_ne!(before_ratio, after_ratio);
-    }
-
-    #[test]
-    fn capture_contract_tracks_tab_closure() {
-        let mut state = state_with_workspaces(&["one"]);
-        let second_tab = state.workspaces[0].test_add_tab(Some("logs"));
-        state.switch_tab(second_tab);
-
-        state.close_tab();
-
-        let snapshot = capture_from_state(&state);
-        let workspace = &snapshot.workspaces[0];
-        assert_eq!(workspace.tabs.len(), 1);
-        assert_eq!(workspace.active_tab, 0);
-        assert!(workspace.tabs[0].custom_name.is_none());
-    }
-
-    #[test]
-    fn capture_contract_tracks_pane_closure() {
-        let mut state = state_with_workspaces(&["one"]);
-        state.workspaces[0].test_split(Direction::Horizontal);
-
-        state.close_pane();
-
-        let snapshot = capture_from_state(&state);
-        let tab = &snapshot.workspaces[0].tabs[0];
-        assert_eq!(tab.panes.len(), 1);
-        assert!(matches!(tab.layout, LayoutSnapshot::Pane(_)));
-        assert!(!tab.zoomed);
-    }
-
-    #[test]
-    fn capture_contract_tracks_public_id_counters() {
-        let mut state = state_with_workspaces(&["one"]);
-        let second = state.workspaces[0].test_split(Direction::Horizontal);
-        let third = state.workspaces[0].test_split(Direction::Vertical);
-        let second_tab = state.workspaces[0].test_add_tab(None);
-
-        state.workspaces[0].close_pane(second);
-
-        let snapshot = capture_from_state(&state);
-        let workspace = &snapshot.workspaces[0];
-        assert_eq!(
-            workspace.public_pane_numbers,
-            HashMap::from([
-                (state.workspaces[0].tabs[0].root_pane.raw(), 1),
-                (third.raw(), 3),
-                (state.workspaces[0].tabs[second_tab].root_pane.raw(), 4),
-            ])
-        );
-        assert_eq!(workspace.next_public_pane_number, 5);
-        assert_eq!(workspace.public_tab_numbers, vec![1, 2]);
-        assert_eq!(workspace.next_public_tab_number, 3);
-    }
-
-    #[cfg(unix)]
-    #[tokio::test]
-    async fn capture_prefers_live_shell_cwd_and_keeps_it_after_exit() {
-        let old = std::env::current_dir().unwrap();
-        let new = std::env::temp_dir().join(format!(
-            "herdr-persist-cwd-{}-{}",
-            std::process::id(),
-            std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .unwrap()
-                .as_nanos()
-        ));
-        std::fs::create_dir(&new).unwrap();
-        let new = std::fs::canonicalize(new).unwrap();
-        let mut state = AppState::test_new();
-        state.workspaces = vec![Workspace::test_new("cwd-source")];
-        state.workspaces[0].identity_cwd = old.clone();
-        state.active = Some(0);
-        state.ensure_test_terminals();
-        let pane_id = state.workspaces[0].tabs[0].root_pane;
-        let terminal_id = state.workspaces[0].terminal_id(pane_id).unwrap().clone();
-        let (events, _rx) = tokio::sync::mpsc::channel(32);
-        let runtime = crate::terminal::TerminalRuntime::spawn(
-            pane_id,
-            24,
-            80,
-            old.clone(),
-            0,
-            Default::default(),
-            None,
-            crate::pane::PaneShellConfig::new("/bin/sh", crate::config::ShellModeConfig::NonLogin),
-            &crate::pane::PaneLaunchEnv::default(),
-            events,
-            std::sync::Arc::new(tokio::sync::Notify::new()),
-            std::sync::Arc::new(crate::render_signal::RenderSignal::new()),
-        )
-        .unwrap();
-        let pid = runtime.child_pid().unwrap();
-        runtime
-            .try_send_bytes(bytes::Bytes::from(format!(
-                "cd '{}'; printf '\\033]7;file://{}\\007'; exec sleep 30\n",
-                new.display(),
-                old.display()
-            )))
-            .unwrap();
-        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
-        while (crate::platform::process_cwd(pid).as_ref() != Some(&new)
-            || runtime.cwd().as_ref() != Some(&old))
-            && std::time::Instant::now() < deadline
-        {
-            tokio::time::sleep(std::time::Duration::from_millis(10)).await;
-        }
-        assert_eq!(crate::platform::process_cwd(pid), Some(new.clone()));
-        assert_eq!(
-            runtime.cwd(),
-            Some(old.clone()),
-            "existing reported-cwd accessor is unchanged"
-        );
-        let mut runtimes = TerminalRuntimeRegistry::new();
-        runtimes.insert(terminal_id, runtime);
-        let before = capture_from_state_with_runtimes(&state, &runtimes);
-        assert_eq!(
-            before.workspaces[0].tabs[0]
-                .panes
-                .values()
-                .next()
-                .unwrap()
-                .cwd,
-            new
-        );
-        assert_eq!(before.workspaces[0].identity_cwd, new);
-        assert_eq!(runtimes.values().next().unwrap().cwd(), Some(old.clone()));
-        crate::platform::signal_processes(&[pid], crate::platform::Signal::Kill);
-        let exit_deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
-        while crate::platform::process_cwd(pid).is_some()
-            && std::time::Instant::now() < exit_deadline
-        {
-            tokio::time::sleep(std::time::Duration::from_millis(10)).await;
-        }
-        assert!(crate::platform::process_cwd(pid).is_none());
-        let after = capture_from_state_with_runtimes(&state, &runtimes);
-        assert_eq!(
-            after.workspaces[0].tabs[0]
-                .panes
-                .values()
-                .next()
-                .unwrap()
-                .cwd,
-            new
-        );
-        assert_eq!(after.workspaces[0].identity_cwd, new);
-        assert_eq!(runtimes.values().next().unwrap().cwd(), Some(old));
-        for (_, runtime) in runtimes.drain() {
-            runtime.shutdown();
-        }
-        std::fs::remove_dir(new).unwrap();
-    }
-
-    #[test]
-    fn capture_contract_tracks_workspace_identity_and_pane_cwds() {
-        let mut state = state_with_workspaces(&["one"]);
-        let root = state.workspaces[0].tabs[0].root_pane;
-        state.workspaces[0].identity_cwd = PathBuf::from("/tmp/pion");
-        let second = state.workspaces[0].test_split(Direction::Horizontal);
-        state.ensure_test_terminals();
-        let root_terminal_id = state.workspaces[0].tabs[0].panes[&root]
-            .attached_terminal_id
-            .clone();
-        state.terminals.get_mut(&root_terminal_id).unwrap().cwd = PathBuf::from("/tmp/pion");
-        let second_terminal_id = state.workspaces[0].tabs[0].panes[&second]
-            .attached_terminal_id
-            .clone();
-        state.terminals.get_mut(&second_terminal_id).unwrap().cwd = PathBuf::from("/tmp/herdr");
-
-        let snapshot = capture_from_state(&state);
-        let workspace = &snapshot.workspaces[0];
-        let tab = &workspace.tabs[0];
-        assert_eq!(workspace.identity_cwd, PathBuf::from("/tmp/pion"));
-        assert_eq!(tab.panes[&root.raw()].cwd, PathBuf::from("/tmp/pion"));
-        assert_eq!(tab.panes[&second.raw()].cwd, PathBuf::from("/tmp/herdr"));
-    }
-
-    #[tokio::test]
-    async fn capture_contract_tracks_pane_history_from_runtime() {
-        let state = state_with_workspaces(&["one"]);
-        let root = state.workspaces[0].tabs[0].root_pane;
-        let terminal_id = state.workspaces[0].tabs[0].panes[&root]
-            .attached_terminal_id
-            .clone();
-        let mut terminal_runtimes = TerminalRuntimeRegistry::new();
-        terminal_runtimes.insert(
-            terminal_id,
-            crate::terminal::TerminalRuntime::test_with_scrollback_bytes(
-                20,
-                3,
-                4096,
-                b"alpha\r\nbeta\r\ngamma\r\n",
-            ),
-        );
-
-        let snapshot = capture_from_state_with_runtimes(&state, &terminal_runtimes);
-        let encoded = serde_json::to_string(&snapshot).unwrap();
-        assert!(!encoded.contains("alpha"));
-        assert!(!encoded.contains("\"history\""));
-
-        let history_snapshot = capture_history_from_state_with_runtimes(&state, &terminal_runtimes);
-        let history = &history_snapshot.workspaces[0].tabs[0].panes[&root.raw()];
-
-        assert!(history.ansi.contains("alpha"));
-        assert!(history.ansi.contains("gamma"));
-        assert!(history.lines >= 3);
-    }
-
-    #[tokio::test]
-    async fn capture_contract_tracks_history_for_each_pane() {
-        let mut state = state_with_workspaces(&["one"]);
-        let first = state.workspaces[0].tabs[0].root_pane;
-        let second = state.workspaces[0].test_split(Direction::Horizontal);
-        let first_terminal_id = state.workspaces[0].tabs[0].panes[&first]
-            .attached_terminal_id
-            .clone();
-        let second_terminal_id = state.workspaces[0].tabs[0].panes[&second]
-            .attached_terminal_id
-            .clone();
-        let mut terminal_runtimes = TerminalRuntimeRegistry::new();
-        terminal_runtimes.insert(
-            first_terminal_id,
-            crate::terminal::TerminalRuntime::test_with_scrollback_bytes(
-                20,
-                3,
-                4096,
-                b"first-pane-history\r\n",
-            ),
-        );
-        terminal_runtimes.insert(
-            second_terminal_id,
-            crate::terminal::TerminalRuntime::test_with_scrollback_bytes(
-                20,
-                3,
-                4096,
-                b"second-pane-history\r\n",
-            ),
-        );
-
-        let snapshot = capture_from_state_with_runtimes(&state, &terminal_runtimes);
-        let encoded = serde_json::to_string(&snapshot).unwrap();
-        assert!(!encoded.contains("first-pane-history"));
-        assert!(!encoded.contains("second-pane-history"));
-
-        let history_snapshot = capture_history_from_state_with_runtimes(&state, &terminal_runtimes);
-        let tab = &history_snapshot.workspaces[0].tabs[0];
-        let first_history = &tab.panes[&first.raw()];
-        let second_history = &tab.panes[&second.raw()];
-
-        assert!(first_history.ansi.contains("first-pane-history"));
-        assert!(second_history.ansi.contains("second-pane-history"));
     }
 
     #[test]
@@ -1262,12 +916,12 @@ mod tests {
             crate::detect::AgentState::Idle,
         );
         terminal.set_persisted_agent_session(crate::agent_resume::PersistedAgentSession {
-            source: "herdr:pi".into(),
+            source: "sesh-mux:pi".into(),
             agent: "pi".into(),
             session_ref: crate::agent_resume::AgentSessionRef::path(session_path.clone()).unwrap(),
         });
         terminal.set_hook_authority_with_session_ref(
-            "herdr:pi".into(),
+            "sesh-mux:pi".into(),
             "pi".into(),
             crate::detect::AgentState::Working,
             None,
@@ -1281,7 +935,7 @@ mod tests {
             .as_ref()
             .expect("agent session should be captured");
 
-        assert_eq!(agent_session.source, "herdr:pi");
+        assert_eq!(agent_session.source, "sesh-mux:pi");
         assert_eq!(agent_session.agent, "pi");
         assert_eq!(
             agent_session.kind,
@@ -1303,7 +957,7 @@ mod tests {
             .get_mut(&terminal_id)
             .unwrap()
             .set_persisted_agent_session(crate::agent_resume::PersistedAgentSession {
-                source: "herdr:opencode".into(),
+                source: "sesh-mux:opencode".into(),
                 agent: "opencode".into(),
                 session_ref: crate::agent_resume::AgentSessionRef::id("opencode-session").unwrap(),
             });
@@ -1314,7 +968,7 @@ mod tests {
             .as_ref()
             .expect("persisted agent session should be captured");
 
-        assert_eq!(agent_session.source, "herdr:opencode");
+        assert_eq!(agent_session.source, "sesh-mux:opencode");
         assert_eq!(agent_session.agent, "opencode");
         assert_eq!(
             agent_session.kind,
@@ -1349,7 +1003,7 @@ mod tests {
         panes.insert(
             0,
             PaneSnapshot {
-                cwd: PathBuf::from("/tmp/this-directory-does-not-exist-for-herdr-test"),
+                cwd: PathBuf::from("/tmp/this-directory-does-not-exist-for-sesh-mux-test"),
                 label: None,
                 agent_name: None,
                 managed_agent_kind: None,
@@ -1409,7 +1063,7 @@ mod tests {
         assert_eq!(restored.workspaces.len(), 1);
         assert_eq!(
             restored.workspaces[0].tabs[0].panes[&0].cwd,
-            PathBuf::from("/tmp/this-directory-does-not-exist-for-herdr-test")
+            PathBuf::from("/tmp/this-directory-does-not-exist-for-sesh-mux-test")
         );
     }
 }

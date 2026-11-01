@@ -2,7 +2,7 @@ id = "pi"
 version = "2026.09.14.1"
 min_engine_version = 1
 updated_at = "2026-09-14T00:00:00Z"
-aliases = ["herdr:pi"]
+aliases = ["sesh-mux:pi"]
 
 [[rules]]
 id = "working_literal"

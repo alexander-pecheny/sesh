@@ -50,7 +50,7 @@ async fn watch_connection(
             "Inhibit",
             &(
                 "shutdown",
-                "Herdr",
+                "sesh-mux",
                 "Save terminal workspace layout",
                 "delay",
             ),

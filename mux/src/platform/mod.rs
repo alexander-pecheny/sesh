@@ -3,9 +3,6 @@
 //! Centralizes OS-dependent behavior behind a clean boundary so core
 //! modules don't scatter `#[cfg]` branches through product logic.
 
-#[cfg(unix)]
-pub(crate) mod ssh_agent;
-
 pub(crate) struct HostShutdownMonitor {
     task: Option<tokio::task::JoinHandle<()>>,
 }
@@ -64,7 +61,6 @@ pub enum ChildExitReason {
     Exited,
     Interrupted,
     /// Imported runtimes have no child wait handle in the replacement server.
-    #[cfg(unix)]
     Handoff,
     WaitFailed,
 }
@@ -73,15 +69,13 @@ impl ChildExitReason {
     pub(crate) fn requires_session_checkpoint(self) -> bool {
         match self {
             Self::Interrupted => true,
-            #[cfg(unix)]
             Self::Handoff => true,
             _ => false,
         }
     }
 }
 
-#[cfg(unix)]
-pub(crate) use unix_common::{classify_child_exit, poll_fd_readable, read_fd};
+pub(crate) use unix_common::classify_child_exit;
 
 #[cfg(not(any(unix, windows)))]
 pub(crate) fn classify_child_exit(_status: &portable_pty::ExitStatus) -> ChildExitReason {
@@ -93,16 +87,6 @@ pub(crate) fn launch_executable() -> std::io::Result<std::path::PathBuf> {
     std::env::current_exe()
 }
 
-pub(crate) fn detached_custom_command_process(command: &str) -> std::process::Command {
-    let mut process = detached_custom_command_process_platform(command);
-    configure_background_command(&mut process);
-    process
-}
-
-pub(crate) fn pane_custom_command_pty_builder(command: &str) -> portable_pty::CommandBuilder {
-    pane_custom_command_pty_builder_platform(command)
-}
-
 pub(crate) fn apply_pane_runtime_marker(command: &mut portable_pty::CommandBuilder) {
     apply_pane_runtime_marker_platform(command);
 }
@@ -111,42 +95,28 @@ pub(crate) fn prepare_paste_text_for_pty(text: String) -> String {
     prepare_paste_text_for_pty_platform(text)
 }
 
-pub(crate) fn plugin_runtime_path(path: &std::path::Path) -> std::path::PathBuf {
-    plugin_runtime_path_platform(path)
-}
-
 pub(crate) fn normalize_cwd_for_launch(path: &std::path::Path) -> std::path::PathBuf {
     normalize_cwd_for_launch_platform(path)
 }
 
-#[cfg(not(windows))]
 fn normalize_cwd_for_launch_platform(path: &std::path::Path) -> std::path::PathBuf {
     path.to_path_buf()
 }
 
-#[cfg(not(windows))]
-fn plugin_runtime_path_platform(path: &std::path::Path) -> std::path::PathBuf {
-    path.to_path_buf()
-}
-
-#[cfg(not(windows))]
 fn prepare_paste_text_for_pty_platform(text: String) -> String {
     text
 }
 
-#[cfg(not(windows))]
 pub(crate) fn terminal_title_for_presentation(title: &str) -> &str {
     title
 }
 
-#[cfg(not(windows))]
 fn apply_pane_runtime_marker_platform(_command: &mut portable_pty::CommandBuilder) {}
 
 pub(crate) fn configure_background_command(command: &mut std::process::Command) {
     configure_background_command_platform(command);
 }
 
-#[cfg(not(windows))]
 fn configure_background_command_platform(_command: &mut std::process::Command) {}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -162,28 +132,6 @@ pub(crate) const fn capabilities() -> PlatformCapabilities {
         direct_terminal_attach: cfg!(unix),
         preserve_legacy_doubled_escape_input: cfg!(target_os = "macos"),
     }
-}
-
-pub(crate) fn terminal_grid_size() -> std::io::Result<(u16, u16)> {
-    #[cfg(unix)]
-    let (cols, rows) = unix_common::read_terminal_grid_size()?;
-    #[cfg(windows)]
-    let (cols, rows) = windows::read_terminal_grid_size()?;
-    #[cfg(not(any(unix, windows)))]
-    let (cols, rows) = fallback::read_terminal_grid_size()?;
-
-    if cols == 0 || rows == 0 {
-        return Err(std::io::Error::new(
-            std::io::ErrorKind::InvalidData,
-            "terminal reported a zero-sized grid",
-        ));
-    }
-    Ok((cols, rows))
-}
-
-#[cfg(not(windows))]
-pub fn launch_server_daemon_command(command: &mut std::process::Command) -> std::io::Result<u32> {
-    command.spawn().map(|child| child.id())
 }
 
 #[cfg(not(target_os = "macos"))]
@@ -213,38 +161,8 @@ pub fn current_process_is_detached_server_daemon() -> bool {
     unsafe { libc::getsid(0) == libc::getpid() }
 }
 
-/// Raised by the SIGWINCH handler, consumed by the host resize watcher.
-#[cfg(unix)]
-static TERMINAL_RESIZE_SIGNALLED: std::sync::atomic::AtomicBool =
-    std::sync::atomic::AtomicBool::new(false);
-
-#[cfg(unix)]
-extern "C" fn record_terminal_resize_signal(_signal: libc::c_int) {
-    TERMINAL_RESIZE_SIGNALLED.store(true, std::sync::atomic::Ordering::Release);
-}
-
-/// Records SIGWINCH events that size polling can miss.
-#[cfg(unix)]
-pub(crate) fn watch_terminal_resize_signal() {
-    let mut action: libc::sigaction = unsafe { std::mem::zeroed() };
-    action.sa_sigaction =
-        record_terminal_resize_signal as extern "C" fn(libc::c_int) as libc::sighandler_t;
-    // Keep blocking stdin and socket reads from failing with EINTR.
-    action.sa_flags = libc::SA_RESTART;
-    unsafe {
-        libc::sigemptyset(&mut action.sa_mask);
-        libc::sigaction(libc::SIGWINCH, &action, std::ptr::null_mut());
-    }
-}
-
 #[cfg(not(unix))]
 pub(crate) fn watch_terminal_resize_signal() {}
-
-/// Returns whether a terminal size change was signalled since the last call.
-#[cfg(unix)]
-pub(crate) fn take_terminal_resize_signal() -> bool {
-    TERMINAL_RESIZE_SIGNALLED.swap(false, std::sync::atomic::Ordering::AcqRel)
-}
 
 /// Windows relies on size polling.
 #[cfg(not(unix))]
@@ -252,61 +170,14 @@ pub(crate) fn take_terminal_resize_signal() -> bool {
     false
 }
 
-#[cfg(unix)]
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ClipboardCommand {
     pub program: &'static str,
     pub args: &'static [&'static str],
 }
 
-#[derive(Debug, PartialEq, Eq)]
-pub(crate) enum LimitedRead {
-    Empty,
-    Complete(Vec<u8>),
-    Oversized,
-}
-
-pub(crate) fn read_limited_reader(
-    mut reader: impl std::io::Read,
-    max_bytes: usize,
-) -> std::io::Result<LimitedRead> {
-    let mut bytes = Vec::new();
-    let mut buffer = [0_u8; 8192];
-
-    while bytes.len() < max_bytes {
-        let remaining = max_bytes - bytes.len();
-        let read_len = remaining.min(buffer.len());
-        let bytes_read = match reader.read(&mut buffer[..read_len]) {
-            Ok(bytes_read) => bytes_read,
-            Err(err) if err.kind() == std::io::ErrorKind::Interrupted => continue,
-            Err(err) => return Err(err),
-        };
-        if bytes_read == 0 {
-            return if bytes.is_empty() {
-                Ok(LimitedRead::Empty)
-            } else {
-                Ok(LimitedRead::Complete(bytes))
-            };
-        }
-        bytes.extend_from_slice(&buffer[..bytes_read]);
-    }
-
-    let mut sentinel = [0_u8; 1];
-    loop {
-        return match reader.read(&mut sentinel) {
-            Ok(0) if bytes.is_empty() => Ok(LimitedRead::Empty),
-            Ok(0) => Ok(LimitedRead::Complete(bytes)),
-            Ok(_) => Ok(LimitedRead::Oversized),
-            Err(err) if err.kind() == std::io::ErrorKind::Interrupted => continue,
-            Err(err) => Err(err),
-        };
-    }
-}
-
-#[cfg(unix)]
 mod unix_common;
-#[cfg(unix)]
-pub(crate) use unix_common::{begin_cli_output, stdout_closed};
+pub(crate) use unix_common::begin_cli_output;
 
 mod client_state;
 pub(crate) use client_state::{replace_file, sync_parent_directory};
@@ -333,12 +204,8 @@ mod macos;
 pub use macos::*;
 
 #[cfg(target_os = "windows")]
-mod windows;
-#[cfg(target_os = "windows")]
 pub use windows::*;
 
-#[cfg(not(any(target_os = "linux", target_os = "macos", target_os = "windows")))]
-mod fallback;
 #[cfg(not(any(target_os = "linux", target_os = "macos", target_os = "windows")))]
 pub use fallback::*;
 
@@ -406,36 +273,6 @@ pub(crate) fn quote_powershell_arg(value: &str) -> String {
     format!("'{}'", value.replace('\'', "''"))
 }
 
-#[cfg(windows)]
-pub(crate) fn quote_windows_command_line_arg(value: &str) -> String {
-    if !value.is_empty()
-        && !value
-            .chars()
-            .any(|ch| matches!(ch, ' ' | '\t' | '\n' | '\x0b' | '"'))
-    {
-        return value.to_string();
-    }
-
-    let mut quoted = String::from("\"");
-    let mut backslashes = 0;
-    for ch in value.chars() {
-        if ch == '\\' {
-            backslashes += 1;
-            continue;
-        }
-        if ch == '"' {
-            quoted.push_str(&"\\".repeat(backslashes * 2 + 1));
-        } else {
-            quoted.push_str(&"\\".repeat(backslashes));
-        }
-        backslashes = 0;
-        quoted.push(ch);
-    }
-    quoted.push_str(&"\\".repeat(backslashes * 2));
-    quoted.push('"');
-    quoted
-}
-
 pub(crate) fn is_pane_shell_process_name(name: &str) -> bool {
     let normalized = normalized_process_name(name);
     matches!(
@@ -465,7 +302,7 @@ pub fn process_agent_hint(_pid: u32) -> Option<crate::detect::Agent> {
 #[cfg(any(target_os = "linux", target_os = "macos"))]
 pub(crate) fn parse_agent_env_hint(environ: &[u8]) -> Option<crate::detect::Agent> {
     for record in environ.split(|&byte| byte == 0) {
-        let Some(value) = record.strip_prefix(b"HERDR_AGENT=") else {
+        let Some(value) = record.strip_prefix(b"SESH_MUX_AGENT=") else {
             continue;
         };
         return crate::detect::parse_agent_label(std::str::from_utf8(value).ok()?);
@@ -482,46 +319,6 @@ pub(crate) fn switch_to_ascii_input_source() -> Option<InputSourceRestore> {
     None
 }
 
-#[cfg(not(any(target_os = "macos", target_os = "windows")))]
-pub(crate) fn pump_input_source_runloop() {}
-
-/// Switches the host keyboard input source while prefix mode is active.
-///
-/// `App` drives this through a trait so the prefix-mode transitions can be
-/// tested with a fake, without touching the real macOS APIs or leaking a
-/// platform-specific restore type into `App`.
-pub(crate) trait PrefixInputSource {
-    /// Switch to an ASCII-capable input source for prefix commands. No-op if
-    /// the current source is already ASCII-capable, the platform is
-    /// unsupported, or the switch fails. Calling it again before `restore`
-    /// keeps the source saved by the first call.
-    fn switch_to_ascii(&mut self);
-
-    /// Restore whatever `switch_to_ascii` saved. No-op if nothing was switched.
-    fn restore(&mut self);
-}
-
-/// Production [`PrefixInputSource`] backed by the per-platform API.
-#[derive(Default)]
-pub(crate) struct RealPrefixInputSource {
-    restore: Option<InputSourceRestore>,
-}
-
-impl PrefixInputSource for RealPrefixInputSource {
-    fn switch_to_ascii(&mut self) {
-        if self.restore.is_none() {
-            // Drain pending input-source-change notifications so the read below is fresh (see
-            // `pump_input_source_runloop`); a no-op on non-macOS.
-            pump_input_source_runloop();
-            self.restore = switch_to_ascii_input_source();
-        }
-    }
-
-    fn restore(&mut self) {
-        let _ = self.restore.take();
-    }
-}
-
 #[cfg(all(test, any(unix, windows)))]
 #[test]
 fn child_exit_classification_only_checkpoints_interruptions() {
@@ -530,86 +327,17 @@ fn child_exit_classification_only_checkpoints_interruptions() {
         assert_eq!(reason, ChildExitReason::Exited, "exit code {code:#x}");
         assert!(!reason.requires_session_checkpoint());
     }
-    #[cfg(windows)]
-    let status = portable_pty::ExitStatus::with_exit_code(0xC000013A);
     #[cfg(not(windows))]
     let status = portable_pty::ExitStatus::with_signal("Terminated: 15");
     assert_eq!(classify_child_exit(&status), ChildExitReason::Interrupted);
     assert!(classify_child_exit(&status).requires_session_checkpoint());
-    #[cfg(unix)]
     assert!(ChildExitReason::Handoff.requires_session_checkpoint());
     assert!(!ChildExitReason::WaitFailed.requires_session_checkpoint());
 }
 
-#[cfg(all(test, unix))]
+#[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn terminal_resize_signal_is_recorded_once_per_delivery() {
-        watch_terminal_resize_signal();
-        assert!(!take_terminal_resize_signal());
-
-        unsafe {
-            libc::raise(libc::SIGWINCH);
-        }
-
-        assert!(take_terminal_resize_signal());
-        assert!(!take_terminal_resize_signal());
-    }
-
-    #[test]
-    fn pane_shell_process_names_reject_exec_replacement_programs() {
-        for shell in ["bash", "-zsh", "/bin/fish", "pwsh", "powershell.exe"] {
-            assert!(is_pane_shell_process_name(shell), "{shell}");
-        }
-        for program in ["vim", "nvim", "cargo", "test-runner", "opencode"] {
-            assert!(!is_pane_shell_process_name(program), "{program}");
-        }
-    }
-
-    #[test]
-    fn detached_custom_command_preserves_unix_login_shell_flag() {
-        let cmd = detached_custom_command_process("echo hello");
-        assert_eq!(cmd.get_program(), std::ffi::OsStr::new("/bin/sh"));
-        assert_eq!(
-            cmd.get_args().collect::<Vec<_>>(),
-            [
-                std::ffi::OsStr::new("-lc"),
-                std::ffi::OsStr::new("echo hello")
-            ]
-        );
-    }
-
-    #[test]
-    fn pane_custom_command_builder_preserves_unix_shell_flag() {
-        let expected: Vec<std::ffi::OsString> =
-            vec!["/bin/sh".into(), "-c".into(), "echo hello".into()];
-        assert_eq!(
-            pane_custom_command_pty_builder("echo hello").get_argv(),
-            &expected
-        );
-    }
-
-    #[cfg(any(target_os = "linux", target_os = "macos"))]
-    #[test]
-    fn parse_agent_env_hint_accepts_known_agents() {
-        assert_eq!(
-            parse_agent_env_hint(b"PATH=/bin\0HERDR_AGENT=claude\0TERM=xterm\0"),
-            Some(crate::detect::Agent::Claude)
-        );
-        assert_eq!(
-            parse_agent_env_hint(b"HERDR_AGENT=codex"),
-            Some(crate::detect::Agent::Codex)
-        );
-    }
-
-    #[cfg(any(target_os = "linux", target_os = "macos"))]
-    #[test]
-    fn parse_agent_env_hint_ignores_missing_or_unknown_agents() {
-        assert_eq!(parse_agent_env_hint(b"PATH=/bin\0TERM=xterm\0"), None);
-        assert_eq!(parse_agent_env_hint(b"HERDR_AGENT=not-an-agent\0"), None);
-    }
 
     #[cfg(any(target_os = "linux", target_os = "macos"))]
     #[test]
@@ -630,69 +358,6 @@ mod tests {
         assert_eq!(
             interactive_shell_command(&argv, "pwsh").as_deref(),
             Some("pi '' 'two words' 'a''b' '$HOME' 'semi;colon' '@options'")
-        );
-    }
-
-    #[test]
-    fn read_limited_reader_returns_complete_data_under_limit() {
-        let input = std::io::Cursor::new(b"image".to_vec());
-        assert_eq!(
-            read_limited_reader(input, 16).expect("limited read"),
-            LimitedRead::Complete(b"image".to_vec())
-        );
-    }
-
-    #[test]
-    fn read_limited_reader_returns_empty_for_empty_input() {
-        let input = std::io::Cursor::new(Vec::<u8>::new());
-        assert_eq!(
-            read_limited_reader(input, 16).expect("limited read"),
-            LimitedRead::Empty
-        );
-    }
-
-    #[test]
-    fn read_limited_reader_accepts_data_exactly_at_limit() {
-        let input = std::io::Cursor::new(b"four".to_vec());
-        assert_eq!(
-            read_limited_reader(input, 4).expect("limited read"),
-            LimitedRead::Complete(b"four".to_vec())
-        );
-    }
-
-    #[test]
-    fn read_limited_reader_rejects_data_over_limit() {
-        let input = std::io::Cursor::new(b"oversized".to_vec());
-        assert_eq!(
-            read_limited_reader(input, 4).expect("limited read"),
-            LimitedRead::Oversized
-        );
-    }
-
-    #[test]
-    fn read_limited_reader_retries_interrupted_reads() {
-        struct InterruptedOnce {
-            interrupted: bool,
-            inner: std::io::Cursor<Vec<u8>>,
-        }
-
-        impl std::io::Read for InterruptedOnce {
-            fn read(&mut self, buffer: &mut [u8]) -> std::io::Result<usize> {
-                if !self.interrupted {
-                    self.interrupted = true;
-                    return Err(std::io::ErrorKind::Interrupted.into());
-                }
-                self.inner.read(buffer)
-            }
-        }
-
-        let input = InterruptedOnce {
-            interrupted: false,
-            inner: std::io::Cursor::new(b"image".to_vec()),
-        };
-        assert_eq!(
-            read_limited_reader(input, 16).expect("limited read"),
-            LimitedRead::Complete(b"image".to_vec())
         );
     }
 }

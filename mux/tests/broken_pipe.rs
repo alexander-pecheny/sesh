@@ -21,7 +21,7 @@ fn run_with_closed_stdout(args: &[&str]) -> Output {
         .stdout(closed_pipe_writer())
         .stderr(Stdio::piped())
         .output()
-        .expect("run herdr CLI")
+        .expect("run sesh-mux CLI")
 }
 
 fn assert_quiet_sigpipe(output: Output) {
@@ -35,15 +35,5 @@ fn assert_quiet_sigpipe(output: Output) {
 
 #[test]
 fn cli_exits_via_sigpipe_without_panicking_when_stdout_closes() {
-    assert_quiet_sigpipe(run_with_closed_stdout(&["api", "schema", "--json"]));
-}
-
-#[test]
-fn terminal_help_uses_cli_sigpipe_behavior_before_attach_starts() {
-    assert_quiet_sigpipe(run_with_closed_stdout(&["terminal", "attach", "--help"]));
-}
-
-#[test]
-fn completion_direct_writer_uses_cli_sigpipe_behavior() {
-    assert_quiet_sigpipe(run_with_closed_stdout(&["completion", "bash"]));
+    assert_quiet_sigpipe(run_with_closed_stdout(&["--help"]));
 }

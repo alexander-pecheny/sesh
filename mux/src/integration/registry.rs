@@ -9,22 +9,8 @@ pub(crate) fn integration_target_label(
 ) -> &'static str {
     match target {
         crate::api::schema::IntegrationTarget::Pi => "pi",
-        crate::api::schema::IntegrationTarget::Omp => "omp",
         crate::api::schema::IntegrationTarget::Claude => "claude",
         crate::api::schema::IntegrationTarget::Codex => "codex",
-        crate::api::schema::IntegrationTarget::Copilot => "copilot",
-        crate::api::schema::IntegrationTarget::Devin => "devin",
-        crate::api::schema::IntegrationTarget::Droid => "droid",
-        crate::api::schema::IntegrationTarget::Kimi => "kimi",
-        crate::api::schema::IntegrationTarget::Opencode => "opencode",
-        crate::api::schema::IntegrationTarget::Kilo => "kilo",
-        crate::api::schema::IntegrationTarget::Hermes => "hermes",
-        crate::api::schema::IntegrationTarget::Qodercli => "qodercli",
-        crate::api::schema::IntegrationTarget::Qwen => "qwen",
-        crate::api::schema::IntegrationTarget::Cursor => "cursor",
-        crate::api::schema::IntegrationTarget::Mastracode => "mastracode",
-        crate::api::schema::IntegrationTarget::AntigravityCli => "antigravity-cli",
-        crate::api::schema::IntegrationTarget::Grok => "grok",
     }
 }
 
@@ -39,55 +25,12 @@ pub(crate) fn integration_target_command_names(
 ) -> &'static [&'static str] {
     match target {
         crate::api::schema::IntegrationTarget::Pi => &["pi"],
-        crate::api::schema::IntegrationTarget::Omp => &["omp"],
         crate::api::schema::IntegrationTarget::Claude => &["claude"],
         crate::api::schema::IntegrationTarget::Codex => &["codex"],
-        crate::api::schema::IntegrationTarget::Copilot => &["copilot"],
-        crate::api::schema::IntegrationTarget::Devin => &["devin"],
-        crate::api::schema::IntegrationTarget::Droid => &["droid"],
-        crate::api::schema::IntegrationTarget::Kimi => &["kimi"],
-        crate::api::schema::IntegrationTarget::Opencode => &["opencode"],
-        crate::api::schema::IntegrationTarget::Kilo => &["kilo", "kilo-code"],
-        crate::api::schema::IntegrationTarget::Hermes => &["hermes"],
-        crate::api::schema::IntegrationTarget::Qodercli => qodercli_command_names(),
-        crate::api::schema::IntegrationTarget::Qwen => &["qwen"],
-        crate::api::schema::IntegrationTarget::Cursor => cursor_command_names(),
-        crate::api::schema::IntegrationTarget::Mastracode => &["mastracode"],
-        crate::api::schema::IntegrationTarget::AntigravityCli => &["agy"],
-        crate::api::schema::IntegrationTarget::Grok => &["grok"],
     }
-}
-
-pub(crate) fn cursor_command_names() -> &'static [&'static str] {
-    &["cursor-agent"]
 }
 
 pub(crate) fn integration_target_supported(target: crate::api::schema::IntegrationTarget) -> bool {
-    #[cfg(windows)]
-    {
-        matches!(
-            target,
-            crate::api::schema::IntegrationTarget::Pi
-                | crate::api::schema::IntegrationTarget::Omp
-                | crate::api::schema::IntegrationTarget::Claude
-                | crate::api::schema::IntegrationTarget::Codex
-                | crate::api::schema::IntegrationTarget::Copilot
-                | crate::api::schema::IntegrationTarget::Opencode
-                | crate::api::schema::IntegrationTarget::Kilo
-                | crate::api::schema::IntegrationTarget::Droid
-                | crate::api::schema::IntegrationTarget::Kimi
-                | crate::api::schema::IntegrationTarget::Qodercli
-                | crate::api::schema::IntegrationTarget::Qwen
-                | crate::api::schema::IntegrationTarget::AntigravityCli
-                | crate::api::schema::IntegrationTarget::Devin
-                | crate::api::schema::IntegrationTarget::Hermes
-                | crate::api::schema::IntegrationTarget::Cursor
-                | crate::api::schema::IntegrationTarget::Mastracode
-                | crate::api::schema::IntegrationTarget::Grok
-        )
-    }
-
-    #[cfg(not(windows))]
     {
         let _ = target;
         true
@@ -105,22 +48,11 @@ pub(crate) fn integration_target_available(target: crate::api::schema::Integrati
         || integration_target_install_layout_available(target)
 }
 
-#[cfg(windows)]
-pub(crate) fn qodercli_command_names() -> &'static [&'static str] {
-    &["qodercli", "qoder", "qoderclicn", "qodercn"]
-}
-
-#[cfg(not(windows))]
-pub(crate) fn qodercli_command_names() -> &'static [&'static str] {
-    &["qodercli"]
-}
-
 pub(crate) fn integration_target_install_layout_available(
     target: crate::api::schema::IntegrationTarget,
 ) -> bool {
     match target {
         crate::api::schema::IntegrationTarget::Codex => codex_standalone_binary_available(),
-        crate::api::schema::IntegrationTarget::Hermes => hermes_install_layout_available(),
         _ => false,
     }
 }
@@ -139,22 +71,8 @@ pub(crate) fn command_available(command: &str) -> bool {
 pub(crate) fn command_path_candidates(dir: &Path, command: &str) -> Vec<PathBuf> {
     let base = dir.join(command);
 
-    #[cfg(not(windows))]
     {
         vec![base]
-    }
-
-    #[cfg(windows)]
-    {
-        if Path::new(command).extension().is_some() {
-            return vec![base];
-        }
-
-        let mut candidates = vec![base];
-        for extension in [".exe", ".cmd", ".bat", ".ps1"] {
-            candidates.push(dir.join(format!("{command}{extension}")));
-        }
-        candidates
     }
 }
 
@@ -166,7 +84,6 @@ pub(crate) fn executable_file_exists(path: &Path) -> bool {
         return false;
     }
 
-    #[cfg(unix)]
     {
         use std::os::unix::fs::PermissionsExt;
         metadata.permissions().mode() & 0o111 != 0
@@ -198,27 +115,6 @@ pub(crate) fn codex_executable_name() -> &'static str {
         "codex.exe"
     } else {
         "codex"
-    }
-}
-
-pub(crate) fn hermes_install_layout_available() -> bool {
-    #[cfg(windows)]
-    {
-        let Ok(dir) = hermes_dir() else {
-            return false;
-        };
-        [
-            dir.join("hermes.exe"),
-            dir.join("bin").join("hermes.exe"),
-            dir.join("Scripts").join("hermes.exe"),
-        ]
-        .into_iter()
-        .any(|path| executable_file_exists(&path))
-    }
-
-    #[cfg(not(windows))]
-    {
-        false
     }
 }
 
@@ -267,17 +163,12 @@ fn integration_specs() -> [(
     crate::api::schema::IntegrationTarget,
     io::Result<PathBuf>,
     u32,
-); 17] {
+); 3] {
     [
         (
             crate::api::schema::IntegrationTarget::Pi,
             pi_extension_dir().map(|dir| dir.join(super::PI_EXTENSION_INSTALL_NAME)),
             super::PI_INTEGRATION_VERSION,
-        ),
-        (
-            crate::api::schema::IntegrationTarget::Omp,
-            omp_extension_dir().map(|dir| dir.join(super::OMP_EXTENSION_INSTALL_NAME)),
-            super::OMP_INTEGRATION_VERSION,
         ),
         (
             crate::api::schema::IntegrationTarget::Claude,
@@ -289,77 +180,6 @@ fn integration_specs() -> [(
             codex_dir().map(|dir| dir.join(super::CODEX_HOOK_INSTALL_NAME)),
             super::CODEX_INTEGRATION_VERSION,
         ),
-        (
-            crate::api::schema::IntegrationTarget::Copilot,
-            copilot_dir().map(|dir| dir.join("hooks").join(super::COPILOT_HOOK_INSTALL_NAME)),
-            super::COPILOT_INTEGRATION_VERSION,
-        ),
-        (
-            crate::api::schema::IntegrationTarget::Devin,
-            devin_dir().map(|dir| dir.join(super::DEVIN_HOOK_INSTALL_NAME)),
-            super::DEVIN_INTEGRATION_VERSION,
-        ),
-        (
-            crate::api::schema::IntegrationTarget::Droid,
-            droid_dir().map(|dir| dir.join("hooks").join(super::DROID_HOOK_INSTALL_NAME)),
-            super::DROID_INTEGRATION_VERSION,
-        ),
-        (
-            crate::api::schema::IntegrationTarget::Kimi,
-            kimi_dir().map(|dir| dir.join("hooks").join(super::KIMI_HOOK_INSTALL_NAME)),
-            super::KIMI_INTEGRATION_VERSION,
-        ),
-        (
-            crate::api::schema::IntegrationTarget::Opencode,
-            opencode_dir().map(|dir| {
-                dir.join("plugins")
-                    .join(super::OPENCODE_PLUGIN_INSTALL_NAME)
-            }),
-            super::OPENCODE_INTEGRATION_VERSION,
-        ),
-        (
-            crate::api::schema::IntegrationTarget::Kilo,
-            kilo_dir().map(|dir| dir.join("plugin").join(super::KILO_PLUGIN_INSTALL_NAME)),
-            super::KILO_INTEGRATION_VERSION,
-        ),
-        (
-            crate::api::schema::IntegrationTarget::Hermes,
-            hermes_plugin_dir().map(|dir| dir.join(super::HERMES_PLUGIN_INIT_INSTALL_NAME)),
-            super::HERMES_INTEGRATION_VERSION,
-        ),
-        (
-            crate::api::schema::IntegrationTarget::Qodercli,
-            qodercli_dir().map(|dir| dir.join("hooks").join(super::QODERCLI_HOOK_INSTALL_NAME)),
-            super::QODERCLI_INTEGRATION_VERSION,
-        ),
-        (
-            crate::api::schema::IntegrationTarget::Qwen,
-            qwen_dir().map(|dir| dir.join("hooks").join(super::QWEN_HOOK_INSTALL_NAME)),
-            super::QWEN_INTEGRATION_VERSION,
-        ),
-        (
-            crate::api::schema::IntegrationTarget::Cursor,
-            cursor_dir().map(|dir| dir.join(super::CURSOR_HOOK_INSTALL_NAME)),
-            super::CURSOR_INTEGRATION_VERSION,
-        ),
-        (
-            crate::api::schema::IntegrationTarget::Mastracode,
-            mastracode_dir().map(|dir| dir.join("hooks").join(super::MASTRACODE_HOOK_INSTALL_NAME)),
-            super::MASTRACODE_INTEGRATION_VERSION,
-        ),
-        (
-            crate::api::schema::IntegrationTarget::AntigravityCli,
-            antigravity_cli_dir().map(|dir| {
-                dir.join("hooks")
-                    .join(super::ANTIGRAVITY_CLI_HOOK_INSTALL_NAME)
-            }),
-            super::ANTIGRAVITY_CLI_INTEGRATION_VERSION,
-        ),
-        (
-            crate::api::schema::IntegrationTarget::Grok,
-            grok_dir().map(|dir| dir.join("hooks").join(super::GROK_HOOK_INSTALL_NAME)),
-            super::GROK_INTEGRATION_VERSION,
-        ),
     ]
 }
 
@@ -370,7 +190,7 @@ pub(crate) fn integration_update_instructions(
         .iter()
         .map(|target| {
             format!(
-                "`herdr integration install {}`",
+                "`sesh-mux integration install {}`",
                 integration_target_label(*target)
             )
         })
@@ -394,51 +214,10 @@ pub(crate) fn print_outdated_update_notice() -> bool {
         .map(|integration| integration.target)
         .collect::<Vec<_>>();
     eprintln!(
-        "installed herdr integrations need updating; {}.",
+        "installed sesh-mux integrations need updating; {}.",
         integration_update_instructions(&targets).replace('`', "")
     );
     true
-}
-
-/// Whether the Herdr-owned Grok hook config exactly matches the installed
-/// integration. JSON formatting and object key order do not affect validity.
-fn grok_hook_config_is_valid(hook_path: &Path) -> bool {
-    let Some(hooks_dir) = hook_path.parent() else {
-        return false;
-    };
-    let config_path = hooks_dir.join(super::GROK_HOOK_CONFIG_INSTALL_NAME);
-    fs::read_to_string(config_path)
-        .ok()
-        .and_then(|content| serde_json::from_str::<serde_json::Value>(&content).ok())
-        .is_some_and(|config| config == super::targets::grok_hook_config(hook_path))
-}
-
-fn opencode_tui_integration_is_valid(plugin_path: &Path, expected_version: u32) -> bool {
-    let Some(config_dir) = plugin_path.parent().and_then(Path::parent) else {
-        return false;
-    };
-    let tui_plugin_path = config_dir.join(super::OPENCODE_TUI_PLUGIN_INSTALL_NAME);
-    let tui_plugin_current = fs::read_to_string(tui_plugin_path)
-        .ok()
-        .and_then(|content| parse_integration_version(&content))
-        .is_some_and(|version| version >= expected_version);
-    tui_plugin_current
-        && super::opencode_config::tui_plugin_is_configured(
-            config_dir,
-            super::OPENCODE_TUI_PLUGIN_SPEC,
-        )
-        && (!config_dir.join("cli.json").exists()
-            || (super::opencode_config::cli_plugin_is_configured(
-                config_dir,
-                super::OPENCODE_V2_TUI_PLUGIN_SPEC,
-            ) && fs::read_to_string(
-                config_dir
-                    .join(super::OPENCODE_V2_TUI_PLUGIN_DIR)
-                    .join("tui.js"),
-            )
-            .ok()
-            .and_then(|content| parse_integration_version(&content))
-            .is_some_and(|version| version >= expected_version)))
 }
 
 fn integration_state_for_path(
@@ -466,24 +245,7 @@ pub(crate) fn integration_status_at(
     path: PathBuf,
     expected_version: u32,
 ) -> super::IntegrationStatus {
-    let (mut state, installed_version) = integration_state_for_path(&path, expected_version);
-
-    // Grok only invokes the hook when the herdr-owned `hooks/herdr.json`
-    // registers it, so a current hook script with a missing or broken config
-    // is a nonfunctional install: report it as outdated so `herdr integration
-    // status` flags it and a reinstall rewrites both files.
-    if target == crate::api::schema::IntegrationTarget::Grok
-        && state == super::IntegrationStatusKind::Current
-        && !grok_hook_config_is_valid(&path)
-    {
-        state = super::IntegrationStatusKind::Outdated;
-    }
-    if target == crate::api::schema::IntegrationTarget::Opencode
-        && state == super::IntegrationStatusKind::Current
-        && !opencode_tui_integration_is_valid(&path, expected_version)
-    {
-        state = super::IntegrationStatusKind::Outdated;
-    }
+    let (state, installed_version) = integration_state_for_path(&path, expected_version);
 
     super::IntegrationStatus {
         target,
@@ -492,27 +254,6 @@ pub(crate) fn integration_status_at(
         installed_version,
         expected_version,
     }
-}
-
-/// Letta is intentionally kept out of the frozen client endpoint
-/// `IntegrationTarget` enum so published generation-1 clients never receive an
-/// unknown variant. It is installable and reportable as an experimental
-/// CLI-only target until the agent registry replaces the enum-keyed registry.
-pub(crate) fn experimental_letta_integration_status() -> Option<super::ExperimentalIntegrationStatus>
-{
-    let path = letta_dir()
-        .ok()?
-        .join("hooks")
-        .join(super::LETTA_HOOK_INSTALL_NAME);
-    let (state, installed_version) =
-        integration_state_for_path(&path, super::LETTA_INTEGRATION_VERSION);
-    Some(super::ExperimentalIntegrationStatus {
-        label: "letta",
-        path,
-        state,
-        installed_version,
-        expected_version: super::LETTA_INTEGRATION_VERSION,
-    })
 }
 
 pub(crate) fn parse_integration_version(content: &str) -> Option<u32> {

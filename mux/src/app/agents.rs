@@ -72,21 +72,6 @@ impl App {
             })
     }
 
-    pub(super) fn focus_agent_target(
-        &mut self,
-        target: &str,
-    ) -> Result<crate::api::schema::AgentInfo, TerminalTargetError> {
-        let resolved = self.resolve_agent_target(target)?;
-        self.state
-            .focus_pane_in_workspace(resolved.ws_idx, resolved.pane_id);
-        self.state.mark_active_tab_seen();
-        self.state.mode = crate::app::Mode::Terminal;
-        self.agent_info(resolved.ws_idx, resolved.pane_id)
-            .ok_or_else(|| TerminalTargetError::NotFound {
-                target: target.to_string(),
-            })
-    }
-
     pub(super) fn rename_agent_target(
         &mut self,
         target: &str,

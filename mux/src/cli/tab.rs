@@ -12,7 +12,6 @@ pub(super) fn run_tab_command(args: &[String]) -> std::io::Result<i32> {
         "list" => tab_list(&args[1..]),
         "create" => tab_create(&args[1..]),
         "get" => tab_get(&args[1..]),
-        "focus" => tab_focus(&args[1..]),
         "rename" => tab_rename(&args[1..]),
         "close" => tab_close(&args[1..]),
         "help" | "--help" | "-h" => {
@@ -125,33 +124,20 @@ fn tab_create(args: &[String]) -> std::io::Result<i32> {
 
 fn tab_get(args: &[String]) -> std::io::Result<i32> {
     let Some(raw_tab_id) = args.first() else {
-        eprintln!("usage: herdr tab get <tab_id>");
+        eprintln!("usage: sesh-mux tab get <tab_id>");
         return Ok(2);
     };
     if args.len() != 1 {
-        eprintln!("usage: herdr tab get <tab_id>");
+        eprintln!("usage: sesh-mux tab get <tab_id>");
         return Ok(2);
     }
 
     super::runtime::tab_get(super::normalize_tab_id(raw_tab_id))
 }
 
-fn tab_focus(args: &[String]) -> std::io::Result<i32> {
-    let Some(raw_tab_id) = args.first() else {
-        eprintln!("usage: herdr tab focus <tab_id>");
-        return Ok(2);
-    };
-    if args.len() != 1 {
-        eprintln!("usage: herdr tab focus <tab_id>");
-        return Ok(2);
-    }
-
-    super::runtime::tab_focus(super::normalize_tab_id(raw_tab_id))
-}
-
 fn tab_rename(args: &[String]) -> std::io::Result<i32> {
     if args.len() < 2 {
-        eprintln!("usage: herdr tab rename <tab_id> <label>");
+        eprintln!("usage: sesh-mux tab rename <tab_id> <label>");
         return Ok(2);
     }
 
@@ -163,11 +149,11 @@ fn tab_rename(args: &[String]) -> std::io::Result<i32> {
 
 fn tab_close(args: &[String]) -> std::io::Result<i32> {
     let Some(raw_tab_id) = args.first() else {
-        eprintln!("usage: herdr tab close <tab_id>");
+        eprintln!("usage: sesh-mux tab close <tab_id>");
         return Ok(2);
     };
     if args.len() != 1 {
-        eprintln!("usage: herdr tab close <tab_id>");
+        eprintln!("usage: sesh-mux tab close <tab_id>");
         return Ok(2);
     }
 
@@ -175,13 +161,13 @@ fn tab_close(args: &[String]) -> std::io::Result<i32> {
 }
 
 fn print_tab_help() {
-    eprintln!("herdr tab commands:");
-    eprintln!("  herdr tab list [--workspace <workspace_id>]");
+    eprintln!("sesh-mux tab commands:");
+    eprintln!("  sesh-mux tab list [--workspace <workspace_id>]");
     eprintln!(
-        "  herdr tab create [--workspace <workspace_id>] [--cwd PATH] [--label TEXT] [--env KEY=VALUE] [--focus] [--no-focus]"
+        "  sesh-mux tab create [--workspace <workspace_id>] [--cwd PATH] [--label TEXT] [--env KEY=VALUE] [--focus] [--no-focus]"
     );
-    eprintln!("  herdr tab get <tab_id>");
-    eprintln!("  herdr tab focus <tab_id>");
-    eprintln!("  herdr tab rename <tab_id> <label>");
-    eprintln!("  herdr tab close <tab_id>");
+    eprintln!("  sesh-mux tab get <tab_id>");
+    eprintln!("  sesh-mux tab focus <tab_id>");
+    eprintln!("  sesh-mux tab rename <tab_id> <label>");
+    eprintln!("  sesh-mux tab close <tab_id>");
 }

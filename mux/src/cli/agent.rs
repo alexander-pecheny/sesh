@@ -2,8 +2,8 @@ use std::time::{Duration, Instant};
 
 use crate::api::schema::{
     AgentPromptParams, AgentPromptWaitOptions, AgentReadParams, AgentRenameParams,
-    AgentSendKeysParams, AgentStartParams, AgentTarget, AgentWaitParams, EmptyParams, ErrorBody,
-    ErrorResponse, Method, PaneProcessInfoParams, PaneTarget, ReadFormat, ReadSource, Request,
+    AgentSendKeysParams, AgentStartParams, AgentTarget, AgentWaitParams, EmptyParams, Method,
+    PaneProcessInfoParams, PaneTarget, ReadFormat, ReadSource, Request,
 };
 
 const AGENT_START_POLL_INTERVAL: Duration = Duration::from_millis(100);
@@ -22,16 +22,8 @@ pub(super) fn run_agent_command(args: &[String]) -> std::io::Result<i32> {
         "send-keys" => agent_send_keys(&args[1..]),
         "prompt" => agent_prompt(&args[1..]),
         "rename" => agent_rename(&args[1..]),
-        "focus" => agent_focus(&args[1..]),
         "wait" => agent_wait(&args[1..]),
-        "attach" => agent_attach(&args[1..]),
         "start" => agent_start(&args[1..]),
-        "explain" => agent_explain(&args[1..]),
-        "follow" => super::conversation::follow(&args[1..]),
-        "entry" => super::conversation::entry(&args[1..]),
-        "history" => super::conversation::history(&args[1..]),
-        "answer" => super::conversation::answer(&args[1..]),
-        "permit" => super::conversation::permit(&args[1..]),
         "help" | "--help" | "-h" => {
             print_agent_help();
             Ok(0)
@@ -43,257 +35,9 @@ pub(super) fn run_agent_command(args: &[String]) -> std::io::Result<i32> {
     }
 }
 
-fn agent_explain(args: &[String]) -> std::io::Result<i32> {
-    let mut file = None;
-    let mut agent = None;
-    let mut json = false;
-    let mut verbose = false;
-    let mut target = None;
-
-    let mut index = 0;
-    while index < args.len() {
-        match args[index].as_str() {
-            "--file" => {
-                let Some(value) = args.get(index + 1) else {
-                    eprintln!("missing value for --file");
-                    return Ok(2);
-                };
-                file = Some(value.clone());
-                index += 2;
-            }
-            "--agent" => {
-                let Some(value) = args.get(index + 1) else {
-                    eprintln!("missing value for --agent");
-                    return Ok(2);
-                };
-                agent = Some(value.clone());
-                index += 2;
-            }
-            "--json" => {
-                json = true;
-                index += 1;
-            }
-            "--format" => {
-                let Some(value) = args.get(index + 1) else {
-                    eprintln!("missing value for --format");
-                    return Ok(2);
-                };
-                match value.as_str() {
-                    "json" => json = true,
-                    "text" => json = false,
-                    other => {
-                        eprintln!("invalid --format: {other} (expected text or json)");
-                        return Ok(2);
-                    }
-                }
-                index += 2;
-            }
-            "--verbose" | "-v" => {
-                verbose = true;
-                index += 1;
-            }
-            "help" | "--help" | "-h" => {
-                eprintln!("usage: herdr agent explain <target> [--json|--verbose]");
-                eprintln!(
-                    "usage: herdr agent explain --file PATH --agent LABEL [--json|--verbose]"
-                );
-                return Ok(0);
-            }
-            value if value.starts_with('-') => {
-                eprintln!("unknown option: {value}");
-                return Ok(2);
-            }
-            value => {
-                if target.is_some() {
-                    eprintln!("usage: herdr agent explain <target> [--json]");
-                    return Ok(2);
-                }
-                target = Some(value.to_string());
-                index += 1;
-            }
-        }
-    }
-
-    let explain = if let Some(path) = file {
-        if target.is_some() {
-            eprintln!("usage: herdr agent explain --file PATH --agent LABEL [--json]");
-            return Ok(2);
-        }
-        let Some(agent_label) = agent else {
-            eprintln!("herdr agent explain --file requires --agent LABEL");
-            return Ok(2);
-        };
-        let content = match std::fs::read_to_string(&path) {
-            Ok(content) => content,
-            Err(err) => {
-                let response = ErrorResponse {
-                    id: "cli:agent:explain".into(),
-                    error: ErrorBody {
-                        code: "agent_explain_file_read_failed".into(),
-                        message: format!("failed to read agent explain file {path}: {err}"),
-                    },
-                };
-                let response = serde_json::to_string(&response).map_err(std::io::Error::other)?;
-                eprintln!("{response}");
-                return Ok(1);
-            }
-        };
-        crate::detect::manifest::explain_to_json_value(&crate::detect::manifest::explain_for_label(
-            &agent_label,
-            &content,
-        ))
-    } else {
-        let Some(target) = target else {
-            eprintln!("usage: herdr agent explain <target> [--json]");
-            eprintln!("usage: herdr agent explain --file PATH --agent LABEL [--json]");
-            return Ok(2);
-        };
-        if agent.is_some() {
-            eprintln!("--agent is only valid with --file");
-            return Ok(2);
-        }
-
-        let response = super::send_request(&Request {
-            id: "cli:agent:explain".into(),
-            method: Method::AgentExplain(AgentTarget {
-                target: target.to_owned(),
-            }),
-        })?;
-        if response.get("error").is_some() {
-            eprintln!("{}", serde_json::to_string(&response).unwrap());
-            return Ok(1);
-        }
-        response["result"]["explain"].clone()
-    };
-
-    if json {
-        println!("{explain}");
-    } else {
-        print_agent_explain_text(&explain, verbose);
-    }
-    Ok(0)
-}
-
-fn print_agent_explain_text(explain: &serde_json::Value, verbose: bool) {
-    println!("agent: {}", explain["agent"].as_str().unwrap_or("unknown"));
-    println!("state: {}", explain["state"].as_str().unwrap_or("unknown"));
-    println!(
-        "manifest: {} {}",
-        explain["manifest_source"].as_str().unwrap_or("none"),
-        explain["manifest_version"].as_str().unwrap_or("unknown")
-    );
-    if let Some(rule) = explain["matched_rule"].as_object() {
-        let rule_id = rule
-            .get("id")
-            .and_then(|value| value.as_str())
-            .unwrap_or("-");
-        println!(
-            "rule: {} (region={} priority={})",
-            rule_id,
-            rule.get("region")
-                .and_then(|value| value.as_str())
-                .unwrap_or("-"),
-            rule.get("priority")
-                .and_then(|value| value.as_i64())
-                .unwrap_or(0),
-        );
-        if let Some(preview) = matched_rule_region_preview(explain, rule_id) {
-            println!("evidence: {preview:?}");
-        }
-    } else {
-        println!("rule: none");
-    }
-    if let Some(reason) = explain["fallback_reason"].as_str() {
-        println!("fallback_reason: {reason}");
-    }
-    if let Some(reason) = explain["screen_detection_skip_reason"].as_str() {
-        println!("screen_detection_skip_reason: {reason}");
-    }
-    if let Some(reason) = explain["skipped_update_reason"].as_str() {
-        println!("skipped_update_reason: {reason}");
-    }
-    if let Some(warning) = explain["warning"].as_str() {
-        println!("warning: {warning}");
-    }
-
-    if !verbose {
-        return;
-    }
-
-    println!(
-        "visible: idle={} blocker={} working={}",
-        explain["visible_idle"].as_bool().unwrap_or(false),
-        explain["visible_blocker"].as_bool().unwrap_or(false),
-        explain["visible_working"].as_bool().unwrap_or(false)
-    );
-    println!(
-        "cached_remote_version: {}",
-        explain["cached_remote_version"].as_str().unwrap_or("none")
-    );
-    println!(
-        "local_override_shadowing_remote: {}",
-        explain["local_override_shadowing_remote"]
-            .as_bool()
-            .unwrap_or(false)
-    );
-    if let Some(status) = explain["remote_update_status"].as_str() {
-        println!("remote_update_status: {status}");
-    }
-    if let Some(error) = explain["remote_update_error"].as_str() {
-        println!("remote_update_error: {error}");
-    }
-    if let Some(evaluated_rules) = explain["evaluated_rules"]
-        .as_array()
-        .filter(|rules| !rules.is_empty())
-    {
-        println!("evaluated_rules:");
-        for rule in evaluated_rules {
-            println!(
-                "  {} {} priority={} region={} state={}",
-                if rule["matched"].as_bool().unwrap_or(false) {
-                    "✓"
-                } else {
-                    "✗"
-                },
-                rule["id"].as_str().unwrap_or("-"),
-                rule["priority"].as_i64().unwrap_or(0),
-                rule["region"].as_str().unwrap_or("-"),
-                rule["state"].as_str().unwrap_or("unknown")
-            );
-            let evidence = &rule["evidence"];
-            println!(
-                "    matchers: contains={:?} regex={:?} line_regex={:?} all={} any={} not={}",
-                evidence["contains"],
-                evidence["regex"],
-                evidence["line_regex"],
-                evidence["all_count"].as_u64().unwrap_or(0),
-                evidence["any_count"].as_u64().unwrap_or(0),
-                evidence["not_count"].as_u64().unwrap_or(0)
-            );
-            println!(
-                "    region: bytes={} preview={:?}",
-                evidence["region_bytes"].as_u64().unwrap_or(0),
-                evidence["region_preview"].as_str().unwrap_or("")
-            );
-        }
-    }
-}
-
-fn matched_rule_region_preview<'a>(
-    explain: &'a serde_json::Value,
-    rule_id: &str,
-) -> Option<&'a str> {
-    explain["evaluated_rules"]
-        .as_array()?
-        .iter()
-        .find(|rule| rule["id"].as_str() == Some(rule_id))?["evidence"]["region_preview"]
-        .as_str()
-        .filter(|preview| !preview.is_empty())
-}
-
 fn agent_start(args: &[String]) -> std::io::Result<i32> {
     let Some(name) = args.first() else {
-        eprintln!("usage: herdr agent start <name> --kind KIND --pane ID [--timeout MS] [-- <agent-args...>]");
+        eprintln!("usage: sesh-mux agent start <name> --kind KIND --pane ID [--timeout MS] [-- <agent-args...>]");
         return Ok(2);
     };
     let separator = args
@@ -442,7 +186,7 @@ fn agent_start(args: &[String]) -> std::io::Result<i32> {
 
 fn agent_list(args: &[String]) -> std::io::Result<i32> {
     if !args.is_empty() {
-        eprintln!("usage: herdr agent list");
+        eprintln!("usage: sesh-mux agent list");
         return Ok(2);
     }
 
@@ -454,11 +198,11 @@ fn agent_list(args: &[String]) -> std::io::Result<i32> {
 
 fn agent_get(args: &[String]) -> std::io::Result<i32> {
     let Some(target) = args.first() else {
-        eprintln!("usage: herdr agent get <target>");
+        eprintln!("usage: sesh-mux agent get <target>");
         return Ok(2);
     };
     if args.len() != 1 {
-        eprintln!("usage: herdr agent get <target>");
+        eprintln!("usage: sesh-mux agent get <target>");
         return Ok(2);
     }
 
@@ -470,47 +214,9 @@ fn agent_get(args: &[String]) -> std::io::Result<i32> {
     })?)
 }
 
-fn agent_focus(args: &[String]) -> std::io::Result<i32> {
-    let Some(target) = args.first() else {
-        eprintln!("usage: herdr agent focus <target>");
-        return Ok(2);
-    };
-    if args.len() != 1 {
-        eprintln!("usage: herdr agent focus <target>");
-        return Ok(2);
-    }
-
-    super::print_response(&super::send_request(&Request {
-        id: "cli:agent:focus".into(),
-        method: Method::AgentFocus(AgentTarget {
-            target: target.clone(),
-        }),
-    })?)
-}
-
-fn agent_attach(args: &[String]) -> std::io::Result<i32> {
-    let (target, takeover) =
-        match super::parse_attach_target(args, "usage: herdr agent attach <target> [--takeover]") {
-            Ok(parsed) => parsed,
-            Err(code) => return Ok(code),
-        };
-
-    let response = resolve_agent_target(&target, "cli:agent:attach:resolve")?;
-    if response.get("error").is_some() {
-        eprintln!("{}", serde_json::to_string(&response).unwrap());
-        return Ok(1);
-    }
-    let Some(terminal_id) = response["result"]["agent"]["terminal_id"].as_str() else {
-        eprintln!("agent attach failed: response did not include terminal_id");
-        return Ok(1);
-    };
-    crate::client::run_terminal_attach(terminal_id.to_owned(), takeover)?;
-    Ok(0)
-}
-
 fn agent_wait(args: &[String]) -> std::io::Result<i32> {
     let Some(target) = args.first() else {
-        eprintln!("usage: herdr agent wait <target> [--until STATUS]... [--timeout MS]");
+        eprintln!("usage: sesh-mux agent wait <target> [--until STATUS]... [--timeout MS]");
         return Ok(2);
     };
     let mut until = Vec::new();
@@ -545,7 +251,7 @@ fn agent_wait(args: &[String]) -> std::io::Result<i32> {
                 index += 2;
             }
             "help" | "--help" | "-h" => {
-                eprintln!("usage: herdr agent wait <target> [--until STATUS]... [--timeout MS]");
+                eprintln!("usage: sesh-mux agent wait <target> [--until STATUS]... [--timeout MS]");
                 return Ok(0);
             }
             other => {
@@ -660,7 +366,6 @@ fn pane_shell_is_initializing(pane_id: &str) -> std::io::Result<bool> {
     ))
 }
 
-#[cfg(unix)]
 fn process_info_shows_shell_initialization(process_info: &serde_json::Value) -> bool {
     let Some(shell_pid) = process_info["shell_pid"].as_u64() else {
         return false;
@@ -755,7 +460,7 @@ fn agent_get_request(target: &str, request_id: &str) -> Request {
 
 fn agent_rename(args: &[String]) -> std::io::Result<i32> {
     let [target, value] = args else {
-        eprintln!("usage: herdr agent rename <target> <name>|--clear");
+        eprintln!("usage: sesh-mux agent rename <target> <name>|--clear");
         return Ok(2);
     };
     let name = if value == "--clear" {
@@ -776,7 +481,7 @@ fn agent_rename(args: &[String]) -> std::io::Result<i32> {
 fn agent_prompt(args: &[String]) -> std::io::Result<i32> {
     let Some(target) = args.first() else {
         eprintln!(
-            "usage: herdr agent prompt <target> <text> [--wait] [--until STATUS]... [--timeout MS]"
+            "usage: sesh-mux agent prompt <target> <text> [--wait] [--until STATUS]... [--timeout MS]"
         );
         return Ok(2);
     };
@@ -851,7 +556,7 @@ fn agent_prompt(args: &[String]) -> std::io::Result<i32> {
 
 fn agent_send_keys(args: &[String]) -> std::io::Result<i32> {
     if args.len() < 2 {
-        eprintln!("usage: herdr agent send-keys <target> <key> [key ...]");
+        eprintln!("usage: sesh-mux agent send-keys <target> <key> [key ...]");
         return Ok(2);
     }
 
@@ -866,7 +571,7 @@ fn agent_send_keys(args: &[String]) -> std::io::Result<i32> {
 
 fn agent_read(args: &[String]) -> std::io::Result<i32> {
     let Some(target) = args.first() else {
-        eprintln!("usage: herdr agent read <target> [--source visible|recent|recent-unwrapped] [--lines N] [--format text|ansi] [--ansi]");
+        eprintln!("usage: sesh-mux agent read <target> [--source visible|recent|recent-unwrapped] [--lines N] [--format text|ansi] [--ansi]");
         return Ok(2);
     };
 
@@ -929,30 +634,39 @@ fn agent_read(args: &[String]) -> std::io::Result<i32> {
 }
 
 fn print_agent_help() {
-    eprintln!("herdr agent commands:");
-    eprintln!("  herdr agent list");
-    eprintln!("  herdr agent get <target>");
-    eprintln!("  herdr agent read <target> [--source visible|recent|recent-unwrapped|detection] [--lines N] [--format text|ansi] [--ansi]");
-    eprintln!("  herdr agent send-keys <target> <key> [key ...]");
-    eprintln!("  herdr agent prompt <target> <text> [--wait] [--until STATUS]... [--timeout MS]");
-    eprintln!("  herdr agent rename <target> <name>|--clear");
-    eprintln!("  herdr agent focus <target>");
-    eprintln!("  herdr agent wait <target> [--until STATUS]... [--timeout MS]");
-    eprintln!("  herdr agent attach <target> [--takeover]");
+    eprintln!("sesh-mux agent commands:");
+    eprintln!("  sesh-mux agent list");
+    eprintln!("  sesh-mux agent get <target>");
+    eprintln!("  sesh-mux agent read <target> [--source visible|recent|recent-unwrapped|detection] [--lines N] [--format text|ansi] [--ansi]");
+    eprintln!("  sesh-mux agent send-keys <target> <key> [key ...]");
     eprintln!(
-        "  herdr agent start <name> --kind KIND --pane ID [--timeout MS] [-- <agent-args...>]"
+        "  sesh-mux agent prompt <target> <text> [--wait] [--until STATUS]... [--timeout MS]"
     );
-    eprintln!("  herdr agent explain <target> [--json|--format text|json] [--verbose]");
+    eprintln!("  sesh-mux agent rename <target> <name>|--clear");
+    eprintln!("  sesh-mux agent focus <target>");
+    eprintln!("  sesh-mux agent wait <target> [--until STATUS]... [--timeout MS]");
+    eprintln!("  sesh-mux agent attach <target> [--takeover]");
     eprintln!(
-        "  herdr agent explain --file PATH --agent LABEL [--json|--format text|json] [--verbose]"
+        "  sesh-mux agent start <name> --kind KIND --pane ID [--timeout MS] [-- <agent-args...>]"
     );
-    eprintln!("  herdr agent follow <pane> [--since CURSOR] [--last N] | --protocol");
-    eprintln!("  herdr agent entry <pane> <id>");
-    eprintln!("  herdr agent history <pane> --before ID [--last N]");
-    eprintln!("  herdr agent answer <pane> --json ANSWERS");
-    eprintln!("  herdr agent permit <pane> allow|deny");
+    eprintln!("  sesh-mux agent explain <target> [--json|--format text|json] [--verbose]");
+    eprintln!(
+        "  sesh-mux agent explain --file PATH --agent LABEL [--json|--format text|json] [--verbose]"
+    );
+    eprintln!("  sesh-mux agent follow <pane> [--since CURSOR] [--last N] | --protocol");
+    eprintln!("  sesh-mux agent entry <pane> <id>");
+    eprintln!("  sesh-mux agent history <pane> --before ID [--last N]");
+    eprintln!("  sesh-mux agent answer <pane> --json ANSWERS");
+    eprintln!("  sesh-mux agent permit <pane> allow|deny");
     eprintln!("  targets accept unique agent names and pane ids that currently host agents");
-    eprintln!("  kinds: {}", super::spec::agent_kind_values().join("|"));
+    eprintln!(
+        "  kinds: {}",
+        crate::detect::Agent::ALL
+            .into_iter()
+            .map(crate::detect::agent_label)
+            .collect::<Vec<_>>()
+            .join("|")
+    );
 }
 
 fn parse_timeout(value: &str) -> Result<u64, i32> {

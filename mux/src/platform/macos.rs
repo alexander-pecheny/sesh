@@ -4,18 +4,10 @@ use std::os::fd::RawFd;
 use std::os::unix::ffi::OsStrExt;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
-use std::ptr::NonNull;
-use std::sync::OnceLock;
 
-use super::{
-    read_limited_reader, ClipboardCommand, ForegroundJob, ForegroundProcess, LimitedRead, Signal,
-};
+use super::{ClipboardCommand, ForegroundJob, ForegroundProcess, Signal};
 
-pub(crate) use super::unix_common::{
-    configure_status_command, hostname, local_datetime, set_default_plugin_pane_pwd,
-    shutdown_client_stream, status_commands_supported, wait_client_stream_readable,
-    write_client_stream, ClientStreamReader, StatusCommandGuard,
-};
+pub(crate) use super::unix_common::{write_client_stream, ClientStreamReader};
 
 mod bootstrap;
 pub(crate) use bootstrap::{configure_server_daemon_context, prepare_server_process};
@@ -166,39 +158,6 @@ pub(crate) fn write_config_temporary(
 const PROC_PGRP_ONLY: u32 = 2;
 const SERVER_NOFILE_LIMIT_TARGET: libc::rlim_t = 8192;
 
-pub(crate) fn should_draw_host_cursor_by_default() -> bool {
-    false
-}
-
-pub(crate) fn should_query_host_terminal_palette() -> bool {
-    true
-}
-
-fn raw_command_argv(command: &str, flag: &str) -> Vec<std::ffi::OsString> {
-    vec!["/bin/sh".into(), flag.into(), command.into()]
-}
-
-pub(crate) fn detached_custom_command_process_platform(command: &str) -> std::process::Command {
-    let argv = raw_command_argv(command, "-lc");
-    let mut command = std::process::Command::new(&argv[0]);
-    command.args(&argv[1..]);
-    command
-}
-
-pub(crate) fn pane_custom_command_pty_builder_platform(
-    command: &str,
-) -> portable_pty::CommandBuilder {
-    portable_pty::CommandBuilder::from_argv(raw_command_argv(command, "-c"))
-}
-
-pub(crate) fn scrollback_editor_argv(path: &Path) -> std::io::Result<Vec<String>> {
-    let quoted_path = shell_quote(&path.display().to_string());
-    let command = format!(
-        r#"scrollback_file={quoted_path}; eval "${{EDITOR:-vi}} \"\$scrollback_file\""; status=$?; rm -f "$scrollback_file"; exit $status"#
-    );
-    Ok(vec!["/bin/sh".to_string(), "-c".to_string(), command])
-}
-
 pub(crate) fn interactive_shell_command(argv: &[String], shell_name: &str) -> Option<String> {
     super::interactive_unix_shell_command(argv, shell_name, shell_quote)
 }
@@ -219,147 +178,11 @@ fn shell_quote(value: &str) -> String {
     format!("'{}'", value.replace('\'', "'\\''"))
 }
 
-#[repr(C)]
-struct TisInputSource {
-    _private: [u8; 0],
-}
-
-type TisInputSourceRef = *const TisInputSource;
-type CfTypeRef = *const libc::c_void;
-type CfStringRef = *const libc::c_void;
-type OsStatus = libc::c_int;
-type Boolean = libc::c_uchar;
-
 #[link(name = "Carbon", kind = "framework")]
-extern "C" {
-    #[link_name = "kTISPropertyInputSourceID"]
-    static TIS_PROPERTY_INPUT_SOURCE_ID: CfStringRef;
-
-    #[link_name = "TISCopyCurrentKeyboardInputSource"]
-    fn tis_copy_current_keyboard_input_source() -> TisInputSourceRef;
-
-    #[link_name = "TISCopyCurrentASCIICapableKeyboardLayoutInputSource"]
-    fn tis_copy_current_ascii_capable_keyboard_layout_input_source() -> TisInputSourceRef;
-
-    #[link_name = "TISGetInputSourceProperty"]
-    fn tis_get_input_source_property(
-        input_source: TisInputSourceRef,
-        property_key: CfStringRef,
-    ) -> CfTypeRef;
-
-    #[link_name = "TISSelectInputSource"]
-    fn tis_select_input_source(input_source: TisInputSourceRef) -> OsStatus;
-}
+extern "C" {}
 
 #[link(name = "CoreFoundation", kind = "framework")]
-extern "C" {
-    #[link_name = "CFRelease"]
-    fn cf_release(value: CfTypeRef);
-
-    #[link_name = "CFEqual"]
-    fn cf_equal(left: CfTypeRef, right: CfTypeRef) -> Boolean;
-
-    #[link_name = "kCFRunLoopDefaultMode"]
-    static CF_RUN_LOOP_DEFAULT_MODE: CfStringRef;
-
-    #[link_name = "CFRunLoopRunInMode"]
-    fn cf_run_loop_run_in_mode(
-        mode: CfStringRef,
-        seconds: f64,
-        return_after_source_handled: Boolean,
-    ) -> libc::c_int;
-}
-
-/// Pump the main thread's run loop once (non-blocking) so the process receives the
-/// `kTISNotifySelectedKeyboardInputSourceChanged` notification and refreshes the per-process cache
-/// that `TISCopyCurrentKeyboardInputSource` reads. That notification arrives only via the main
-/// thread's run loop, so a process that never runs a CFRunLoop (the headless server) reads a stale
-/// source. Must run on the main thread.
-pub(crate) fn pump_input_source_runloop() {
-    debug_assert!(
-        // SAFETY: `pthread_main_np` is always safe to call.
-        unsafe { libc::pthread_main_np() } != 0,
-        "pump_input_source_runloop must run on the main thread"
-    );
-    // SAFETY: `CFRunLoopRunInMode` is thread-safe; a 0-second call drains the ready sources and
-    // returns immediately (no blocking). `CF_RUN_LOOP_DEFAULT_MODE` is a framework-owned constant.
-    unsafe {
-        let _ = cf_run_loop_run_in_mode(CF_RUN_LOOP_DEFAULT_MODE, 0.0, 0);
-    }
-}
-
-#[derive(Debug)]
-struct RetainedInputSource(NonNull<TisInputSource>);
-
-impl RetainedInputSource {
-    /// Takes ownership of a retained reference returned by a TIS `Copy` function.
-    unsafe fn from_copy(raw: TisInputSourceRef) -> Option<Self> {
-        NonNull::new(raw as *mut TisInputSource).map(Self)
-    }
-
-    fn select(&self) -> OsStatus {
-        // SAFETY: this wrapper keeps the retained input source alive for the call.
-        unsafe { tis_select_input_source(self.0.as_ptr()) }
-    }
-
-    fn has_same_id(&self, other: &Self) -> bool {
-        // SAFETY: TIS property values stay valid while their input sources are alive;
-        // both wrappers outlive this comparison.
-        unsafe {
-            let left = tis_get_input_source_property(self.0.as_ptr(), TIS_PROPERTY_INPUT_SOURCE_ID);
-            let right =
-                tis_get_input_source_property(other.0.as_ptr(), TIS_PROPERTY_INPUT_SOURCE_ID);
-            !left.is_null() && !right.is_null() && cf_equal(left, right) != 0
-        }
-    }
-}
-
-impl Drop for RetainedInputSource {
-    fn drop(&mut self) {
-        // SAFETY: `from_copy` gives this wrapper ownership of one retain.
-        unsafe { cf_release(self.0.as_ptr().cast()) }
-    }
-}
-
-#[derive(Debug)]
-pub(crate) struct InputSourceRestore {
-    previous: RetainedInputSource,
-}
-
-impl Drop for InputSourceRestore {
-    fn drop(&mut self) {
-        let status = self.previous.select();
-        if status != 0 {
-            tracing::debug!(
-                status,
-                "failed to restore host input source after prefix mode"
-            );
-        }
-    }
-}
-
-pub(crate) fn switch_to_ascii_input_source() -> Option<InputSourceRestore> {
-    // SAFETY: both Carbon `Copy` functions transfer one retain to the caller.
-    let current =
-        unsafe { RetainedInputSource::from_copy(tis_copy_current_keyboard_input_source())? };
-    let ascii = unsafe {
-        RetainedInputSource::from_copy(
-            tis_copy_current_ascii_capable_keyboard_layout_input_source(),
-        )?
-    };
-
-    if current.has_same_id(&ascii) {
-        return None;
-    }
-
-    let status = ascii.select();
-    if status != 0 {
-        tracing::debug!(status, "failed to switch host input source for prefix mode");
-        return None;
-    }
-
-    Some(InputSourceRestore { previous: current })
-}
+extern "C" {}
 
 pub fn raise_server_nofile_limit() {
     match raise_nofile_limit(SERVER_NOFILE_LIMIT_TARGET) {
@@ -632,200 +455,6 @@ pub fn write_clipboard(bytes: &[u8]) -> bool {
     )
 }
 
-pub fn read_clipboard_text() -> Option<String> {
-    const MAX_CLIPBOARD_TEXT_BYTES: usize = 1024 * 1024;
-
-    let mut child = Command::new("pbpaste")
-        .stdin(Stdio::null())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::null())
-        .spawn()
-        .ok()?;
-    let stdout = child.stdout.take()?;
-    let read = match read_limited_reader(stdout, MAX_CLIPBOARD_TEXT_BYTES) {
-        Ok(LimitedRead::Oversized) => {
-            let _ = child.kill();
-            let _ = child.wait();
-            return None;
-        }
-        Ok(read) => read,
-        Err(_) => {
-            let _ = child.kill();
-            let _ = child.wait();
-            return None;
-        }
-    };
-    let status = child.wait().ok()?;
-    if !status.success() {
-        return None;
-    }
-    match read {
-        LimitedRead::Complete(bytes) => String::from_utf8(bytes).ok(),
-        LimitedRead::Empty => None,
-        LimitedRead::Oversized => unreachable!("oversized clipboard text is handled before wait"),
-    }
-}
-
-pub fn open_url(url: &str) -> std::io::Result<Option<std::process::Child>> {
-    Command::new("open")
-        .arg(url)
-        .stdin(Stdio::null())
-        .stdout(Stdio::null())
-        .stderr(Stdio::null())
-        .spawn()
-        .map(Some)
-}
-
-/// Show a native macOS notification.
-///
-/// Prefer `terminal-notifier` when it is installed because it can activate the
-/// hosting terminal on click. Fall back to built-in AppleScript notifications
-/// when it is not available.
-pub fn show_desktop_notification(title: &str, body: Option<&str>) -> std::io::Result<bool> {
-    show_desktop_notification_with_command(title, body, |program| Command::new(program))
-}
-
-fn show_desktop_notification_with_command(
-    title: &str,
-    body: Option<&str>,
-    mut command: impl FnMut(&str) -> Command,
-) -> std::io::Result<bool> {
-    if show_terminal_notifier_notification(title, body, &mut command).unwrap_or(false) {
-        return Ok(true);
-    }
-
-    show_osascript_notification(title, body, &mut command)
-}
-
-fn show_terminal_notifier_notification(
-    title: &str,
-    body: Option<&str>,
-    command: &mut impl FnMut(&str) -> Command,
-) -> std::io::Result<bool> {
-    let activate_bundle_id = verified_terminal_bundle_identifier(command);
-    show_terminal_notifier_notification_with_options(
-        title,
-        body,
-        activate_bundle_id.as_deref(),
-        command,
-    )
-}
-
-fn show_terminal_notifier_notification_with_options(
-    title: &str,
-    body: Option<&str>,
-    activate_bundle_id: Option<&str>,
-    command: &mut impl FnMut(&str) -> Command,
-) -> std::io::Result<bool> {
-    let mut cmd = command("terminal-notifier");
-    build_terminal_notifier_command(&mut cmd, title, body, activate_bundle_id);
-    run_notification_command(cmd)
-}
-
-fn build_terminal_notifier_command(
-    cmd: &mut Command,
-    title: &str,
-    body: Option<&str>,
-    activate_bundle_id: Option<&str>,
-) {
-    cmd.arg("-title").arg(title);
-    cmd.arg("-message").arg(body.unwrap_or_default());
-    if let Some(bundle_id) = activate_bundle_id {
-        cmd.arg("-activate").arg(bundle_id);
-    }
-}
-
-fn show_osascript_notification(
-    title: &str,
-    body: Option<&str>,
-    command: &mut impl FnMut(&str) -> Command,
-) -> std::io::Result<bool> {
-    let mut cmd = command("/usr/bin/osascript");
-    cmd.arg("-e")
-        .arg("on run argv")
-        .arg("-e")
-        .arg("display notification (item 2 of argv) with title (item 1 of argv)")
-        .arg("-e")
-        .arg("end run")
-        .arg(title)
-        .arg(body.unwrap_or_default());
-    run_notification_command(cmd)
-}
-
-fn verified_terminal_bundle_identifier(
-    command: &mut impl FnMut(&str) -> Command,
-) -> Option<String> {
-    static BUNDLE_ID: OnceLock<Option<String>> = OnceLock::new();
-    BUNDLE_ID
-        .get_or_init(|| {
-            let bundle_id = detected_terminal_bundle_identifier()?;
-            bundle_identifier_available(bundle_id, command).then(|| bundle_id.to_owned())
-        })
-        .clone()
-}
-
-fn bundle_identifier_available(bundle_id: &str, command: &mut impl FnMut(&str) -> Command) -> bool {
-    let query = format!("kMDItemCFBundleIdentifier == '{bundle_id}'");
-    let output = command("mdfind")
-        .arg(query)
-        .stdin(Stdio::null())
-        .stderr(Stdio::null())
-        .output();
-
-    match output {
-        Ok(output) if output.status.success() => !output.stdout.is_empty(),
-        _ => false,
-    }
-}
-
-fn detected_terminal_bundle_identifier() -> Option<&'static str> {
-    terminal_bundle_identifier_from_env(
-        std::env::var("TERM_PROGRAM").ok().as_deref(),
-        std::env::var("TERM").ok().as_deref(),
-        std::env::var_os("KITTY_WINDOW_ID").is_some(),
-        std::env::var_os("ALACRITTY_WINDOW_ID").is_some(),
-    )
-}
-
-fn terminal_bundle_identifier_from_env(
-    term_program: Option<&str>,
-    term: Option<&str>,
-    has_kitty_window_id: bool,
-    has_alacritty_window_id: bool,
-) -> Option<&'static str> {
-    match term_program {
-        Some("ghostty") => return Some("com.mitchellh.ghostty"),
-        Some("iTerm.app") => return Some("com.googlecode.iterm2"),
-        Some("WezTerm") => return Some("com.github.wez.wezterm"),
-        Some("Apple_Terminal") => return Some("com.apple.Terminal"),
-        _ => {}
-    }
-
-    if has_kitty_window_id || term == Some("xterm-kitty") {
-        return Some("net.kovidgoyal.kitty");
-    }
-    if has_alacritty_window_id {
-        return Some("org.alacritty");
-    }
-
-    None
-}
-
-fn run_notification_command(mut command: Command) -> std::io::Result<bool> {
-    let status = match command
-        .stdin(Stdio::null())
-        .stdout(Stdio::null())
-        .stderr(Stdio::null())
-        .status()
-    {
-        Ok(status) => status,
-        Err(err) if err.kind() == std::io::ErrorKind::NotFound => return Ok(false),
-        Err(err) => return Err(err),
-    };
-
-    Ok(status.success())
-}
-
 fn run_clipboard_command(command: &ClipboardCommand, bytes: &[u8]) -> bool {
     let mut child = match Command::new(command.program)
         .args(command.args)
@@ -890,7 +519,7 @@ fn process_argv(pid: u32) -> Option<Vec<String>> {
     procargs2_argv(&buf)
 }
 
-/// Read a Herdr agent identity hint from a process environment.
+/// Read a sesh-mux agent identity hint from a process environment.
 pub fn process_agent_hint(pid: u32) -> Option<crate::detect::Agent> {
     if pid == 0 {
         return None;
@@ -1153,8 +782,12 @@ mod tests {
     fn procargs2_env_reads_agent_hint_after_argv() {
         let buf = build_procargs2(
             "/opt/homebrew/bin/nono",
-            &["nono", "run", "HERDR_AGENT=codex", "--", "claude"],
-            &["PATH=/usr/bin", "HERDR_AGENT=claude", "TERM=xterm-256color"],
+            &["nono", "run", "SESH_MUX_AGENT=codex", "--", "claude"],
+            &[
+                "PATH=/usr/bin",
+                "SESH_MUX_AGENT=claude",
+                "TERM=xterm-256color",
+            ],
         );
 
         let env = procargs2_env(&buf).expect("expected env block");
@@ -1168,146 +801,11 @@ mod tests {
     fn procargs2_env_does_not_treat_argv_as_environment() {
         let buf = build_procargs2(
             "/opt/homebrew/bin/nono",
-            &["nono", "run", "HERDR_AGENT=claude"],
+            &["nono", "run", "SESH_MUX_AGENT=claude"],
             &["PATH=/usr/bin"],
         );
 
         let env = procargs2_env(&buf).expect("expected env block");
         assert_eq!(crate::platform::parse_agent_env_hint(env), None);
-    }
-
-    #[test]
-    fn terminal_bundle_identifier_maps_known_terminal_env() {
-        assert_eq!(
-            terminal_bundle_identifier_from_env(Some("ghostty"), None, false, false),
-            Some("com.mitchellh.ghostty")
-        );
-        assert_eq!(
-            terminal_bundle_identifier_from_env(Some("iTerm.app"), None, false, false),
-            Some("com.googlecode.iterm2")
-        );
-        assert_eq!(
-            terminal_bundle_identifier_from_env(Some("WezTerm"), None, false, false),
-            Some("com.github.wez.wezterm")
-        );
-        assert_eq!(
-            terminal_bundle_identifier_from_env(Some("Apple_Terminal"), None, false, false),
-            Some("com.apple.Terminal")
-        );
-        assert_eq!(
-            terminal_bundle_identifier_from_env(None, Some("xterm-kitty"), false, false),
-            Some("net.kovidgoyal.kitty")
-        );
-        assert_eq!(
-            terminal_bundle_identifier_from_env(None, None, true, false),
-            Some("net.kovidgoyal.kitty")
-        );
-        assert_eq!(
-            terminal_bundle_identifier_from_env(None, None, false, true),
-            Some("org.alacritty")
-        );
-        assert_eq!(
-            terminal_bundle_identifier_from_env(None, None, false, false),
-            None
-        );
-    }
-
-    #[test]
-    fn terminal_notifier_command_includes_icon_and_activation() {
-        let mut cmd = Command::new("terminal-notifier");
-        build_terminal_notifier_command(
-            &mut cmd,
-            "pi finished",
-            Some("workspace 1"),
-            Some("com.mitchellh.ghostty"),
-        );
-        let args = cmd
-            .get_args()
-            .map(|arg| arg.to_string_lossy().into_owned())
-            .collect::<Vec<_>>();
-        assert_eq!(
-            args,
-            vec![
-                "-title",
-                "pi finished",
-                "-message",
-                "workspace 1",
-                "-activate",
-                "com.mitchellh.ghostty"
-            ]
-        );
-    }
-
-    #[test]
-    fn terminal_notifier_success_skips_osascript() {
-        let path = std::env::temp_dir().join(format!(
-            "herdr-terminal-notifier-args-{}",
-            std::process::id()
-        ));
-        let script = "printf '%s:%s\\n' \"$0\" \"$*\" >> \"$HERDR_NOTIFY_ARGS\"";
-        let mut command = |program: &str| {
-            let mut cmd = Command::new("sh");
-            cmd.arg("-c")
-                .arg(script)
-                .arg(program)
-                .env("HERDR_NOTIFY_ARGS", &path);
-            cmd
-        };
-
-        let shown = show_terminal_notifier_notification_with_options(
-            "title",
-            Some("body"),
-            Some("com.mitchellh.ghostty"),
-            &mut command,
-        )
-        .expect("terminal-notifier command should run");
-
-        assert!(shown);
-        let args = std::fs::read_to_string(&path).expect("args file");
-        let _ = std::fs::remove_file(&path);
-        assert!(args.starts_with("terminal-notifier:"), "{args}");
-        assert!(args.contains("-activate com.mitchellh.ghostty"), "{args}");
-        assert!(!args.contains("osascript"), "{args}");
-    }
-
-    #[test]
-    fn desktop_notification_falls_back_to_osascript_when_terminal_notifier_fails() {
-        let path =
-            std::env::temp_dir().join(format!("herdr-osascript-args-{}", std::process::id()));
-        let script = r#"
-if [ "$0" = "terminal-notifier" ]; then
-  exit 1
-fi
-printf '%s\n' "$@" > "$HERDR_NOTIFY_ARGS"
-"#;
-        let mut command = |program: &str| {
-            let mut cmd = Command::new("sh");
-            cmd.arg("-c")
-                .arg(script)
-                .arg(program)
-                .env("HERDR_NOTIFY_ARGS", &path);
-            cmd
-        };
-        let shown = show_desktop_notification_with_command("title", Some("body"), &mut command)
-            .expect("osascript fallback should run");
-
-        assert!(shown);
-        let args = std::fs::read_to_string(&path).expect("args file");
-        let _ = std::fs::remove_file(&path);
-        assert_eq!(
-            args,
-            "-e\non run argv\n-e\ndisplay notification (item 2 of argv) with title (item 1 of argv)\n-e\nend run\ntitle\nbody\n"
-        );
-    }
-
-    #[test]
-    fn scrollback_editor_argv_preserves_unix_editor_shell_semantics() {
-        let path = std::path::Path::new("/tmp/herdr scrollback.txt");
-        let argv = scrollback_editor_argv(path).unwrap();
-
-        assert_eq!(argv[0], "/bin/sh");
-        assert_eq!(argv[1], "-c");
-        assert!(argv[2].contains("EDITOR:-vi"));
-        assert!(argv[2].contains("/tmp/herdr scrollback.txt"));
     }
 }

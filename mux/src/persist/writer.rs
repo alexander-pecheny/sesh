@@ -274,7 +274,7 @@ mod tests {
 
     fn writer(protect_unloaded: bool) -> SessionWriter {
         let directory = std::env::temp_dir().join(format!(
-            "herdr-session-recovery-{}-{}",
+            "sesh-mux-session-recovery-{}-{}",
             std::process::id(),
             SystemTime::now()
                 .duration_since(UNIX_EPOCH)
@@ -290,7 +290,7 @@ mod tests {
 
     fn snapshot() -> SessionSnapshot {
         serde_json::from_str(include_str!(
-            "../../tests/fixtures/session/current-herdr-session.json"
+            "../../tests/fixtures/session/current-sesh-mux-session.json"
         ))
         .unwrap()
     }
@@ -636,7 +636,6 @@ mod tests {
         std::fs::remove_dir_all(writer.path.parent().unwrap()).unwrap();
     }
 
-    #[cfg(unix)]
     #[test]
     fn dangling_symlink_allows_first_save_and_late_target_is_preserved() {
         use std::os::unix::{fs::symlink, fs::PermissionsExt};

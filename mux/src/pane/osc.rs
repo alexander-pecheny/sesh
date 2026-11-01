@@ -497,7 +497,6 @@ impl AgentOscStateTracker {
         self.terminal_title.as_deref()
     }
 
-    #[cfg(unix)]
     pub(super) fn seed_terminal_title(&mut self, title: Option<String>) {
         self.terminal_title = title;
     }
@@ -590,7 +589,7 @@ impl Default for OscDebugTracker {
 }
 
 fn osc_debug_enabled_from_env() -> bool {
-    std::env::var("HERDR_DEBUG_OSC_EVIDENCE")
+    std::env::var("SESH_MUX_DEBUG_OSC_EVIDENCE")
         .map(|value| {
             matches!(
                 value.trim().to_ascii_lowercase().as_str(),
@@ -641,20 +640,6 @@ fn parse_file_uri_cwd(uri: &str) -> Option<PathBuf> {
     };
     let path = percent_decode_utf8(path)?;
 
-    #[cfg(windows)]
-    {
-        let mut path = path;
-        if path.len() >= 3
-            && path.as_bytes()[0] == b'/'
-            && path.as_bytes()[2] == b':'
-            && path.as_bytes()[1].is_ascii_alphabetic()
-        {
-            path.remove(0);
-        }
-        Some(PathBuf::from(path.replace('/', "\\")))
-    }
-
-    #[cfg(not(windows))]
     Some(PathBuf::from(path))
 }
 
@@ -896,12 +881,14 @@ mod tests {
     #[test]
     fn reported_cwd_parses_file_uri_and_bare_paths() {
         assert_eq!(
-            parse_reported_cwd(b"file:///tmp/herdr%20repo"),
-            Some(std::path::PathBuf::from("/tmp/herdr repo"))
+            parse_reported_cwd(b"file:///tmp/sesh-mux%20repo"),
+            Some(std::path::PathBuf::from("/tmp/sesh-mux repo"))
         );
         assert_eq!(
-            parse_reported_cwd(b"C:\\Users\\herdr\\src\\herdr"),
-            Some(std::path::PathBuf::from("C:\\Users\\herdr\\src\\herdr"))
+            parse_reported_cwd(b"C:\\Users\\sesh-mux\\src\\sesh-mux"),
+            Some(std::path::PathBuf::from(
+                "C:\\Users\\sesh-mux\\src\\sesh-mux"
+            ))
         );
         assert_eq!(
             parse_reported_cwd(b"\"C:\\my proj\""),
@@ -960,7 +947,6 @@ mod tests {
         assert_eq!(tracker.terminal_title(), Some("✳ 修复🙂标题"));
     }
 
-    #[cfg(unix)]
     #[test]
     fn handoff_seed_does_not_restore_agent_detection_evidence() {
         let mut tracker = AgentOscStateTracker::default();

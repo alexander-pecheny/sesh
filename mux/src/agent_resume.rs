@@ -101,7 +101,7 @@ pub fn persisted_session_from_launch_args(
     }
 
     Some(PersistedAgentSession {
-        source: "herdr:codex".into(),
+        source: "sesh-mux:codex".into(),
         agent: "codex".into(),
         session_ref: AgentSessionRef::id(session_id.clone())?,
     })
@@ -120,15 +120,15 @@ pub fn normalize_session_start_source(value: Option<String>) -> Option<String> {
 pub fn is_reserved_native_state_source(source: &str, agent: &str) -> bool {
     matches!(
         (source, agent),
-        ("herdr:claude", "claude")
-            | ("herdr:codex", "codex")
-            | ("herdr:copilot", "copilot")
-            | ("herdr:devin", "devin")
-            | ("herdr:droid", "droid")
-            | ("herdr:qodercli", "qodercli")
-            | ("herdr:qwen", "qwen")
-            | ("herdr:cursor", "cursor")
-            | ("herdr:grok", "grok")
+        ("sesh-mux:claude", "claude")
+            | ("sesh-mux:codex", "codex")
+            | ("sesh-mux:copilot", "copilot")
+            | ("sesh-mux:devin", "devin")
+            | ("sesh-mux:droid", "droid")
+            | ("sesh-mux:qodercli", "qodercli")
+            | ("sesh-mux:qwen", "qwen")
+            | ("sesh-mux:cursor", "cursor")
+            | ("sesh-mux:grok", "grok")
     )
 }
 
@@ -162,71 +162,71 @@ pub fn plan(source: &str, agent: &str, session_ref: &AgentSessionRef) -> Option<
     }
 
     let argv = match (source, agent, session_ref.kind) {
-        ("herdr:claude", "claude", AgentSessionRefKind::Id) => {
+        ("sesh-mux:claude", "claude", AgentSessionRefKind::Id) => {
             vec![
                 "claude".into(),
                 "--resume".into(),
                 session_ref.value.clone(),
             ]
         }
-        ("herdr:codex", "codex", AgentSessionRefKind::Id) => {
+        ("sesh-mux:codex", "codex", AgentSessionRefKind::Id) => {
             vec!["codex".into(), "resume".into(), session_ref.value.clone()]
         }
-        ("herdr:copilot", "copilot", AgentSessionRefKind::Id) => {
+        ("sesh-mux:copilot", "copilot", AgentSessionRefKind::Id) => {
             vec!["copilot".into(), format!("--resume={}", session_ref.value)]
         }
-        ("herdr:devin", "devin", AgentSessionRefKind::Id) => {
+        ("sesh-mux:devin", "devin", AgentSessionRefKind::Id) => {
             vec!["devin".into(), "--resume".into(), session_ref.value.clone()]
         }
-        ("herdr:droid", "droid", AgentSessionRefKind::Id) => {
+        ("sesh-mux:droid", "droid", AgentSessionRefKind::Id) => {
             vec!["droid".into(), "--resume".into(), session_ref.value.clone()]
         }
-        ("herdr:kimi", "kimi", AgentSessionRefKind::Id) => {
+        ("sesh-mux:kimi", "kimi", AgentSessionRefKind::Id) => {
             vec!["kimi".into(), "--session".into(), session_ref.value.clone()]
         }
-        ("herdr:mastracode", "mastracode", AgentSessionRefKind::Id) => {
+        ("sesh-mux:mastracode", "mastracode", AgentSessionRefKind::Id) => {
             vec![
                 "mastracode".into(),
                 "--thread".into(),
                 session_ref.value.clone(),
             ]
         }
-        ("herdr:pi", "pi", AgentSessionRefKind::Path | AgentSessionRefKind::Id) => {
+        ("sesh-mux:pi", "pi", AgentSessionRefKind::Path | AgentSessionRefKind::Id) => {
             vec!["pi".into(), "--session".into(), session_ref.value.clone()]
         }
-        ("herdr:omp", "omp", AgentSessionRefKind::Path | AgentSessionRefKind::Id) => {
+        ("sesh-mux:omp", "omp", AgentSessionRefKind::Path | AgentSessionRefKind::Id) => {
             // omp resume is `-r, --resume=<value>` (ID prefix or path); it has no
             // `--session` flag, unlike pi.
             vec!["omp".into(), format!("--resume={}", session_ref.value)]
         }
-        ("herdr:hermes", "hermes", AgentSessionRefKind::Id) => {
+        ("sesh-mux:hermes", "hermes", AgentSessionRefKind::Id) => {
             vec![
                 "hermes".into(),
                 "--resume".into(),
                 session_ref.value.clone(),
             ]
         }
-        ("herdr:opencode", "opencode", AgentSessionRefKind::Id) => {
+        ("sesh-mux:opencode", "opencode", AgentSessionRefKind::Id) => {
             vec![
                 "opencode".into(),
                 "--session".into(),
                 session_ref.value.clone(),
             ]
         }
-        ("herdr:qodercli", "qodercli", AgentSessionRefKind::Id) => {
+        ("sesh-mux:qodercli", "qodercli", AgentSessionRefKind::Id) => {
             vec![
                 "qodercli".into(),
                 "--resume".into(),
                 session_ref.value.clone(),
             ]
         }
-        ("herdr:qwen", "qwen", AgentSessionRefKind::Id) => {
+        ("sesh-mux:qwen", "qwen", AgentSessionRefKind::Id) => {
             vec!["qwen".into(), "--resume".into(), session_ref.value.clone()]
         }
-        ("herdr:kilo", "kilo", AgentSessionRefKind::Id) => {
+        ("sesh-mux:kilo", "kilo", AgentSessionRefKind::Id) => {
             vec!["kilo".into(), "--session".into(), session_ref.value.clone()]
         }
-        ("herdr:cursor", "cursor", AgentSessionRefKind::Id) => {
+        ("sesh-mux:cursor", "cursor", AgentSessionRefKind::Id) => {
             vec![
                 if cfg!(windows) {
                     "cursor-agent.cmd"
@@ -238,17 +238,17 @@ pub fn plan(source: &str, agent: &str, session_ref: &AgentSessionRef) -> Option<
                 session_ref.value.clone(),
             ]
         }
-        ("herdr:antigravity_cli", "agy", AgentSessionRefKind::Id) => {
+        ("sesh-mux:antigravity_cli", "agy", AgentSessionRefKind::Id) => {
             vec![
                 "agy".into(),
                 "--conversation".into(),
                 session_ref.value.clone(),
             ]
         }
-        ("herdr:grok", "grok", AgentSessionRefKind::Id) => {
+        ("sesh-mux:grok", "grok", AgentSessionRefKind::Id) => {
             vec!["grok".into(), "--resume".into(), session_ref.value.clone()]
         }
-        ("herdr:letta", "letta", AgentSessionRefKind::Id) => {
+        ("sesh-mux:letta", "letta", AgentSessionRefKind::Id) => {
             if let Some(agent_id) = session_ref.value.strip_prefix("default:") {
                 if agent_id.is_empty() {
                     return None;
@@ -288,24 +288,24 @@ pub fn dedupe_key(source: &str, agent: &str, session_ref: &AgentSessionRef) -> S
 pub(crate) fn is_official_agent_source(source: &str, agent: &str) -> bool {
     matches!(
         (source, agent),
-        ("herdr:claude", "claude")
-            | ("herdr:codex", "codex")
-            | ("herdr:copilot", "copilot")
-            | ("herdr:devin", "devin")
-            | ("herdr:droid", "droid")
-            | ("herdr:kimi", "kimi")
-            | ("herdr:omp", "omp")
-            | ("herdr:mastracode", "mastracode")
-            | ("herdr:pi", "pi")
-            | ("herdr:hermes", "hermes")
-            | ("herdr:opencode", "opencode")
-            | ("herdr:qodercli", "qodercli")
-            | ("herdr:qwen", "qwen")
-            | ("herdr:kilo", "kilo")
-            | ("herdr:cursor", "cursor")
-            | ("herdr:antigravity_cli", "agy")
-            | ("herdr:grok", "grok")
-            | ("herdr:letta", "letta")
+        ("sesh-mux:claude", "claude")
+            | ("sesh-mux:codex", "codex")
+            | ("sesh-mux:copilot", "copilot")
+            | ("sesh-mux:devin", "devin")
+            | ("sesh-mux:droid", "droid")
+            | ("sesh-mux:kimi", "kimi")
+            | ("sesh-mux:omp", "omp")
+            | ("sesh-mux:mastracode", "mastracode")
+            | ("sesh-mux:pi", "pi")
+            | ("sesh-mux:hermes", "hermes")
+            | ("sesh-mux:opencode", "opencode")
+            | ("sesh-mux:qodercli", "qodercli")
+            | ("sesh-mux:qwen", "qwen")
+            | ("sesh-mux:kilo", "kilo")
+            | ("sesh-mux:cursor", "cursor")
+            | ("sesh-mux:antigravity_cli", "agy")
+            | ("sesh-mux:grok", "grok")
+            | ("sesh-mux:letta", "letta")
     )
 }
 
@@ -334,12 +334,12 @@ mod tests {
 
     #[test]
     fn native_state_reservation_excludes_full_lifecycle_sources() {
-        assert!(is_reserved_native_state_source("herdr:claude", "claude"));
-        assert!(is_reserved_native_state_source("herdr:codex", "codex"));
-        assert!(is_reserved_native_state_source("herdr:devin", "devin"));
-        assert!(!is_reserved_native_state_source("herdr:kimi", "kimi"));
+        assert!(is_reserved_native_state_source("sesh-mux:claude", "claude"));
+        assert!(is_reserved_native_state_source("sesh-mux:codex", "codex"));
+        assert!(is_reserved_native_state_source("sesh-mux:devin", "devin"));
+        assert!(!is_reserved_native_state_source("sesh-mux:kimi", "kimi"));
         assert!(!is_reserved_native_state_source(
-            "herdr:opencode",
+            "sesh-mux:opencode",
             "opencode"
         ));
     }
@@ -384,7 +384,7 @@ mod tests {
         let omp_session = absolute_test_path("omp-session.jsonl");
         assert_eq!(
             plan(
-                "herdr:claude",
+                "sesh-mux:claude",
                 "claude",
                 &AgentSessionRef::id("claude-session").unwrap()
             )
@@ -394,7 +394,7 @@ mod tests {
         );
         assert_eq!(
             plan(
-                "herdr:codex",
+                "sesh-mux:codex",
                 "codex",
                 &AgentSessionRef::id("codex-session").unwrap()
             )
@@ -404,7 +404,7 @@ mod tests {
         );
         assert_eq!(
             plan(
-                "herdr:copilot",
+                "sesh-mux:copilot",
                 "copilot",
                 &AgentSessionRef::id("copilot-session").unwrap()
             )
@@ -414,7 +414,7 @@ mod tests {
         );
         assert_eq!(
             plan(
-                "herdr:devin",
+                "sesh-mux:devin",
                 "devin",
                 &AgentSessionRef::id("devin-session").unwrap()
             )
@@ -424,7 +424,7 @@ mod tests {
         );
         assert_eq!(
             plan(
-                "herdr:droid",
+                "sesh-mux:droid",
                 "droid",
                 &AgentSessionRef::id("droid-session").unwrap()
             )
@@ -434,7 +434,7 @@ mod tests {
         );
         assert_eq!(
             plan(
-                "herdr:kimi",
+                "sesh-mux:kimi",
                 "kimi",
                 &AgentSessionRef::id("kimi-session").unwrap()
             )
@@ -444,7 +444,7 @@ mod tests {
         );
         assert_eq!(
             plan(
-                "herdr:mastracode",
+                "sesh-mux:mastracode",
                 "mastracode",
                 &AgentSessionRef::id("mastracode-session").unwrap()
             )
@@ -454,7 +454,7 @@ mod tests {
         );
         assert_eq!(
             plan(
-                "herdr:pi",
+                "sesh-mux:pi",
                 "pi",
                 &AgentSessionRef::path(&pi_session).unwrap()
             )
@@ -464,7 +464,7 @@ mod tests {
         );
         assert_eq!(
             plan(
-                "herdr:omp",
+                "sesh-mux:omp",
                 "omp",
                 &AgentSessionRef::path(&omp_session).unwrap()
             )
@@ -474,7 +474,7 @@ mod tests {
         );
         assert_eq!(
             plan(
-                "herdr:hermes",
+                "sesh-mux:hermes",
                 "hermes",
                 &AgentSessionRef::id("hermes-session").unwrap()
             )
@@ -484,7 +484,7 @@ mod tests {
         );
         assert_eq!(
             plan(
-                "herdr:opencode",
+                "sesh-mux:opencode",
                 "opencode",
                 &AgentSessionRef::id("opencode-session").unwrap()
             )
@@ -494,7 +494,7 @@ mod tests {
         );
         assert_eq!(
             plan(
-                "herdr:qodercli",
+                "sesh-mux:qodercli",
                 "qodercli",
                 &AgentSessionRef::id("qoder-session").unwrap()
             )
@@ -504,7 +504,7 @@ mod tests {
         );
         assert_eq!(
             plan(
-                "herdr:qwen",
+                "sesh-mux:qwen",
                 "qwen",
                 &AgentSessionRef::id("qwen-session").unwrap()
             )
@@ -514,7 +514,7 @@ mod tests {
         );
         assert_eq!(
             plan(
-                "herdr:kilo",
+                "sesh-mux:kilo",
                 "kilo",
                 &AgentSessionRef::id("kilo-session").unwrap()
             )
@@ -524,7 +524,7 @@ mod tests {
         );
         assert_eq!(
             plan(
-                "herdr:cursor",
+                "sesh-mux:cursor",
                 "cursor",
                 &AgentSessionRef::id("cursor-session").unwrap()
             )
@@ -542,7 +542,7 @@ mod tests {
         );
         assert_eq!(
             plan(
-                "herdr:antigravity_cli",
+                "sesh-mux:antigravity_cli",
                 "agy",
                 &AgentSessionRef::id("agy-session").unwrap()
             )
@@ -552,7 +552,7 @@ mod tests {
         );
         assert_eq!(
             plan(
-                "herdr:grok",
+                "sesh-mux:grok",
                 "grok",
                 &AgentSessionRef::id("grok-session").unwrap()
             )
@@ -562,7 +562,7 @@ mod tests {
         );
         assert_eq!(
             plan(
-                "herdr:letta",
+                "sesh-mux:letta",
                 "letta",
                 &AgentSessionRef::id("conversation-123").unwrap()
             )
@@ -572,7 +572,7 @@ mod tests {
         );
         assert_eq!(
             plan(
-                "herdr:letta",
+                "sesh-mux:letta",
                 "letta",
                 &AgentSessionRef::id("default:agent-123").unwrap()
             )
@@ -581,7 +581,7 @@ mod tests {
             vec!["letta", "--conversation", "default", "--agent", "agent-123"]
         );
         assert!(plan(
-            "herdr:letta",
+            "sesh-mux:letta",
             "letta",
             &AgentSessionRef::id("default:").unwrap()
         )
@@ -598,7 +598,7 @@ mod tests {
         )
         .is_none());
         assert!(plan(
-            "herdr:claude",
+            "sesh-mux:claude",
             "claude",
             &AgentSessionRef::path(&claude_session).unwrap()
         )
@@ -612,7 +612,7 @@ mod tests {
         let claude_session = absolute_test_path("claude-session");
         let copilot_session = absolute_test_path("copilot-session");
         let session_ref = session_ref_from_report(
-            "herdr:pi",
+            "sesh-mux:pi",
             "pi",
             Some("pi-id".into()),
             Some(pi_session.clone()),
@@ -621,15 +621,17 @@ mod tests {
         assert_eq!(session_ref.kind, AgentSessionRefKind::Path);
         assert_eq!(session_ref.value, pi_session);
 
-        assert!(session_ref_from_report("herdr:pi", "pi", Some("bad\nid".into()), None).is_none());
         assert!(
-            session_ref_from_report("herdr:pi", "pi", None, Some("relative.jsonl".into()))
+            session_ref_from_report("sesh-mux:pi", "pi", Some("bad\nid".into()), None).is_none()
+        );
+        assert!(
+            session_ref_from_report("sesh-mux:pi", "pi", None, Some("relative.jsonl".into()))
                 .is_none()
         );
         assert!(session_ref_from_report("custom:pi", "pi", Some("pi-id".into()), None).is_none());
 
         let session_ref = session_ref_from_report(
-            "herdr:omp",
+            "sesh-mux:omp",
             "omp",
             Some("omp-id".into()),
             Some(omp_session.clone()),
@@ -639,11 +641,11 @@ mod tests {
         assert_eq!(session_ref.value, omp_session);
 
         let session_ref =
-            session_ref_from_report("herdr:omp", "omp", Some("omp-id".into()), None).unwrap();
+            session_ref_from_report("sesh-mux:omp", "omp", Some("omp-id".into()), None).unwrap();
         assert_eq!(session_ref.kind, AgentSessionRefKind::Id);
         assert_eq!(session_ref.value, "omp-id");
         let session_ref = session_ref_from_report(
-            "herdr:omp",
+            "sesh-mux:omp",
             "omp",
             Some("omp-id".into()),
             Some("relative.jsonl".into()),
@@ -651,36 +653,49 @@ mod tests {
         .unwrap();
         assert_eq!(session_ref.kind, AgentSessionRefKind::Id);
         assert_eq!(session_ref.value, "omp-id");
+        assert!(session_ref_from_report(
+            "sesh-mux:omp",
+            "omp",
+            None,
+            Some("relative.jsonl".into())
+        )
+        .is_none());
+
         assert!(
-            session_ref_from_report("herdr:omp", "omp", None, Some("relative.jsonl".into()))
+            session_ref_from_report("sesh-mux:claude", "claude", None, Some(claude_session))
                 .is_none()
         );
 
-        assert!(
-            session_ref_from_report("herdr:claude", "claude", None, Some(claude_session)).is_none()
-        );
-
-        let session_ref =
-            session_ref_from_report("herdr:copilot", "copilot", Some("copilot-id".into()), None)
-                .unwrap();
+        let session_ref = session_ref_from_report(
+            "sesh-mux:copilot",
+            "copilot",
+            Some("copilot-id".into()),
+            None,
+        )
+        .unwrap();
         assert_eq!(session_ref.kind, AgentSessionRefKind::Id);
         assert_eq!(session_ref.value, "copilot-id");
-        assert!(
-            session_ref_from_report("herdr:copilot", "copilot", None, Some(copilot_session))
-                .is_none()
-        );
+        assert!(session_ref_from_report(
+            "sesh-mux:copilot",
+            "copilot",
+            None,
+            Some(copilot_session)
+        )
+        .is_none());
 
         let session_ref =
-            session_ref_from_report("herdr:devin", "devin", Some("devin-id".into()), None).unwrap();
+            session_ref_from_report("sesh-mux:devin", "devin", Some("devin-id".into()), None)
+                .unwrap();
         assert_eq!(session_ref.kind, AgentSessionRefKind::Id);
         assert_eq!(session_ref.value, "devin-id");
 
         let session_ref =
-            session_ref_from_report("herdr:droid", "droid", Some("droid-id".into()), None).unwrap();
+            session_ref_from_report("sesh-mux:droid", "droid", Some("droid-id".into()), None)
+                .unwrap();
         assert_eq!(session_ref.kind, AgentSessionRefKind::Id);
         assert_eq!(session_ref.value, "droid-id");
         assert!(session_ref_from_report(
-            "herdr:droid",
+            "sesh-mux:droid",
             "droid",
             None,
             Some("/tmp/droid-session".into())
@@ -688,12 +703,12 @@ mod tests {
         .is_none());
 
         let session_ref =
-            session_ref_from_report("herdr:kimi", "kimi", Some("kimi-id".into()), None).unwrap();
+            session_ref_from_report("sesh-mux:kimi", "kimi", Some("kimi-id".into()), None).unwrap();
         assert_eq!(session_ref.kind, AgentSessionRefKind::Id);
         assert_eq!(session_ref.value, "kimi-id");
 
         let session_ref = session_ref_from_report(
-            "herdr:mastracode",
+            "sesh-mux:mastracode",
             "mastracode",
             Some("mastracode-id".into()),
             None,
@@ -703,24 +718,32 @@ mod tests {
         assert_eq!(session_ref.value, "mastracode-id");
 
         let session_ref =
-            session_ref_from_report("herdr:kilo", "kilo", Some("kilo-id".into()), None).unwrap();
+            session_ref_from_report("sesh-mux:kilo", "kilo", Some("kilo-id".into()), None).unwrap();
         assert_eq!(session_ref.kind, AgentSessionRefKind::Id);
         assert_eq!(session_ref.value, "kilo-id");
 
-        let session_ref =
-            session_ref_from_report("herdr:qodercli", "qodercli", Some("qoder-id".into()), None)
-                .unwrap();
+        let session_ref = session_ref_from_report(
+            "sesh-mux:qodercli",
+            "qodercli",
+            Some("qoder-id".into()),
+            None,
+        )
+        .unwrap();
         assert_eq!(session_ref.kind, AgentSessionRefKind::Id);
         assert_eq!(session_ref.value, "qoder-id");
 
         let session_ref =
-            session_ref_from_report("herdr:qwen", "qwen", Some("qwen-id".into()), None).unwrap();
+            session_ref_from_report("sesh-mux:qwen", "qwen", Some("qwen-id".into()), None).unwrap();
         assert_eq!(session_ref.kind, AgentSessionRefKind::Id);
         assert_eq!(session_ref.value, "qwen-id");
 
-        let session_ref =
-            session_ref_from_report("herdr:antigravity_cli", "agy", Some("agy-id".into()), None)
-                .unwrap();
+        let session_ref = session_ref_from_report(
+            "sesh-mux:antigravity_cli",
+            "agy",
+            Some("agy-id".into()),
+            None,
+        )
+        .unwrap();
         assert_eq!(session_ref.kind, AgentSessionRefKind::Id);
         assert_eq!(session_ref.value, "agy-id");
     }
@@ -729,7 +752,7 @@ mod tests {
     fn report_and_snapshot_refs_keep_transcript_paths_without_changing_identity() {
         let transcript = absolute_test_path("claude-session.jsonl");
         let reported = session_ref_from_report(
-            "herdr:claude",
+            "sesh-mux:claude",
             "claude",
             Some("claude-id".into()),
             Some(transcript.clone()),
@@ -739,12 +762,12 @@ mod tests {
         assert_eq!(reported.path.as_deref(), Some(transcript.as_str()));
         assert_eq!(reported, AgentSessionRef::id("claude-id").unwrap());
         assert_eq!(
-            plan("herdr:claude", "claude", &reported).unwrap().argv,
+            plan("sesh-mux:claude", "claude", &reported).unwrap().argv,
             vec!["claude", "--resume", "claude-id"]
         );
 
         let relative = session_ref_from_report(
-            "herdr:codex",
+            "sesh-mux:codex",
             "codex",
             Some("codex-id".into()),
             Some("relative.jsonl".into()),
@@ -753,7 +776,7 @@ mod tests {
         assert_eq!(relative.path, None);
 
         let restored = session_ref_from_snapshot(
-            "herdr:codex",
+            "sesh-mux:codex",
             "codex",
             AgentSessionRefKind::Id,
             "codex-id",
@@ -811,18 +834,20 @@ mod tests {
     #[test]
     fn ids_are_data_not_shell_text() {
         let id = "abc; rm -rf /";
-        let codex_plan = plan("herdr:codex", "codex", &AgentSessionRef::id(id).unwrap()).unwrap();
+        let codex_plan =
+            plan("sesh-mux:codex", "codex", &AgentSessionRef::id(id).unwrap()).unwrap();
         assert_eq!(codex_plan.argv, vec!["codex", "resume", id]);
 
         let copilot_plan = plan(
-            "herdr:copilot",
+            "sesh-mux:copilot",
             "copilot",
             &AgentSessionRef::id(id).unwrap(),
         )
         .unwrap();
         assert_eq!(copilot_plan.argv, vec!["copilot", "--resume=abc; rm -rf /"]);
 
-        let devin_plan = plan("herdr:devin", "devin", &AgentSessionRef::id(id).unwrap()).unwrap();
+        let devin_plan =
+            plan("sesh-mux:devin", "devin", &AgentSessionRef::id(id).unwrap()).unwrap();
         assert_eq!(devin_plan.argv, vec!["devin", "--resume", id]);
     }
 
@@ -834,37 +859,37 @@ mod tests {
         let copilot_session = absolute_test_path("copilot-session");
         let devin_session = absolute_test_path("devin-session");
         assert!(plan(
-            "herdr:hermes",
+            "sesh-mux:hermes",
             "hermes",
             &AgentSessionRef::path(&hermes_session).unwrap()
         )
         .is_none());
         assert!(plan(
-            "herdr:opencode",
+            "sesh-mux:opencode",
             "opencode",
             &AgentSessionRef::path(&opencode_session).unwrap()
         )
         .is_none());
         assert!(plan(
-            "herdr:kilo",
+            "sesh-mux:kilo",
             "kilo",
             &AgentSessionRef::path(&kilo_session).unwrap()
         )
         .is_none());
         assert!(plan(
-            "herdr:copilot",
+            "sesh-mux:copilot",
             "copilot",
             &AgentSessionRef::path(&copilot_session).unwrap()
         )
         .is_none());
         assert!(plan(
-            "herdr:devin",
+            "sesh-mux:devin",
             "devin",
             &AgentSessionRef::path(&devin_session).unwrap()
         )
         .is_none());
         assert!(session_ref_from_snapshot(
-            "herdr:mastracode",
+            "sesh-mux:mastracode",
             "mastracode",
             AgentSessionRefKind::Id,
             "mastracode-session",
@@ -872,7 +897,7 @@ mod tests {
         )
         .is_some());
         assert!(session_ref_from_snapshot(
-            "herdr:hermes",
+            "sesh-mux:hermes",
             "hermes",
             AgentSessionRefKind::Id,
             "hermes-session",
@@ -880,7 +905,7 @@ mod tests {
         )
         .is_some());
         assert!(session_ref_from_snapshot(
-            "herdr:opencode",
+            "sesh-mux:opencode",
             "opencode",
             AgentSessionRefKind::Id,
             "opencode-session",
@@ -888,7 +913,7 @@ mod tests {
         )
         .is_some());
         assert!(session_ref_from_snapshot(
-            "herdr:kilo",
+            "sesh-mux:kilo",
             "kilo",
             AgentSessionRefKind::Id,
             "kilo-session",
@@ -896,7 +921,7 @@ mod tests {
         )
         .is_some());
         assert!(session_ref_from_snapshot(
-            "herdr:copilot",
+            "sesh-mux:copilot",
             "copilot",
             AgentSessionRefKind::Id,
             "copilot-session",
@@ -904,7 +929,7 @@ mod tests {
         )
         .is_some());
         assert!(session_ref_from_snapshot(
-            "herdr:devin",
+            "sesh-mux:devin",
             "devin",
             AgentSessionRefKind::Id,
             "devin-session",
@@ -912,7 +937,7 @@ mod tests {
         )
         .is_some());
         assert!(session_ref_from_snapshot(
-            "herdr:antigravity_cli",
+            "sesh-mux:antigravity_cli",
             "agy",
             AgentSessionRefKind::Id,
             "agy-session",
@@ -921,7 +946,7 @@ mod tests {
         .is_some());
         let agy_session = absolute_test_path("agy-session");
         assert!(plan(
-            "herdr:antigravity_cli",
+            "sesh-mux:antigravity_cli",
             "agy",
             &AgentSessionRef::path(&agy_session).unwrap()
         )
