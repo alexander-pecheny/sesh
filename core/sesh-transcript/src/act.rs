@@ -1,5 +1,5 @@
 //! What a device asks of an Agent (ADR 0012): a message, keys, an answer, a permission, a stop
-//! or a start (ADR 0019), which the follower plays into the Agent's pane through its Source.
+//! or a start (ADR 0020), which the follower plays into the Agent's pane through its Source.
 //! Taking back a queued message, or handing the queue over, the follower does itself (ADR 0015).
 
 use std::time::{Duration, Instant};

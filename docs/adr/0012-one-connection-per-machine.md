@@ -31,5 +31,6 @@ takes over (ADR 0014), so a device never talks to a follower that speaks another
 
 Messages, keys, answers, permissions and stops go to the follower the same way, each through
 a one-shot command (`send`, `keys`, `answer`, `permit`, `stop`), and the follower plays them
-into the pane. `unqueue` and `hand` take back or hand over a queued message (ADR 0015). A device still runs herdr itself only to make Workspaces, Worktrees and panes,
-to start an Agent, and to attach a Terminal.
+into the pane. `unqueue` and `hand` take back or hand over a queued message (ADR 0015). A device still runs sesh-mux itself only to make Workspaces, Worktrees and panes,
+and to attach a Terminal; the follower starts Agents and reads Transcripts for the Vault
+(ADR 0020).

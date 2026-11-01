@@ -302,7 +302,7 @@ impl Machine {
         let _ = queue.send((request, pane, reply));
     }
 
-    /// Copies Transcripts for a device (ADR 0019) off the follower's loop, since a Vault indexes
+    /// Copies Transcripts for a device (ADR 0020) off the follower's loop, since a Vault indexes
     /// what it takes; `reply` gets the `done` line with the answer, or the `error` line.
     pub fn copy(&mut self, request: Value, reply: mpsc::Sender<Value>) {
         if self.leaving.is_some() {

@@ -141,7 +141,7 @@ final class FollowerLink {
     func stop(_ session: String) async -> String? { await ask("stop", session, []) }
 
     /// Starts `agent`, named `name`, in a fresh `pane`, and waits on the machine until it can take a
-    /// prompt (ADR 0019). On failure the pane is closed, so no half-started Agent lingers, and the
+    /// prompt (ADR 0020). On failure the pane is closed, so no half-started Agent lingers, and the
     /// reason comes back.
     func start(_ agent: Agent, name: String, pane: String, resuming transcript: String? = nil,
                config: String? = nil, remote: Bool = true) async -> String? {

@@ -2,7 +2,7 @@ import Foundation
 
 /// Copies every adopted Agent session's Transcripts into its Vault while the app runs, so a
 /// Conversation outlives its machine and the Agent's own clean-up (ADR 0008). A round asks each
-/// machine's follower once for what the copies lack, and the Vault's once to store it (ADR 0019).
+/// machine's follower once for what the copies lack, and the Vault's once to store it (ADR 0020).
 @MainActor
 final class Copier {
     private static let round = Duration.seconds(30)

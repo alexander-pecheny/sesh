@@ -1,4 +1,4 @@
-//! Starting an Agent in a fresh pane (ADR 0019): sesh-mux starts it, and the follower gets it past
+//! Starting an Agent in a fresh pane (ADR 0020): sesh-mux starts it, and the follower gets it past
 //! the menus some Agents open before their first prompt, watching from the Host rather than from
 //! a device a round trip away. On failure the pane is closed, so no half-started Agent lingers.
 

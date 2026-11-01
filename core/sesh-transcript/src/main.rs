@@ -107,7 +107,7 @@ fn page(args: &[String]) -> Exit {
 }
 
 /// Any request as JSON, or read from a file that is then removed, for one too long for a command
-/// line, such as the Transcripts a Vault takes (ADR 0019).
+/// line, such as the Transcripts a Vault takes (ADR 0020).
 fn ask(args: &[String]) -> Exit {
     let text = match args {
         [flag, file] if flag == "--file" => {
