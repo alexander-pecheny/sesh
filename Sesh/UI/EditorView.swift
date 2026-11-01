@@ -5,11 +5,9 @@ struct EditorView: View {
     @EnvironmentObject private var store: Store
     @ObservedObject var session: SeshSession
     @Environment(\.dismiss) private var dismiss
-    @Environment(\.colorScheme) private var colorScheme
+    @Environment(\.flavour) private var flavour
     @State private var editing: Draft?
     let send: (String, Bool) -> Void
-
-    private var flavour: Catppuccin.Flavour { colorScheme == .dark ? .mocha : .latte }
 
     var body: some View {
         NavigationStack {

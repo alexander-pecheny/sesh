@@ -2,7 +2,7 @@ import MarkdownUI
 import SwiftUI
 
 struct ConversationView: View {
-    @Environment(\.colorScheme) private var colorScheme
+    @Environment(\.flavour) private var flavour
     @Environment(\.openURL) private var openURL
     @ObservedObject var conversation: Conversation
     let title: String
@@ -26,7 +26,6 @@ struct ConversationView: View {
     /// changes to a date only when the day is part of it.
     @State private var today = Calendar.current.startOfDay(for: .now)
 
-    private var flavour: Catppuccin.Flavour { colorScheme == .dark ? .mocha : .latte }
     private var working: Bool { conversation.state == "working" }
     private static let rowSpacing: CGFloat = 14
     private static let focusTint = 0.15
@@ -386,7 +385,7 @@ private struct AgentText: View {
 /// A Bookmark, or a copied link, from a row's context menu and, where there is a pointer,
 /// icons on hover: text that can be selected keeps its own context menu.
 private struct Bookmarkable: ViewModifier {
-    @Environment(\.colorScheme) private var colorScheme
+    @Environment(\.flavour) private var flavour
     let entry: SessionLog.Entry?
     /// A live item, which the Transcript will hold soon: it takes the room its icons will need.
     let live: Bool
@@ -457,7 +456,7 @@ private struct Bookmarkable: ViewModifier {
     private func icon(_ name: String, help: String, label: String, action: @escaping () -> Void) -> some View {
         Button(action: action) {
             Image(systemName: name)
-                .foregroundStyle((colorScheme == .dark ? Catppuccin.Flavour.mocha : .latte)(.overlay1))
+                .foregroundStyle(flavour(.overlay1))
                 .padding(Metric.tiny)
         }
         .buttonStyle(.plain)
@@ -477,14 +476,14 @@ extension View {
 /// One message on its own, where a long press selects words instead of opening a menu.
 private struct SelectSheet: View {
     @Environment(\.dismiss) private var dismiss
-    @Environment(\.colorScheme) private var colorScheme
+    @Environment(\.flavour) private var flavour
     let text: String
 
     var body: some View {
         NavigationStack {
             ScrollView { Prose(text: text).frame(maxWidth: .infinity, alignment: .leading).padding(Metric.wide) }
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
-                .background((colorScheme == .dark ? Catppuccin.Flavour.mocha : .latte)(.base), ignoresSafeAreaEdges: .all)
+                .background(flavour(.base), ignoresSafeAreaEdges: .all)
                 .navigationTitle("Select Text")
                 .inlineTitle()
                 .toolbar { ToolbarItem(placement: .confirmationAction) { Button("Done") { dismiss() } } }
@@ -499,11 +498,10 @@ private struct SelectSheet: View {
 /// there is some, since the working row already says when the Agent itself works. It opens
 /// a list of all of it, from which a subagent opens in its own Tab.
 private struct BackgroundLine: View {
-    @Environment(\.colorScheme) private var colorScheme
+    @Environment(\.flavour) private var flavour
     @ObservedObject var conversation: Conversation
     @State private var listing = false
 
-    private var flavour: Catppuccin.Flavour { colorScheme == .dark ? .mocha : .latte }
 
     var body: some View {
         if let first = conversation.background.first {
@@ -582,11 +580,10 @@ private extension SessionLog.Row {
 }
 
 private struct RowView: View {
-    @Environment(\.colorScheme) private var colorScheme
+    @Environment(\.flavour) private var flavour
     let row: SessionLog.Row
     @ObservedObject var conversation: Conversation
 
-    private var flavour: Catppuccin.Flavour { colorScheme == .dark ? .mocha : .latte }
 
     var body: some View {
         switch row.content {
@@ -626,11 +623,10 @@ private enum Bubble {
 }
 
 private struct UserBubble: View {
-    @Environment(\.colorScheme) private var colorScheme
+    @Environment(\.flavour) private var flavour
     let entry: SessionLog.Entry
     let conversation: Conversation
 
-    private var flavour: Catppuccin.Flavour { colorScheme == .dark ? .mocha : .latte }
 
     var body: some View {
         VStack(alignment: .trailing, spacing: Bubble.spacing) {
@@ -663,7 +659,7 @@ private struct UserBubble: View {
 
 /// When a message was written: the time today, the date and time before.
 private struct Stamp: View {
-    @Environment(\.colorScheme) private var colorScheme
+    @Environment(\.flavour) private var flavour
     let at: String?
 
     private static let parser: ISO8601DateFormatter = {
@@ -678,7 +674,7 @@ private struct Stamp: View {
                  ? date.formatted(date: .omitted, time: .shortened)
                  : date.formatted(.dateTime.day().month(.abbreviated).hour().minute()))
                 .font(.ui(Metric.small).monospacedDigit())
-                .foregroundStyle((colorScheme == .dark ? Catppuccin.Flavour.mocha : .latte)(.overlay0))
+                .foregroundStyle(flavour(.overlay0))
                 .help(date.formatted(date: .complete, time: .standard))
         }
     }
@@ -699,13 +695,12 @@ private struct UserText: View {
 
 /// A message waiting to be taken (ADR 0015): it can be taken back, pushed in, or sent again.
 private struct QueuedBubble: View {
-    @Environment(\.colorScheme) private var colorScheme
+    @Environment(\.flavour) private var flavour
     let message: SessionLog.Entry
     @ObservedObject var conversation: Conversation
     let edit: (String) -> Void
     let resend: (SessionLog.Entry) -> Void
 
-    private var flavour: Catppuccin.Flavour { colorScheme == .dark ? .mocha : .latte }
     private var agent: String { conversation.agent?.title ?? "the Agent" }
 
     var body: some View {
@@ -755,7 +750,7 @@ private struct QueuedBubble: View {
 /// The whole screen for a long message, on the same text as the message box.
 private struct Composer: View {
     @Environment(\.dismiss) private var dismiss
-    @Environment(\.colorScheme) private var colorScheme
+    @Environment(\.flavour) private var flavour
     @Binding var text: String
     let canSend: Bool
     #if os(iOS)
@@ -765,7 +760,6 @@ private struct Composer: View {
     @StateObject private var field = PlainField()
     @State private var picking = false
 
-    private var flavour: Catppuccin.Flavour { colorScheme == .dark ? .mocha : .latte }
 
     var body: some View {
         NavigationStack {
@@ -877,7 +871,7 @@ struct ImageViewer: View {
 }
 
 private struct RemoteImage: View {
-    @Environment(\.colorScheme) private var colorScheme
+    @Environment(\.flavour) private var flavour
     let path: String
     let conversation: Conversation
     @State private var image: PlatformImage?
@@ -886,7 +880,6 @@ private struct RemoteImage: View {
     private static let tallest: CGFloat = 200
     private static let loading: CGFloat = 120
 
-    private var flavour: Catppuccin.Flavour { colorScheme == .dark ? .mocha : .latte }
 
     var body: some View {
         Group {
@@ -910,10 +903,9 @@ private struct RemoteImage: View {
 
 /// An Agent's markdown, GitHub-flavoured, in the app's colours.
 struct Markdown: View {
-    @Environment(\.colorScheme) private var colorScheme
+    @Environment(\.flavour) private var flavour
     let text: String
 
-    private var flavour: Catppuccin.Flavour { colorScheme == .dark ? .mocha : .latte }
 
     var body: some View {
         MarkdownUI.Markdown(Cmark.linked(text))
@@ -968,11 +960,10 @@ struct Markdown: View {
 }
 
 private struct Thinking: View {
-    @Environment(\.colorScheme) private var colorScheme
+    @Environment(\.flavour) private var flavour
     let entry: SessionLog.Entry
     @Binding var open: Bool
 
-    private var flavour: Catppuccin.Flavour { colorScheme == .dark ? .mocha : .latte }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 6) {
@@ -996,12 +987,11 @@ private struct Thinking: View {
 
 /// In place of the message box once the Agent has stopped: its Conversation stays readable.
 private struct EndedBar: View {
-    @Environment(\.colorScheme) private var colorScheme
+    @Environment(\.flavour) private var flavour
     let agent: String
     let resume: () async -> Void
     @State private var resuming = false
 
-    private var flavour: Catppuccin.Flavour { colorScheme == .dark ? .mocha : .latte }
 
     var body: some View {
         HStack(spacing: Metric.gap) {
@@ -1058,7 +1048,7 @@ private struct MoveToBottom: View {
 }
 
 private struct WorkingRow: View {
-    @Environment(\.colorScheme) private var colorScheme
+    @Environment(\.flavour) private var flavour
     @State private var start = Date()
     @State private var word = Self.words.randomElement() ?? "Working"
     /// The status line on the Agent's screen, which the row shows when there is one.
@@ -1072,7 +1062,6 @@ private struct WorkingRow: View {
     private static let sweep = 1.6
     private static let band = 0.3
 
-    private var flavour: Catppuccin.Flavour { colorScheme == .dark ? .mocha : .latte }
 
     var body: some View {
         TimelineView(.animation) { context in
@@ -1141,10 +1130,9 @@ private struct Sparkles: View {
 }
 
 private struct SwitchDivider: View {
-    @Environment(\.colorScheme) private var colorScheme
+    @Environment(\.flavour) private var flavour
     let reason: String
 
-    private var flavour: Catppuccin.Flavour { colorScheme == .dark ? .mocha : .latte }
 
     private var label: String {
         switch reason {
@@ -1171,7 +1159,7 @@ private struct SwitchDivider: View {
 
 /// A rounded row that opens to show more. Every tool, question and permission is one.
 private struct Card<Header: View, Detail: View>: View {
-    @Environment(\.colorScheme) private var colorScheme
+    @Environment(\.flavour) private var flavour
     let icon: String
     var tint = Catppuccin.Swatch.overlay1
     var opens = true
@@ -1182,7 +1170,6 @@ private struct Card<Header: View, Detail: View>: View {
     @ViewBuilder let detail: () -> Detail
     var opened: () -> Void = {}
 
-    private var flavour: Catppuccin.Flavour { colorScheme == .dark ? .mocha : .latte }
 
     var body: some View {
         VStack(alignment: .leading, spacing: Metric.pad) {
@@ -1222,12 +1209,11 @@ private struct Card<Header: View, Detail: View>: View {
 }
 
 private struct ToolCard: View {
-    @Environment(\.colorScheme) private var colorScheme
+    @Environment(\.flavour) private var flavour
     let entry: SessionLog.Entry
     let result: SessionLog.Entry?
     let conversation: Conversation
 
-    private var flavour: Catppuccin.Flavour { colorScheme == .dark ? .mocha : .latte }
     private var failed: Bool { result?.error == true }
     private var open: Binding<Bool> { conversation.isOpen(entry.id) }
 
@@ -1306,12 +1292,11 @@ private struct ToolCard: View {
 }
 
 private struct Output: View {
-    @Environment(\.colorScheme) private var colorScheme
+    @Environment(\.flavour) private var flavour
     let text: String
     let failed: Bool
     let truncated: Bool
 
-    private var flavour: Catppuccin.Flavour { colorScheme == .dark ? .mocha : .latte }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 6) {
@@ -1328,11 +1313,10 @@ private struct Output: View {
 }
 
 private struct Diff: View {
-    @Environment(\.colorScheme) private var colorScheme
+    @Environment(\.flavour) private var flavour
     let text: String
     let truncated: Bool
 
-    private var flavour: Catppuccin.Flavour { colorScheme == .dark ? .mocha : .latte }
 
     private var lines: [String] {
         let lines = text.trimmingCharacters(in: .newlines).components(separatedBy: "\n")
@@ -1366,12 +1350,11 @@ private struct Diff: View {
 }
 
 private struct Lookups: View {
-    @Environment(\.colorScheme) private var colorScheme
+    @Environment(\.flavour) private var flavour
     let entries: [SessionLog.Entry]
     @Binding var open: Bool
     let openPath: ((String) -> Void)?
 
-    private var flavour: Catppuccin.Flavour { colorScheme == .dark ? .mocha : .latte }
 
     private var line: String {
         let count = { (tool: String) in entries.filter { $0.tool == tool }.count }
@@ -1412,7 +1395,7 @@ private struct Lookups: View {
 // MARK: Questions and permissions
 
 private struct QuestionCard: View {
-    @Environment(\.colorScheme) private var colorScheme
+    @Environment(\.flavour) private var flavour
     let entry: SessionLog.Entry
     let result: SessionLog.Entry?
     let conversation: Conversation
@@ -1430,7 +1413,6 @@ private struct QuestionCard: View {
         _typed = State(initialValue: kept?.typed ?? [:])
     }
 
-    private var flavour: Catppuccin.Flavour { colorScheme == .dark ? .mocha : .latte }
     private var questions: [SessionLog.Question] { entry.questions ?? [] }
 
     var body: some View {
@@ -1526,12 +1508,11 @@ private struct QuestionCard: View {
 }
 
 private struct PermissionCard: View {
-    @Environment(\.colorScheme) private var colorScheme
+    @Environment(\.flavour) private var flavour
     let permission: SessionLog.Permission
     let conversation: Conversation
     @State private var answering = false
 
-    private var flavour: Catppuccin.Flavour { colorScheme == .dark ? .mocha : .latte }
 
     var body: some View {
         VStack(alignment: .leading, spacing: Metric.pad) {
@@ -1652,11 +1633,10 @@ private struct PermissionKeys: View {
 #endif
 
 private struct TodoBar: View {
-    @Environment(\.colorScheme) private var colorScheme
+    @Environment(\.flavour) private var flavour
     let items: [SessionLog.Todo]
     @State private var open = false
 
-    private var flavour: Catppuccin.Flavour { colorScheme == .dark ? .mocha : .latte }
     private var done: Int { items.filter { $0.status == "completed" }.count }
     private var current: SessionLog.Todo? {
         items.first { $0.status == "in_progress" } ?? items.first { $0.status == "pending" }
@@ -1712,11 +1692,10 @@ private struct TodoBar: View {
 
 #if os(iOS)
 private struct UploadButton: View {
-    @Environment(\.colorScheme) private var colorScheme
+    @Environment(\.flavour) private var flavour
     @ObservedObject var link: HostLink
     let pick: () -> Void
 
-    private var flavour: Catppuccin.Flavour { colorScheme == .dark ? .mocha : .latte }
 
     var body: some View {
         Button {
@@ -1742,7 +1721,7 @@ private struct UploadButton: View {
 /// Bars in the shape of a chat, standing in for messages still on their way.
 struct Skeleton: View {
     var exchanges: Int
-    @Environment(\.colorScheme) private var colorScheme
+    @Environment(\.flavour) private var flavour
     @State private var faded = false
 
     private static let line: CGFloat = 12
@@ -1752,7 +1731,7 @@ struct Skeleton: View {
     private static let dim = 0.45
 
     var body: some View {
-        let tint = (colorScheme == .dark ? Catppuccin.Flavour.mocha : .latte)(.surface0)
+        let tint = flavour(.surface0)
         VStack(alignment: .leading, spacing: Metric.wide) {
             ForEach(0..<exchanges, id: \.self) { _ in
                 bar(Self.message, height: Metric.control, tint, alignment: .trailing)

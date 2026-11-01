@@ -4,7 +4,7 @@ import SwiftUI
 /// row, the Editor and Uploads as in any terminal. When the attach ends because the pane is
 /// gone, the Tab goes too; when only the connection went, Reconnect attaches again.
 struct PaneTab: View {
-    @Environment(\.colorScheme) private var colorScheme
+    @Environment(\.flavour) private var flavour
     @EnvironmentObject private var library: Library
     @EnvironmentObject private var ghostty: Ghostty.App
     let key: String
@@ -14,8 +14,6 @@ struct PaneTab: View {
     @State private var session: SeshSession?
     @State private var problem: String?
     @State private var attempt = 0
-
-    private var flavour: Catppuccin.Flavour { colorScheme == .dark ? .mocha : .latte }
 
     var body: some View {
         Group {

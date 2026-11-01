@@ -2,14 +2,12 @@ import SwiftUI
 
 /// A Task's working log: a box for the next Entry, then every Entry, newest first.
 struct JournalView: View {
-    @Environment(\.colorScheme) private var colorScheme
+    @Environment(\.flavour) private var flavour
     @EnvironmentObject private var library: Library
     @ObservedObject var vault: Vault
     let task: String
     @State private var draft = ""
     @StateObject private var field = PlainField()
-
-    private var flavour: Catppuccin.Flavour { colorScheme == .dark ? .mocha : .latte }
 
     private var entries: [Record] {
         vault.children(.entry, task: task).sorted { ($0.body.at ?? 0, $0.id) > ($1.body.at ?? 0, $1.id) }
@@ -58,7 +56,7 @@ struct JournalView: View {
 }
 
 private struct EntryRow: View {
-    @Environment(\.colorScheme) private var colorScheme
+    @Environment(\.flavour) private var flavour
     @EnvironmentObject private var library: Library
     @ObservedObject var vault: Vault
     let entry: Record
@@ -68,8 +66,6 @@ private struct EntryRow: View {
     /// The Entry's seq when editing began, which a save builds on.
     @State private var base: Int?
     @StateObject private var field = PlainField()
-
-    private var flavour: Catppuccin.Flavour { colorScheme == .dark ? .mocha : .latte }
 
     var body: some View {
         VStack(alignment: .leading, spacing: Metric.tiny) {

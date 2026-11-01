@@ -41,3 +41,8 @@ enum Catppuccin {
         0x181825, 0x11111b,
     ]
 }
+
+extension EnvironmentValues {
+    /// The palette for the light or dark appearance a view is drawn in.
+    var flavour: Catppuccin.Flavour { colorScheme == .dark ? .mocha : .latte }
+}

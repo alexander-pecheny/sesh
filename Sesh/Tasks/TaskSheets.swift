@@ -35,7 +35,7 @@ enum TaskSheet: Identifiable {
 /// A Form in its own navigation bar, with Cancel and one action that may take a while.
 struct SheetForm<Content: View>: View {
     @Environment(\.dismiss) private var dismiss
-    @Environment(\.colorScheme) private var colorScheme
+    @Environment(\.flavour) private var flavour
     let title: String
     let action: String
     var role: ButtonRole?
@@ -43,8 +43,6 @@ struct SheetForm<Content: View>: View {
     let working: Bool
     let perform: () -> Void
     @ViewBuilder let content: () -> Content
-
-    private var flavour: Catppuccin.Flavour { colorScheme == .dark ? .mocha : .latte }
 
     var body: some View {
         NavigationStack {

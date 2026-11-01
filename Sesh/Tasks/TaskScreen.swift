@@ -2,13 +2,12 @@ import SwiftUI
 
 /// One Task: a strip of its Tabs, the Journal always first, over the Tab that is open.
 struct TaskScreen: View {
-    @Environment(\.colorScheme) private var colorScheme
+    @Environment(\.flavour) private var flavour
     @EnvironmentObject private var library: Library
     @ObservedObject var vault: Vault
     let id: String
     @State private var sheet: TaskSheet?
 
-    private var flavour: Catppuccin.Flavour { colorScheme == .dark ? .mocha : .latte }
     /// The Mac's own Terminals and files stay on its strip, out of reach here.
     private var tabs: [TabItem] { [.journal] + (library.tabs[id] ?? []).filter { !$0.onMac(in: vault) } }
     private var current: TabItem { library.current[id] ?? .journal }
@@ -82,15 +81,13 @@ struct TaskScreen: View {
 }
 
 private struct TabChip: View {
-    @Environment(\.colorScheme) private var colorScheme
+    @Environment(\.flavour) private var flavour
     @EnvironmentObject private var library: Library
     @ObservedObject var vault: Vault
     let task: String
     let tab: TabItem
     let selected: Bool
     @State private var sheet: TaskSheet?
-
-    private var flavour: Catppuccin.Flavour { colorScheme == .dark ? .mocha : .latte }
 
     var body: some View {
         HStack(spacing: Metric.tiny) {

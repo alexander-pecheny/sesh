@@ -8,6 +8,7 @@ import cmark_gfm_extensions
 /// which SwiftUI's one-view-per-block rendering cannot do. Parsed with cmark, as the links are.
 struct Prose: NSViewRepresentable {
     @Environment(\.colorScheme) private var colorScheme
+    @Environment(\.flavour) private var flavour
     @Environment(\.openURL) private var openURL
     let text: String
 
@@ -179,6 +180,7 @@ import UIKit
 /// reply looks the same on both and a selection can run across paragraphs.
 struct Prose: UIViewRepresentable {
     @Environment(\.colorScheme) private var colorScheme
+    @Environment(\.flavour) private var flavour
     @Environment(\.openURL) private var openURL
     let text: String
 
@@ -291,12 +293,10 @@ private final class CopyTextView: UITextView {
 /// each cell drawn by the same renderer. A column wraps at a share of the row's width, so
 /// at least two show at once, but never inside a word.
 struct ProseTable: View {
-    @Environment(\.colorScheme) private var colorScheme
+    @Environment(\.flavour) private var flavour
     @Environment(\.rowWidth) private var rowWidth
     let text: String
     private static let column: CGFloat = 0.6
-
-    private var flavour: Catppuccin.Flavour { colorScheme == .dark ? .mocha : .latte }
 
     var body: some View {
         let rows = Renderer(flavour: flavour).cells(text)

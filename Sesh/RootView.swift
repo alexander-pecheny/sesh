@@ -2,13 +2,11 @@ import SwiftUI
 
 /// The Vaults and their Tasks, with the chosen Task's Tabs pushed over them.
 struct RootView: View {
-    @Environment(\.colorScheme) private var colorScheme
+    @Environment(\.flavour) private var flavour
     @Environment(\.scenePhase) private var scenePhase
     @EnvironmentObject private var ghostty: Ghostty.App
     @EnvironmentObject private var library: Library
     @ObservedObject private var asking = Asking.shared
-
-    private var flavour: Catppuccin.Flavour { colorScheme == .dark ? .mocha : .latte }
 
     var body: some View {
         ZStack {

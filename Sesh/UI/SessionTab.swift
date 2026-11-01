@@ -3,10 +3,8 @@ import GhosttyKit
 
 struct SessionTab: View {
     @EnvironmentObject private var store: Store
-    @Environment(\.colorScheme) private var colorScheme
+    @Environment(\.flavour) private var flavour
     @ObservedObject var session: SeshSession
-
-    private var flavour: Catppuccin.Flavour { colorScheme == .dark ? .mocha : .latte }
 
     var body: some View {
         VStack(spacing: 0) {

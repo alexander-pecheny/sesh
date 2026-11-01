@@ -3,11 +3,9 @@ import SwiftUI
 /// The Hosts Vaults and Agents run on, to add, edit and delete.
 struct HostsView: View {
     @EnvironmentObject private var store: Store
-    @Environment(\.colorScheme) private var colorScheme
+    @Environment(\.flavour) private var flavour
     @State private var editing: Host?
     @State private var removing: Host?
-
-    private var flavour: Catppuccin.Flavour { colorScheme == .dark ? .mocha : .latte }
 
     var body: some View {
         List {

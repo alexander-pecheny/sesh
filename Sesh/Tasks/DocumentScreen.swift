@@ -2,14 +2,13 @@ import SwiftUI
 
 /// A Document of the Task, to read and edit. Code opens straight in the editor.
 struct DocumentScreen: View {
-    @Environment(\.colorScheme) private var colorScheme
+    @Environment(\.flavour) private var flavour
     @EnvironmentObject private var library: Library
     @ObservedObject var document: DocumentText
     @State private var editing = false
     @State private var viewing = false
     @StateObject private var field = PlainField()
 
-    private var flavour: Catppuccin.Flavour { colorScheme == .dark ? .mocha : .latte }
     private var path: String? { document.path }
 
     var body: some View {

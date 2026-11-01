@@ -3,7 +3,7 @@ import SwiftUI
 /// The main screen: every Vault as a section of folders and Tasks, the most recently changed
 /// first, with its Archive and Unfiled Agent sessions; or, while searching, the hits.
 struct TasksView: View {
-    @Environment(\.colorScheme) private var colorScheme
+    @Environment(\.flavour) private var flavour
     @EnvironmentObject private var library: Library
     @StateObject private var search = Search()
     @State private var sheet: TaskSheet?
@@ -11,7 +11,6 @@ struct TasksView: View {
     /// The order of the Tasks, taken when the screen shows or is pulled to refresh.
     @State private var order: [String: Int] = [:]
 
-    private var flavour: Catppuccin.Flavour { colorScheme == .dark ? .mocha : .latte }
     private var searching: Bool { !search.query.trimmingCharacters(in: .whitespaces).isEmpty }
 
     var body: some View {
@@ -72,7 +71,7 @@ struct TasksView: View {
 }
 
 private struct VaultSection: View {
-    @Environment(\.colorScheme) private var colorScheme
+    @Environment(\.flavour) private var flavour
     @EnvironmentObject private var library: Library
     @ObservedObject var vault: Vault
     @Binding var sheet: TaskSheet?
@@ -84,8 +83,6 @@ private struct VaultSection: View {
         _sheet = sheet
         _open = AppStorage(wrappedValue: true, "open." + vault.name)
     }
-
-    private var flavour: Catppuccin.Flavour { colorScheme == .dark ? .mocha : .latte }
 
     var body: some View {
         Section {
@@ -161,13 +158,11 @@ private struct Children: View {
 }
 
 private struct FolderRow: View {
-    @Environment(\.colorScheme) private var colorScheme
+    @Environment(\.flavour) private var flavour
     @ObservedObject var vault: Vault
     let folder: Record
     @Binding var sheet: TaskSheet?
     @State private var open = true
-
-    private var flavour: Catppuccin.Flavour { colorScheme == .dark ? .mocha : .latte }
 
     var body: some View {
         DisclosureGroup(isExpanded: $open) {
@@ -204,13 +199,11 @@ private struct MoveTargets: View {
 }
 
 private struct TaskRow: View {
-    @Environment(\.colorScheme) private var colorScheme
+    @Environment(\.flavour) private var flavour
     @EnvironmentObject private var library: Library
     @ObservedObject var vault: Vault
     let task: Record
     @Binding var sheet: TaskSheet?
-
-    private var flavour: Catppuccin.Flavour { colorScheme == .dark ? .mocha : .latte }
 
     var body: some View {
         NavigationLink(value: task.id) { label }
@@ -256,12 +249,10 @@ private struct TaskRow: View {
 
 /// Closed Tasks, out of the way but still readable and searchable.
 private struct ArchiveGroup: View {
-    @Environment(\.colorScheme) private var colorScheme
+    @Environment(\.flavour) private var flavour
     @ObservedObject var vault: Vault
     @Binding var sheet: TaskSheet?
     @State private var open = false
-
-    private var flavour: Catppuccin.Flavour { colorScheme == .dark ? .mocha : .latte }
 
     var body: some View {
         let archived = Tree.archived(in: vault)
@@ -278,12 +269,10 @@ private struct ArchiveGroup: View {
 
 /// The Agent sessions on the Vault's Host that no Task has adopted yet.
 private struct UnfiledGroup: View {
-    @Environment(\.colorScheme) private var colorScheme
+    @Environment(\.flavour) private var flavour
     let items: [Library.Unfiled]
     @Binding var sheet: TaskSheet?
     @State private var open = false
-
-    private var flavour: Catppuccin.Flavour { colorScheme == .dark ? .mocha : .latte }
 
     var body: some View {
         if !items.isEmpty {
@@ -298,13 +287,11 @@ private struct UnfiledGroup: View {
 }
 
 private struct UnfiledRow: View {
-    @Environment(\.colorScheme) private var colorScheme
+    @Environment(\.flavour) private var flavour
     @EnvironmentObject private var library: Library
     let item: Library.Unfiled
     @Binding var sheet: TaskSheet?
     @State private var stopping = false
-
-    private var flavour: Catppuccin.Flavour { colorScheme == .dark ? .mocha : .latte }
 
     var body: some View {
         Menu {

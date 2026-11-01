@@ -3,12 +3,11 @@ import SwiftUI
 /// Settings that every device opening the Vault shares, kept in the Vault itself.
 struct VaultSettingsSheet: View {
     @Environment(\.dismiss) private var dismiss
-    @Environment(\.colorScheme) private var colorScheme
+    @Environment(\.flavour) private var flavour
     @ObservedObject var vault: Vault
     @State private var links: [LinkRule] = []
     @State private var remote = true
 
-    private var flavour: Catppuccin.Flavour { colorScheme == .dark ? .mocha : .latte }
     private var kept: [LinkRule] { links.filter { !$0.pattern.isEmpty && !$0.url.isEmpty } }
     private var valid: Bool { kept.allSatisfy { (try? Regex($0.pattern)) != nil } }
 

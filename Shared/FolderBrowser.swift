@@ -3,7 +3,7 @@ import SwiftUI
 /// A file's or folder's Document, browsed as in Finder: the folder's folders and files in a
 /// list, and the file picked shown beside it to read or edit, or on a phone in place of the list.
 struct FolderBrowser: View {
-    @Environment(\.colorScheme) private var colorScheme
+    @Environment(\.flavour) private var flavour
     let document: DocumentText
     let vault: Vault
     let root: String
@@ -43,8 +43,6 @@ struct FolderBrowser: View {
             _files = State(initialValue: [path: document])
         }
     }
-
-    private var flavour: Catppuccin.Flavour { colorScheme == .dark ? .mocha : .latte }
 
     var body: some View {
         Group {

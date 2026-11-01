@@ -12,13 +12,11 @@ struct KeysRow: View {
     static let height: CGFloat = row * 2
 
     @ObservedObject var input: InputState
-    @Environment(\.colorScheme) private var colorScheme
+    @Environment(\.flavour) private var flavour
     /// How far the Upload in flight has got, or `nil` when none is.
     let uploading: Double?
     let canUpload: Bool
     let send: (Action) -> Void
-
-    private var flavour: Catppuccin.Flavour { colorScheme == .dark ? .mocha : .latte }
 
     var body: some View {
         VStack(spacing: 0) {
