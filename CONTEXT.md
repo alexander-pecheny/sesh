@@ -57,6 +57,12 @@ _Avoid_: pane, page
 Retired. The phone once opened a Host in a Terminal or a Projects Tab; its main screen
 is now the Tasks, as on the Mac.
 
+**Simple mode**:
+A phone setting that replaces the Tasks with one list of the Claude sessions this phone
+started on a Host. Each runs in its own sesh-mux Workspace in a folder picked on the Host,
+always with remote control, and opens in the Claude app; Sesh shows no Conversation for it.
+_Avoid_: lite mode, easy mode
+
 **Agent**:
 The coding agent behind an Agent session: Claude, Codex or pi. Other coding agents running
 on the Host are not Agents, and Sesh does not show them.

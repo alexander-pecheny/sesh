@@ -21,6 +21,11 @@ struct SettingsView: View {
                     Text("Vaults and Agents run on these Hosts.")
                 }
                 Section {
+                    Toggle("Simple mode", isOn: $store.simpleMode)
+                } footer: {
+                    Text("Shows only the Claude sessions started on this phone. Each opens in the Claude app, which drives it by remote control. Tasks stay on the Host and come back when this is off.")
+                }
+                Section {
                     Stepper(value: $store.fontSize, in: Self.sizes, step: 1) {
                         LabeledContent("Font size") { Text("\(Int(store.fontSize))").font(.ui(Metric.label)) }
                     }

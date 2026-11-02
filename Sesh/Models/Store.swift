@@ -7,6 +7,10 @@ final class Store: ObservableObject {
     @Published var hosts: [Host] = [] { didSet { write(hosts, to: "hosts.json") } }
     @Published var keys: [Key] = [] { didSet { write(keys, to: "keys.json") } }
     @Published var drafts: [Draft] = [] { didSet { write(drafts, to: "drafts.json") } }
+    @Published var simpleSessions: [SimpleSession] = [] { didSet { write(simpleSessions, to: "simple.json") } }
+    @Published var simpleMode: Bool {
+        didSet { UserDefaults.standard.set(simpleMode, forKey: "simpleMode") }
+    }
     @Published var fontSize: Double {
         didSet { UserDefaults.standard.set(fontSize, forKey: "fontSize") }
     }
@@ -22,9 +26,11 @@ final class Store: ObservableObject {
         try? FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
         fontSize = UserDefaults.standard.object(forKey: "fontSize") as? Double ?? 12
         compressUploads = UserDefaults.standard.object(forKey: "compressUploads") as? Bool ?? true
+        simpleMode = UserDefaults.standard.bool(forKey: "simpleMode")
         hosts = read("hosts.json") ?? []
         keys = read("keys.json") ?? []
         drafts = read("drafts.json") ?? []
+        simpleSessions = read("simple.json") ?? []
     }
 
     var knownHostsPath: String { directory.appendingPathComponent("known_hosts").path }

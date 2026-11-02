@@ -22,6 +22,16 @@ struct Host: Codable, Identifiable, Equatable {
     var subtitle: String { "\(user)@\(address):\(port)" }
 }
 
+/// A Claude session started in Simple mode, which this phone lists and opens in the Claude app.
+struct SimpleSession: Codable, Identifiable, Hashable {
+    var id = UUID()
+    var host: UUID
+    var workspace: String
+    var pane: String
+    var name: String
+    var folder: String
+}
+
 struct Key: Codable, Identifiable, Equatable {
     var id = UUID()
     var name = ""
