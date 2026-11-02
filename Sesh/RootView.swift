@@ -6,6 +6,7 @@ struct RootView: View {
     @Environment(\.scenePhase) private var scenePhase
     @EnvironmentObject private var ghostty: Ghostty.App
     @EnvironmentObject private var library: Library
+    @EnvironmentObject private var store: Store
     @ObservedObject private var asking = Asking.shared
 
     var body: some View {
@@ -36,7 +37,9 @@ struct RootView: View {
     }
 
     @ViewBuilder private var content: some View {
-        if ghostty.app != nil {
+        if store.simpleMode {
+            NavigationStack { SimpleView() }.tint(flavour(.mauve))
+        } else if ghostty.app != nil {
             NavigationStack(path: Binding(get: { library.selection.map { [$0] } ?? [] }, set: { library.selection = $0.last })) {
                 TasksView()
                     .navigationDestination(for: String.self) { id in

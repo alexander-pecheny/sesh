@@ -121,6 +121,13 @@ final class Machine: Runner, Identifiable, Hashable {
     /// The Host a Vault was added with answers to the Vault's alias from then on.
     static func bind(_ alias: String, to host: UUID) { bound[alias] = host }
 
+    /// The machine Simple mode reaches a Host as, since it has no Vault alias to go by.
+    static func of(_ host: Host) -> Machine {
+        let alias = "host-" + host.id.uuidString
+        bind(alias, to: host.id)
+        return named(alias)
+    }
+
     var host: Host? {
         guard let alias else { return nil }
         let hosts = Store.shared.hosts
