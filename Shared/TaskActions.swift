@@ -114,6 +114,9 @@ enum TaskActions {
         if let path = current.body.path, current.body.repo == repo, current.body.machine == machine.alias {
             return .success(Start.Place(folder: path, branch: current.body.branch))
         }
+        if let path = current.body.path, path != repo, await Git.isWorktree(path, of: repo, on: machine) {
+            return .success(Start.Place(folder: path, branch: current.body.branch))
+        }
         let known = vault.children(.session, task: task.id).first {
             $0.body.repo.map { Start.abbreviate($0, home: home) } == Start.abbreviate(repo, home: home) && $0.body.machine == machine.alias && $0.body.path != nil && $0.body.path != repo
                 && ($0.body.branch ?? current.body.branch) == current.body.branch
