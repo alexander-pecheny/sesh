@@ -114,6 +114,9 @@ enum TaskActions {
         if let path = current.body.path, current.body.repo == repo, current.body.machine == machine.alias {
             return .success(Start.Place(folder: path, branch: current.body.branch))
         }
+        if let path = current.body.path, path != repo, await Git.isWorktree(path, of: repo, on: machine) {
+            return .success(Start.Place(folder: path, branch: current.body.branch))
+        }
         let known = vault.children(.session, task: task.id).first {
             $0.body.repo.map { Start.abbreviate($0, home: home) } == Start.abbreviate(repo, home: home) && $0.body.machine == machine.alias && $0.body.path != nil && $0.body.path != repo
                 && ($0.body.branch ?? current.body.branch) == current.body.branch
@@ -248,8 +251,9 @@ enum TaskActions {
             }
         }
         let name = Names.free(Names.slug("\(task.body.title ?? "task")-\(agent.rawValue)"), taken: await Mux.agentNames(on: machine))
+        let config = agent == .claude ? claudeConfig(of: transcript) ?? claudeConfig(vault, on: machine) : nil
         if let problem = await machine.follower.start(
-            agent, name: name, pane: pane, resuming: transcript, config: claudeConfig(vault, on: machine),
+            agent, name: name, pane: pane, resuming: transcript, config: config,
             remote: remote(of: session, in: vault)) { return problem }
         var record = vault.records[session.id] ?? session
         (record.body.pane, record.body.name) = (pane, name)

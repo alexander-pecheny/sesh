@@ -20,6 +20,12 @@ enum Git {
         }, uniquingKeysWith: { a, _ in a })
     }
 
+    /// Whether `path` is a Worktree of `repo`, as a copy brought over from another machine can be.
+    static func isWorktree(_ path: String, of repo: String, on runner: Runner) async -> Bool {
+        let common = { (folder: String) in "$(git -C \(folder) rev-parse --path-format=absolute --git-common-dir 2>/dev/null)" }
+        return await runner.run("[ -f \(quote(path))/.git ] && [ \"\(common(quote(path)))\" = \"\(common(shellPath(repo)))\" ]").ok
+    }
+
     /// Whether `git status` at `path` answers and finds nothing uncommitted, submodules included.
     static func clean(_ path: String, on runner: Runner) async -> Bool {
         let ran = await runner.run("git -C \(quote(path)) status --porcelain")

@@ -438,6 +438,7 @@ final class Library: ObservableObject {
         return conversation
     }
 
+    /// Read-only Conversations of Transcript files, a subagent's or a found one's, by path.
     private var subagents: [String: Conversation] = [:]
 
     // MARK: Terminals
@@ -502,6 +503,70 @@ final class Library: ObservableObject {
         }
         stopped.remove(session.id)
         reload(session.id)
+    }
+
+    /// Every machine an Agent session can start on: the Mac, then each Vault's Host.
+    var machines: [Machine] {
+        var seen = Set<Machine>()
+        return (Machine.here + vaults.compactMap { $0.place.alias == nil ? nil : $0.machine }).filter { seen.insert($0).inserted }
+    }
+
+    /// Starts an ended session's Agent again elsewhere or as a fork, from the Vault's copy of
+    /// its last Transcript. Moved, it stays the same session; a fork is a new one beside it.
+    func resume(_ session: Record, as resumption: Resumption) async {
+        guard resumption != .here else { return await resume(session) }
+        guard let vault = vault(of: session.id), let agent = session.body.agent.flatMap(Agent.init),
+              let last = session.body.transcripts?.last, let task = session.body.task else { return }
+        await vault.copier.copy([session])
+        let copy = "\(vault.folder)/transcripts/\(session.id)/\((last as NSString).lastPathComponent)"
+        let target = if case .on(let machine) = resumption { machine } else { TaskActions.machine(session.body.machine) }
+        guard let placed = await place(copy, agent: agent, from: vault.machine, on: target, fork: resumption == .fork, in: vault) else { return }
+        var record = vault.records[session.id] ?? session
+        if resumption == .fork {
+            record = vault.create(.session, .init(title: "\(record.body.title ?? agent.title) (fork)", task: task,
+                                                  position: Double(Date().timeIntervalSince1970), agent: agent.rawValue))
+        }
+        record.body.machine = target.alias
+        record.body.path = placed.cwd
+        record.body.pane = nil
+        record.body.transcripts = (resumption == .fork ? [] : record.body.transcripts ?? []) + [placed.path]
+        vault.write(record)
+        open(.session(record.id), in: task)
+        await resume(record)
+    }
+
+    /// Makes a found Transcript an Agent session of `task` and starts its Agent as `resumption`
+    /// says; the session's Tab takes the found one's place.
+    func resume(found tab: TabItem, in task: String, as resumption: Resumption) async {
+        guard case .found(let alias, let path, let name, let title) = tab, let agent = Agent(rawValue: name),
+              let vault = vault(of: task) else { return }
+        let source = TaskActions.machine(alias)
+        let target = if case .on(let machine) = resumption { machine } else { source }
+        guard let placed = await place(path, agent: agent, from: source, on: target, fork: resumption == .fork, in: vault) else { return }
+        let session = vault.create(.session, .init(
+            title: title, task: task, position: Double(Date().timeIntervalSince1970), machine: target.alias,
+            path: placed.cwd, agent: agent.rawValue, transcripts: [placed.path]))
+        close(tab, in: task)
+        open(.session(session.id), in: task)
+        await resume(session)
+    }
+
+    private func place(_ path: String, agent: Agent, from source: Machine, on target: Machine, fork: Bool, in vault: Vault) async -> Placed? {
+        let config = source == target ? TaskActions.claudeConfig(of: path) : TaskActions.claudeConfig(vault, on: target)
+        switch await TaskActions.place(path, agent: agent, from: source, on: target, fork: fork, config: config) {
+        case .success(let placed): return placed
+        case .failure(let failure):
+            resumeProblem = failure.message
+            return nil
+        }
+    }
+
+    /// A found Transcript, read from its machine while its Tab is open.
+    func foundConversation(_ path: String, agent: Agent, on machine: String?) -> Conversation {
+        if let known = subagents[path] { return known }
+        let conversation = Conversation(source: .file(path: path, agent: agent), agent: agent, runner: TaskActions.machine(machine))
+        subagents[path] = conversation
+        return conversation
     }
 
     func reload(_ id: String) {

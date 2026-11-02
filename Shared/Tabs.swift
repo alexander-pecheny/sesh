@@ -9,6 +9,8 @@ enum TabItem: Hashable, Identifiable, Codable {
     case terminal(String)
     /// A Claude subagent's own Transcript, read-only, opened from its parent's Conversation.
     case subagent(session: String, path: String, title: String)
+    /// A Transcript search found on a machine outside every Vault, read-only until resumed.
+    case found(machine: String?, path: String, agent: String, title: String)
 
     var id: Self { self }
 
@@ -16,13 +18,16 @@ enum TabItem: Hashable, Identifiable, Codable {
     var record: String? {
         switch self {
         case .session(let id), .document(let id): id
-        case .journal, .terminal, .subagent: nil
+        case .journal, .terminal, .subagent, .found: nil
         }
     }
 
-    /// Whether every device shows the Tab; a subagent's is opened from its parent on one device.
+    /// Whether every device shows the Tab; a subagent's or a found Transcript's is opened on one device.
     var shared: Bool {
-        if case .subagent = self { false } else { true }
+        switch self {
+        case .subagent, .found: false
+        default: true
+        }
     }
 
     /// A Terminal or a file on the Mac, which the phone cannot reach.
@@ -31,6 +36,7 @@ enum TabItem: Hashable, Identifiable, Codable {
         switch self {
         case .terminal(let id): vault.records[id].map { $0.body.machine == nil } ?? false
         case .document(let id): vault.records[id].map { $0.body.machine == nil && $0.body.path != nil } ?? false
+        case .found(let machine, _, _, _): machine == nil
         case .journal, .session, .subagent: false
         }
     }
@@ -43,6 +49,7 @@ enum TabItem: Hashable, Identifiable, Codable {
         case .document(let id): vault.records[id]?.body.path?.hasSuffix("/") == true ? "folder" : "doc.text"
         case .terminal: "terminal"
         case .subagent: "person.2"
+        case .found: "bubble.left.and.text.bubble.right"
         }
     }
 
@@ -64,6 +71,7 @@ enum TabItem: Hashable, Identifiable, Codable {
             guard let record = vault.records[id] else { return nil }
             own = record.body
         case .journal, .document: own = main
+        case .found: return nil
         }
         guard let path = own.path else { return nil }
         let branch = own.branch ?? (own.machine == main.machine && path == main.path ? main.branch : nil)
@@ -76,7 +84,7 @@ enum TabItem: Hashable, Identifiable, Codable {
         case .journal: "Journal"
         case .session(let id), .document(let id): vault.records[id]?.body.title ?? "Untitled"
         case .terminal: "Terminal"
-        case .subagent(_, _, let title): title
+        case .subagent(_, _, let title), .found(_, _, _, let title): title
         }
     }
 }

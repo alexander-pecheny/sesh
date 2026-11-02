@@ -133,7 +133,7 @@ fn a_transcript_file_is_followed_paged_and_read_without_sesh_mux() {
 #[test]
 fn a_vault_is_served_over_the_command_line() {
     let scratch = Scratch::new("cli");
-    let dir = scratch.path("vault");
+    let dir = scratch.path(".sesh/vaults/hobby");
     let init = lines(helper(&["vault", "init", &dir]).output().unwrap());
     assert_eq!(init, [json!({"t": "head", "seq": 0})]);
     let (mut follow, changes) = spawn(&["vault", "follow", &dir, "--since", "0"]);
@@ -217,4 +217,8 @@ fn a_vault_is_served_over_the_command_line() {
     assert_eq!(kinds.len(), 2, "{hits:?}");
     assert!(kinds.contains(&"task") && kinds.contains(&"transcript"));
     assert!(hits.iter().all(|hit| hit["t"] == "hit"));
+
+    let found = helper(&["search", "walrus"]).env("HOME", &scratch.0).output().unwrap();
+    let found = String::from_utf8(found.stdout).unwrap();
+    assert!(found.contains("  Is the **walrus** fed?\n"), "{found}");
 }

@@ -159,6 +159,15 @@ private struct TabContent: View {
                     .frame(minWidth: 420, maxWidth: .infinity, minHeight: 300, maxHeight: .infinity)
                     .id(path)
             }
+        case .found(let machine, let path, let agent, let title):
+            if let agent = Agent(rawValue: agent) {
+                ConversationView(conversation: library.foundConversation(path, agent: agent, on: machine), title: title, fresh: false,
+                                 resume: { await library.resume(found: tab, in: task, as: $0) },
+                                 elsewhere: library.machines.filter { $0.alias != machine },
+                                 ended: "Found on \(TaskActions.machine(machine).title), in no Task.")
+                    .frame(minWidth: 420, maxWidth: .infinity, minHeight: 300, maxHeight: .infinity)
+                    .id(path)
+            }
         case .terminal(let terminal):
             if let record = vault.records[terminal], let pane = record.body.pane {
                 PaneView(key: terminal, pane: pane, machine: TaskActions.machine(record.body.machine)) {
@@ -210,7 +219,8 @@ private struct SessionTab: View {
             if let conversation, let session = vault.records[id] {
                 let ended = conversation.pane == nil && library.ended(session)
                 ConversationView(conversation: conversation, title: session.body.title ?? "Agent session", fresh: false, hidden: terminal,
-                                 resume: ended ? { await library.resume(session) } : nil)
+                                 resume: ended ? { await library.resume(session, as: $0) } : nil,
+                                 elsewhere: library.machines.filter { $0.alias != session.body.machine })
                     .id(ObjectIdentifier(conversation))
                     .opacity(terminal ? 0 : 1)
                     .allowsHitTesting(!terminal)

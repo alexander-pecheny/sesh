@@ -146,6 +146,14 @@ private struct TabContent: View {
                 ConversationView(conversation: library.subagentConversation(path: path, of: record), title: title, fresh: false)
                     .id(path)
             }
+        case .found(let machine, let path, let agent, let title):
+            if let agent = Agent(rawValue: agent) {
+                ConversationView(conversation: library.foundConversation(path, agent: agent, on: machine), title: title, fresh: false,
+                                 resume: { await library.resume(found: tab, in: task, as: $0) },
+                                 elsewhere: library.machines.filter { $0.alias != machine },
+                                 ended: "Found on \(TaskActions.machine(machine).title), in no Task.")
+                    .id(path)
+            }
         case .terminal(let terminal):
             if let record = vault.records[terminal], let pane = record.body.pane {
                 PaneTab(key: terminal, pane: pane, machine: TaskActions.machine(record.body.machine)) {
@@ -175,7 +183,8 @@ private struct SessionScreen: View {
                 }
             } else if let conversation, let session = vault.records[id] {
                 ConversationView(conversation: conversation, title: session.body.title ?? "Agent session", fresh: false,
-                                 resume: conversation.pane == nil && library.ended(session) ? { await library.resume(session) } : nil,
+                                 resume: conversation.pane == nil && library.ended(session) ? { await library.resume(session, as: $0) } : nil,
+                                 elsewhere: library.machines.filter { $0.alias != session.body.machine },
                                  place: place(of: session))
                     .id(ObjectIdentifier(conversation))
             } else {

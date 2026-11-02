@@ -75,6 +75,8 @@ _Avoid_: Claude session, thread, agent pane
 An Agent session is ended once its Agent has stopped, whether the user ended it or the Agent
 exited. Closing its Tab never ends it. An ended session keeps its Conversation, read from the
 Vault's copy, and Resume starts the Agent again on the same conversation.
+Resume may also start the Agent on another machine, which gets a copy of the Transcript
+in the same folder or the same place under its home, or Fork it under a new session id.
 _Avoid_: closed, killed, dead
 
 **Workspace**:
@@ -161,6 +163,12 @@ _Avoid_: workspace, library, database
 The Agent sessions on a Vault's Hosts that no Task has adopted yet, usually because they
 were started outside Sesh. The Mac's own unadopted sessions form one more Unfiled list,
 shared by every Vault.
+
+**Found**:
+A Transcript on the Mac or a Vault's Host that search turned up outside every Vault, whether
+its Agent still runs or not. It opens read-only in the Task on screen, or the Scratchpad, and
+becomes an Agent session of that Task once it is resumed or forked.
+_Avoid_: thread, orphan
 
 **Adopt**:
 To make an Unfiled Agent session part of a Task. A session started from a Task is adopted

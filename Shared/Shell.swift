@@ -62,6 +62,10 @@ enum Helper {
     static let file = "sesh-transcript-" + (version?.split(separator: "+").last.map(String.init) ?? "unpinned")
     static let path = "~/.sesh/bin/\(file)"
     static let unpack = unpack(file)
+    /// `sesh search` on the machine's PATH, through a name that outlives each helper version;
+    /// a `sesh` the user put in ~/.local/bin themselves stays.
+    static let link = "ln -sfn \(file) ~/.sesh/bin/sesh && mkdir -p ~/.local/bin"
+        + " && { [ ! -e ~/.local/bin/sesh ] || [ -L ~/.local/bin/sesh ]; } && ln -sfn ~/.sesh/bin/sesh ~/.local/bin/sesh"
 
     /// rmosh's mosh-server, which the Mac's Terminals start on the Host. It is GPL, so it ships
     /// beside the helper rather than inside it, pinned by the rmosh commit it was built from.

@@ -6,8 +6,10 @@ pub mod copy;
 pub use agent::claude::Background;
 pub use agent::Agent;
 pub mod follower;
+pub mod index;
 pub mod listen;
 pub mod log;
+pub mod place;
 pub mod poll;
 pub mod reconcile;
 pub mod replay;
@@ -566,7 +568,7 @@ fn patch_files(patch: &str) -> impl Iterator<Item = String> + '_ {
     })
 }
 
-fn first_line(text: &str) -> String {
+pub(crate) fn first_line(text: &str) -> String {
     let line = text
         .lines()
         .map(str::trim)

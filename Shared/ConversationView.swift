@@ -8,8 +8,12 @@ struct ConversationView: View {
     let title: String
     let fresh: Bool
     var hidden = false
-    /// Starts the Agent again, for a session whose Agent has stopped.
-    var resume: (() async -> Void)?
+    /// Starts the Agent again, for a session whose Agent has stopped or a found Transcript.
+    var resume: ((Resumption) async -> Void)?
+    /// The other machines it can start again on.
+    var elsewhere: [Machine] = []
+    /// What the bar says in place of "This Agent session has ended."
+    var ended = "This Agent session has ended."
     /// The branch and machine the Agent works on, which the phone shows under its Tabs.
     var place: String?
     @State private var notice: String?
@@ -54,7 +58,7 @@ struct ConversationView: View {
                     BackgroundLine(conversation: conversation)
                     MessageBox(conversation: conversation, outbox: conversation.outbox, fresh: fresh, hidden: hidden)
                 } else if let resume {
-                    EndedBar(agent: conversation.agent?.title ?? "The Agent", resume: resume)
+                    EndedBar(agent: conversation.agent?.title ?? "The Agent", note: ended, elsewhere: elsewhere, resume: resume)
                 }
             }
         }
@@ -631,20 +635,33 @@ private struct Thinking: View {
 private struct EndedBar: View {
     @Environment(\.flavour) private var flavour
     let agent: String
-    let resume: () async -> Void
+    let note: String
+    let elsewhere: [Machine]
+    let resume: (Resumption) async -> Void
     @State private var resuming = false
+
+    private func run(_ resumption: Resumption) {
+        resuming = true
+        Task {
+            await resume(resumption)
+            resuming = false
+        }
+    }
 
     var body: some View {
         HStack(spacing: Metric.gap) {
-            Text("This Agent session has ended.").font(.ui(Metric.label)).foregroundStyle(flavour(.subtext0))
+            Text(note).font(.ui(Metric.label)).foregroundStyle(flavour(.subtext0))
             Spacer(minLength: 0)
-            Button {
-                resuming = true
-                Task {
-                    await resume()
-                    resuming = false
-                }
+            Menu {
+                Button("Fork Here") { run(.fork) }
+                ForEach(elsewhere) { machine in Button("Resume on \(machine.title)") { run(.on(machine)) } }
             } label: {
+                Image(systemName: "ellipsis.circle").foregroundStyle(flavour(.subtext0))
+            }
+            .menuIndicator(.hidden)
+            .fixedSize()
+            .disabled(resuming)
+            Button { run(.here) } label: {
                 HStack(spacing: Metric.tiny) {
                     if resuming { ProgressView().controlSize(.small) }
                     Text(resuming ? "Resuming…" : "Resume \(agent)")

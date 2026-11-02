@@ -57,6 +57,7 @@ itself, and it is GPL-3.0 with public source, which is the path Sesh is on.
 | JetBrainsMono Nerd Font | SIL Open Font License 1.1 | `Resources/Fonts`, licence in `OFL.txt` |
 | [Lucide](https://lucide.dev) icons | ISC, Lucide Icons and Contributors | `Resources/Icons.xcassets`, licence in `Resources/LICENSE-lucide.txt` |
 | [Catppuccin](https://github.com/catppuccin/catppuccin) palettes | MIT | `Sesh/Catppuccin.swift`, `Resources/ghostty/themes` |
+| Folder naming from [atuin](https://github.com/atuinsh/atuin)'s Transcript writers | MIT, Atuin, Inc. | `core/sesh-transcript/src/place.rs` |
 | App-icon cloud photographs | CC0 1.0, no attribution required | `Resources/icon-clouds`, provenance in `SOURCES.md` |
 
 ## The Rust crates
