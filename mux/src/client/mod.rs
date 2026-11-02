@@ -169,25 +169,27 @@ pub fn run_terminal_attach(terminal_id: String, takeover: bool) -> io::Result<()
         } else {
             TICK
         };
-        let event = match rx.recv_timeout(wait) {
+        let received = rx.recv_timeout(wait);
+        // Not only when idle: a busy pane would hide a resize, and diffs would land on a cleared screen.
+        let size = crossterm::terminal::size()?;
+        if size != (cols, rows) {
+            (cols, rows) = size;
+            write_to_server(
+                &mut stream,
+                &ClientMessage::Resize {
+                    cols,
+                    rows,
+                    cell_width_px: 0,
+                    cell_height_px: 0,
+                    pixel_mouse: false,
+                },
+            )?;
+        }
+        let event = match received {
             Ok(event) => event,
             Err(mpsc::RecvTimeoutError::Timeout) => {
                 if forward_input(&mut stream, &mut escape, framer.flush_timeout(), rows)? {
                     break Ok(());
-                }
-                let size = crossterm::terminal::size()?;
-                if size != (cols, rows) {
-                    (cols, rows) = size;
-                    write_to_server(
-                        &mut stream,
-                        &ClientMessage::Resize {
-                            cols,
-                            rows,
-                            cell_width_px: 0,
-                            cell_height_px: 0,
-                            pixel_mouse: false,
-                        },
-                    )?;
                 }
                 if let Some(prefix) = escape.take_pending_prefix() {
                     write_to_server(&mut stream, &ClientMessage::Input { data: prefix })?;
