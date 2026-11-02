@@ -129,7 +129,7 @@ final class Library: ObservableObject {
     /// The live pane while its machine has it; otherwise the Vault's copy of the last Transcript.
     func conversation(for session: Record) async -> Conversation {
         // An Agent that died while its Tab was hidden left its pane's Conversation cached.
-        if let known = conversations[session.id], known.pane == nil || !ended(session) { return known }
+        if let known = conversations[session.id], known.pane == nil ? panes.live[key(session)] == nil : !ended(session) { return known }
         conversations.removeValue(forKey: session.id)?.unfollow()
         let machine = TaskActions.machine(session.body.machine)
         let agent = session.body.agent.flatMap(Agent.init)
@@ -193,6 +193,7 @@ final class Library: ObservableObject {
 
     /// Whether the session's pane still runs its Agent; a pane whose Agent exited is a bare shell.
     private func runs(_ session: Record, on machine: Machine) async -> Bool {
+        if panes.live[key(session)] != nil { return true }
         _ = await machine.prepare()
         if case .found(let pane) = await Mux.look(for: session.body.pane ?? "", on: machine) { return pane.agent != nil }
         return false
@@ -286,6 +287,13 @@ final class Library: ObservableObject {
         name(from: read)
         for (key, last) in read.last where active[key] != last { active[key] = last }
         if panes != read { panes = read }
+        // One failed look at a pane opens its copy, which has no message box; the poll knows better.
+        for (id, conversation) in conversations where conversation.pane == nil {
+            if let session = vault(of: id)?.records[id], panes.live[key(session)] != nil {
+                stopped.remove(id)
+                reload(id)
+            }
+        }
         markSeen()
     }
 
