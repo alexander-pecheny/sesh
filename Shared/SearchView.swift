@@ -36,6 +36,7 @@ struct SearchView: View {
     #endif
 
     private func open(_ hit: Hit) {
+        if hit.kind == "found" { return openFound(hit) }
         guard let task = hit.task, let vault = library.vaults.first(where: { $0.name == hit.vault }) else { return }
         switch hit.kind {
         case "transcript":
@@ -46,6 +47,15 @@ struct SearchView: View {
         case "session": library.open(.session(hit.id), in: task)
         default: library.open(.journal, in: task)
         }
+        search.query = ""
+    }
+
+    /// A found Transcript opens read-only in the Task on screen, else in its Vault's Scratchpad.
+    private func openFound(_ hit: Hit) {
+        guard let path = hit.path, let agent = hit.agent else { return }
+        let scratchpad = library.vaults.first { $0.name == hit.vault }?.all(.task).first(where: \.scratchpad)
+        guard let task = library.selection ?? scratchpad?.id else { return }
+        library.open(.found(machine: hit.machine, path: path, agent: agent, title: hit.title ?? "Agent session"), in: task)
         search.query = ""
     }
 }
@@ -67,6 +77,10 @@ private struct HitRow: View {
     }
 
     private var taskTitle: String {
+        if hit.kind == "found" {
+            let folder = (hit.cwd.map { ($0 as NSString).lastPathComponent }).map { " · \($0)" } ?? ""
+            return "\(TaskActions.machine(hit.machine).title)\(folder) · \(hit.title ?? "Agent session")"
+        }
         let vault = library.vaults.first { $0.name == hit.vault }
         let task = hit.task.flatMap { vault?.records[$0]?.body.title } ?? "No Task"
         return "\(hit.vault) · \(task)"
@@ -74,7 +88,7 @@ private struct HitRow: View {
 
     private var icon: String {
         switch hit.kind {
-        case "transcript": "bubble.left.and.text.bubble.right"
+        case "transcript", "found": "bubble.left.and.text.bubble.right"
         case "document": "doc.text"
         case "task": "checklist"
         default: "book"

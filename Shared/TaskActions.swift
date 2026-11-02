@@ -248,8 +248,9 @@ enum TaskActions {
             }
         }
         let name = Names.free(Names.slug("\(task.body.title ?? "task")-\(agent.rawValue)"), taken: await Mux.agentNames(on: machine))
+        let config = agent == .claude ? claudeConfig(of: transcript) ?? claudeConfig(vault, on: machine) : nil
         if let problem = await machine.follower.start(
-            agent, name: name, pane: pane, resuming: transcript, config: claudeConfig(vault, on: machine),
+            agent, name: name, pane: pane, resuming: transcript, config: config,
             remote: remote(of: session, in: vault)) { return problem }
         var record = vault.records[session.id] ?? session
         (record.body.pane, record.body.name) = (pane, name)

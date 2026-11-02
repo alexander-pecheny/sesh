@@ -1,6 +1,7 @@
 import Foundation
 
-/// One search hit, from a Vault's Host or, offline, from this device's copy.
+/// One search hit, from a Vault's Host or, offline, from this device's copy; or a Transcript
+/// `found` on a machine outside every Vault, with its path, Agent, folder and title.
 struct Hit: Identifiable, Decodable, Hashable {
     let kind: String
     let id: String
@@ -8,9 +9,14 @@ struct Hit: Identifiable, Decodable, Hashable {
     let session: String?
     let item: String?
     let snippet: String
+    var path: String?
+    var agent: String?
+    var cwd: String?
+    var title: String?
     var vault = ""
+    var machine: String?
 
-    private enum CodingKeys: String, CodingKey { case kind, id, task, session, item, snippet }
+    private enum CodingKeys: String, CodingKey { case kind, id, task, session, item, snippet, path, agent, cwd, title }
 }
 
 @MainActor
@@ -64,6 +70,30 @@ final class Search: ObservableObject {
         }
         hits = found
         offline = missed
+        // Indexing a machine's Transcripts for the first time takes seconds, so the Vaults' hits show first.
+        let more = await elsewhere(query, in: library)
+        guard !Task.isCancelled else { return }
+        hits += more
+    }
+
+    /// The Transcripts on the Mac and every Vault's Host that no Vault holds yet.
+    private func elsewhere(_ query: String, in library: Library) async -> [Hit] {
+        let adopted = Set(library.vaults.flatMap { $0.all(.session) }.flatMap { session in
+            (session.body.transcripts ?? []).map { "\(session.body.machine ?? ""):\($0)" }
+        })
+        var found: [Hit] = []
+        for machine in library.machines where machine.alias == nil || library.vaults.contains(where: { $0.machine == machine && $0.online }) {
+            guard await machine.prepare() == nil, !Task.isCancelled else { continue }
+            let ran = await machine.run("\(Helper.path) transcripts search \(quote(query)) --limit 50")
+            found += ran.out.split(separator: "\n").compactMap { line in
+                guard var hit = try? JSONDecoder().decode(Hit.self, from: Data(line.utf8)),
+                      !adopted.contains("\(machine.id):\(hit.path ?? "")") else { return nil }
+                hit.machine = machine.alias
+                hit.vault = (library.vaults.first { $0.machine == machine } ?? library.vaults.first)?.name ?? ""
+                return hit
+            }
+        }
+        return found
     }
 
     /// Every word somewhere in a record's title or text, as the Host's search would want.

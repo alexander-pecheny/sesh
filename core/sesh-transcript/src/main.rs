@@ -7,6 +7,8 @@ use serde_json::{json, Value};
 use sesh_transcript::agent::{transcript_path, Agent};
 use sesh_transcript::follower::{entry_line, Event, Follower, Mux};
 use sesh_transcript::{act, listen};
+use sesh_transcript::index::Index;
+use sesh_transcript::place::place;
 use sesh_transcript::vault::{self, Vault};
 use sesh_transcript::{replay, serve, version, Transcript, PROTOCOL};
 
@@ -27,6 +29,7 @@ const USAGE: &str = "usage: sesh-transcript --version | follow --protocol | foll
        | vault init DIR | vault pull|follow DIR [--since SEQ] | vault push DIR FILE
        | vault size DIR SESSION FILE | vault append DIR SESSION FILE --offset N BYTES_FILE
        | vault copy DIR SESSION --from PATH | vault search DIR QUERY [--limit N]
+       | transcripts search QUERY [--limit N] | transcripts place FILE --agent AGENT [--config DIR] [--fork]
 follow, history and entry take --file PATH --agent AGENT in place of <pane>.";
 
 /// A failed command says why on stderr and exits 1; usage errors exit 2.
@@ -58,6 +61,7 @@ fn main() {
         },
         Some("vault") => vault(rest),
         Some("ask") => ask(rest),
+        Some("transcripts") => transcripts(rest),
         _ => usage(),
     };
     std::process::exit(exit.unwrap_or_else(|message| {
@@ -376,6 +380,32 @@ fn vault(args: &[String]) -> Exit {
         _ => return usage(),
     };
     print_lines(&lines)
+}
+
+fn transcripts(args: &[String]) -> Exit {
+    let fork = args.iter().any(|arg| arg == "--fork");
+    let args: Vec<String> = args.iter().filter(|arg| *arg != "--fork").cloned().collect();
+    let Some((plain, options)) = parse_args(&args, &["limit", "agent", "config"]) else {
+        return usage();
+    };
+    let Ok(limit) = options.get("limit").map(|value| value.parse::<usize>()).transpose() else {
+        return usage();
+    };
+    let Some(home) = std::env::var_os("HOME").map(std::path::PathBuf::from) else {
+        return Err("HOME is not set".into());
+    };
+    match (plain.as_slice(), options.get("agent").and_then(|name| Agent::named(name))) {
+        (["search", query], None) => {
+            let mut index = Index::open(home)?;
+            index.refresh()?;
+            print_lines(&index.search(query, limit)?)
+        }
+        (["place", file], Some(agent)) => {
+            let config = options.get("config").map(Path::new);
+            print_lines(&[place(agent, Path::new(file), &home, config, fork)?.line()])
+        }
+        _ => usage(),
+    }
 }
 
 fn print_events(events: &[Event]) -> Exit {

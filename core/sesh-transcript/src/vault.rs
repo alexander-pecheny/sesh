@@ -348,14 +348,9 @@ impl Vault {
 
     pub fn search(&self, query: &str, limit: Option<usize>) -> Result<Vec<Value>> {
         let limit = limit.unwrap_or(DEFAULT_LIMIT);
-        let words: Vec<String> = query
-            .split_whitespace()
-            .map(|word| format!("\"{}\"", word.replace('"', "\"\"")))
-            .collect();
-        if words.is_empty() {
+        let Some(query) = match_words(query) else {
             return Ok(Vec::new());
-        }
-        let query = words.join(" ");
+        };
         let mut hits: Vec<(f64, Value)> = Vec::new();
         let mut records = self.db.prepare(
             "SELECT r.kind, r.id, IIF(r.kind = 'task', r.id, json_extract(r.body, '$.task')),
@@ -390,6 +385,15 @@ impl Vault {
     }
 }
 
+/// An FTS5 query that wants every word as typed, none read as an operator.
+pub(crate) fn match_words(query: &str) -> Option<String> {
+    let words: Vec<String> = query
+        .split_whitespace()
+        .map(|word| format!("\"{}\"", word.replace('"', "\"\"")))
+        .collect();
+    (!words.is_empty()).then(|| words.join(" "))
+}
+
 const SELECT_RECORD: &str = "SELECT id, kind, body, seq, deleted FROM records";
 
 fn record(row: &rusqlite::Row) -> rusqlite::Result<Record> {
@@ -420,7 +424,7 @@ fn agent_of(path: &Path) -> Result<Option<Agent>> {
     Ok(Some(Agent::wrote(&first)))
 }
 
-fn uuid() -> String {
+pub(crate) fn uuid() -> String {
     let mut bytes = [0u8; 16];
     File::open("/dev/urandom")
         .and_then(|mut random| random.read_exact(&mut bytes))
