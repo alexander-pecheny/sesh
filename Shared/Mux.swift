@@ -16,13 +16,19 @@ enum Mux {
         chmod 755 ~/.sesh/bin/sesh-mux-import
         """
 
-    /// Installs sesh-mux's hooks for each Agent configured on the machine that lacks them. Without
-    /// them sesh-mux never learns a Claude or Codex session id, and the helper cannot find its Transcript.
+    /// Installs sesh-mux's hooks for each Agent configured on the machine that lacks them, and in
+    /// each Claude account folder. Without them sesh-mux never learns a Claude or Codex session id,
+    /// and the helper cannot find its Transcript.
     nonisolated static let integrations = """
         hooks=$(\(command) integration status 2>/dev/null)
-        for agent in claude codex pi; do
+        for agent in codex pi; do
             if [ -d ~/.$agent ] && printf '%s\\n' "$hooks" | grep -q "^$agent: not installed"; then
                 \(command) integration install $agent >/dev/null 2>&1
+            fi
+        done
+        for config in ~/.claude ~/.claude-*; do
+            if [ -d "$config/projects" ] && [ ! -f "$config/hooks/sesh-mux-agent-state.sh" ]; then
+                CLAUDE_CONFIG_DIR="$config" \(command) integration install claude >/dev/null 2>&1
             fi
         done
         true

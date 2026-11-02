@@ -84,10 +84,21 @@ fn a_claude_sesh_mux_never_heard_from_is_found_by_its_folder_alone() {
     scratch.write("sessions/1.json", &[json!({"pid": pid, "sessionId": "abc", "cwd": "/home/u/walrus"})]);
     scratch.write("sessions/2.json", &[json!({"pid": pid, "sessionId": "def", "cwd": "/home/u/seal"})]);
     let pane = |cwd: &str| json!({"pane_id": "w1:p1", "agent": "claude", "agent_session": null, "cwd": cwd});
-    assert_eq!(running_claude(&scratch.0, &pane("/home/u/walrus")), Some(transcript));
-    assert_eq!(running_claude(&scratch.0, &pane("/home/u/otter")), None);
+    let configs = [scratch.0.join("other"), scratch.0.clone()];
+    assert_eq!(running_claude(&configs, &pane("/home/u/walrus")), Some(transcript));
+    assert_eq!(running_claude(&configs, &pane("/home/u/otter")), None);
     scratch.write("sessions/3.json", &[json!({"pid": pid, "sessionId": "ghi", "cwd": "/home/u/walrus"})]);
-    assert_eq!(running_claude(&scratch.0, &pane("/home/u/walrus")), None);
+    assert_eq!(running_claude(&configs, &pane("/home/u/walrus")), None);
+}
+
+#[test]
+fn every_claude_account_under_home_is_searched() {
+    let scratch = Scratch::new("configs");
+    scratch.write(".claude/projects/-a/abc.jsonl", &[]);
+    scratch.write(".claude-work/projects/-a/def.jsonl", &[]);
+    scratch.write(".claude-empty/settings.json", &[]);
+    let configs = claude_configs(&scratch.0);
+    assert!(configs.ends_with(&[scratch.0.join(".claude"), scratch.0.join(".claude-work")]), "{configs:?}");
 }
 
 #[test]
