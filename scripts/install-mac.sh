@@ -18,4 +18,5 @@ fi
 # ditto would keep files the new build dropped, such as a stale pin.
 rsync -a --delete "$app/" /Applications/Sesh.app/
 /System/Library/Frameworks/CoreServices.framework/Frameworks/LaunchServices.framework/Support/lsregister -f /Applications/Sesh.app
-if $was_running; then open /Applications/Sesh.app; fi
+# Started as the Dock would, so it never takes an Agent's CLAUDE_CONFIG_DIR from this shell.
+if $was_running; then env -i HOME="$HOME" USER="$USER" /usr/bin/open /Applications/Sesh.app; fi
