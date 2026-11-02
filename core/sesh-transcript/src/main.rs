@@ -1,6 +1,6 @@
 use std::collections::HashMap;
-use std::io::Write as _;
-use std::path::Path;
+use std::io::{IsTerminal as _, Write as _};
+use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
 
 use serde_json::{json, Value};
@@ -30,6 +30,7 @@ const USAGE: &str = "usage: sesh-transcript --version | follow --protocol | foll
        | vault size DIR SESSION FILE | vault append DIR SESSION FILE --offset N BYTES_FILE
        | vault copy DIR SESSION --from PATH | vault search DIR QUERY [--limit N]
        | transcripts search QUERY [--limit N] | transcripts place FILE --agent AGENT [--config DIR] [--fork]
+       | search WORDS... [--vault NAME] [--limit N]
 follow, history and entry take --file PATH --agent AGENT in place of <pane>.";
 
 /// A failed command says why on stderr and exits 1; usage errors exit 2.
@@ -62,6 +63,7 @@ fn main() {
         Some("vault") => vault(rest),
         Some("ask") => ask(rest),
         Some("transcripts") => transcripts(rest),
+        Some("search") => search(rest),
         _ => usage(),
     };
     std::process::exit(exit.unwrap_or_else(|message| {
@@ -333,6 +335,104 @@ fn background(panes: &[String]) -> Exit {
             .map_err(|err| err.to_string())?;
     }
     Ok(0)
+}
+
+// MARK: search
+
+/// Searches this Host's Vaults for the user, as `vault search` does for the app.
+fn search(args: &[String]) -> Exit {
+    let Some((words, options)) = parse_args(args, &["vault", "limit"]) else {
+        return usage();
+    };
+    let Ok(limit) = options.get("limit").map(|limit| limit.parse::<usize>()).transpose() else {
+        return usage();
+    };
+    if words.is_empty() {
+        return usage();
+    }
+    let root = std::env::var_os("HOME").map(PathBuf::from).unwrap_or_default().join(".sesh/vaults");
+    let names: Vec<String> = match options.get("vault") {
+        Some(name) => vec![name.to_string()],
+        None => {
+            let folders = std::fs::read_dir(&root).map_err(|err| format!("{}: {err}", root.display()))?;
+            let mut names: Vec<String> = folders
+                .flatten()
+                .filter(|folder| folder.path().join("vault.db").exists())
+                .map(|folder| folder.file_name().to_string_lossy().into_owned())
+                .collect();
+            names.sort();
+            names
+        }
+    };
+    let bold = std::io::stdout().is_terminal();
+    let mut out = String::new();
+    for name in &names {
+        let hits = Vault::open(root.join(name), false)?.search(&words.join(" "), limit)?;
+        if names.len() > 1 && !hits.is_empty() {
+            out += &format!("# {name}\n\n");
+        }
+        out += &describe(&hits, bold);
+    }
+    print!("{out}");
+    Ok(0)
+}
+
+/// One entry per Transcript, with every line of it that matched, and one per record.
+fn describe(hits: &[Value], bold: bool) -> String {
+    let copy = |hit: &Value| (hit["kind"] == "transcript").then(|| (hit["session"].clone(), hit["file"].clone()));
+    let mut groups: Vec<Vec<&Value>> = Vec::new();
+    for hit in hits {
+        match copy(hit).and_then(|key| groups.iter_mut().find(|group| copy(group[0]).as_ref() == Some(&key))) {
+            Some(group) => group.push(hit),
+            None => groups.push(vec![hit]),
+        }
+    }
+    groups.iter().map(|group| hit_entry(group, bold)).collect()
+}
+
+fn hit_entry(hits: &[&Value], bold: bool) -> String {
+    let hit = hits[0];
+    let text = |key: &str| hit[key].as_str().filter(|value| !value.is_empty());
+    let title = text("title").unwrap_or("Untitled");
+    let machine = text("machine").unwrap_or("the Mac");
+    let agent = Agent::named(text("agent").unwrap_or_default());
+    let mut head = match hit["kind"].as_str() {
+        Some("transcript") => format!("{title} ({}) on {machine}", agent.map_or("agent", Agent::name)),
+        kind => format!("{title} ({})", kind.unwrap_or_default()),
+    };
+    if let Some(date) = text("date") {
+        head += &format!(", {date}");
+    }
+    let mut out = head + "\n";
+    for hit in hits {
+        out += &format!("  {}\n", marked(hit["snippet"].as_str().unwrap_or_default(), bold));
+    }
+    let id = text("file").unwrap_or_default().trim_end_matches(".jsonl");
+    let resume = match agent {
+        Some(Agent::Claude) => Some(format!("claude --resume {id}")),
+        Some(Agent::Codex) => Some(format!("codex resume {}", &id[id.len().saturating_sub(36)..])),
+        _ => None,
+    };
+    if let (Some(resume), Some(path)) = (resume, text("path")) {
+        out += &format!("  on {machine}: cd '{path}' && {resume}\n");
+    }
+    out + "\n"
+}
+
+/// The snippet on one line, its matches in bold on a terminal.
+fn marked(text: &str, bold: bool) -> String {
+    let text = text.replace('\n', " ");
+    if !bold {
+        return text;
+    }
+    text.split("**")
+        .enumerate()
+        .map(|(index, part)| match index {
+            0 => part.to_string(),
+            _ if index % 2 == 1 => format!("\x1b[1m{part}"),
+            _ => format!("\x1b[22m{part}"),
+        })
+        .collect()
 }
 
 // MARK: vault

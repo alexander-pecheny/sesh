@@ -55,7 +55,9 @@ final class HelperInstaller {
 
     private func install() async -> String? {
         let probed = await run(Self.probe)
-        if let problem = await install(Self.plan(probed, on: title)) { return problem }
+        let plan = Self.plan(probed, on: title)
+        if let problem = await install(plan) { return problem }
+        if plan != .ready { _ = await run(Helper.link) }
         let lines = probed.out.components(separatedBy: "\n")
         guard lines.count > 3 else { return nil }
         let name = Helper.name(lines[0])

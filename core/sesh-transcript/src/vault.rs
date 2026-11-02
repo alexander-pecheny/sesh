@@ -354,34 +354,57 @@ impl Vault {
         let mut hits: Vec<(f64, Value)> = Vec::new();
         let mut records = self.db.prepare(
             "SELECT r.kind, r.id, IIF(r.kind = 'task', r.id, json_extract(r.body, '$.task')),
-                snippet(record_text, -1, '**', '**', '…', ?3), bm25(record_text, 2.0, 1.0) AS score
+                snippet(record_text, -1, '**', '**', '…', ?3), bm25(record_text, 2.0, 1.0) AS score,
+                json_extract(t.body, '$.title'), date(json_extract(r.body, '$.edited') / 1000, 'unixepoch')
             FROM record_text JOIN records r ON r.n = record_text.rowid
+            LEFT JOIN records t ON t.id = IIF(r.kind = 'task', r.id, json_extract(r.body, '$.task'))
             WHERE record_text MATCH ?1 ORDER BY score LIMIT ?2",
         )?;
         let found = records.query_map(params![query, limit as i64, SNIPPET_TOKENS], |row| {
             let hit = json!({"t": "hit", "kind": row.get::<_, String>(0)?,
                 "id": row.get::<_, String>(1)?, "task": row.get::<_, Option<String>>(2)?,
-                "session": null, "item": null, "snippet": row.get::<_, String>(3)?});
+                "session": null, "item": null, "snippet": row.get::<_, String>(3)?,
+                "title": row.get::<_, Option<String>>(5)?, "date": row.get::<_, Option<String>>(6)?});
             Ok((row.get(4)?, hit))
         })?;
         hits.extend(found.collect::<rusqlite::Result<Vec<_>>>()?);
         let mut lines = self.db.prepare(
             "SELECT l.session, l.file, l.item, snippet(line_text, 3, '**', '**', '…', ?3),
-                bm25(line_text) AS score,
-                (SELECT json_extract(body, '$.task') FROM records WHERE id = l.session)
-            FROM line_text l WHERE line_text MATCH ?1 ORDER BY score LIMIT ?2",
+                bm25(line_text) AS score, json_extract(s.body, '$.task'), json_extract(t.body, '$.title'),
+                json_extract(s.body, '$.agent'), json_extract(s.body, '$.machine'), json_extract(s.body, '$.path')
+            FROM line_text l LEFT JOIN records s ON s.id = l.session
+            LEFT JOIN records t ON t.id = json_extract(s.body, '$.task')
+            WHERE line_text MATCH ?1 ORDER BY score LIMIT ?2",
         )?;
         let found = lines.query_map(params![query, limit as i64, SNIPPET_TOKENS], |row| {
             let session: String = row.get(0)?;
             let hit = json!({"t": "hit", "kind": "transcript", "id": session,
                 "task": row.get::<_, Option<String>>(5)?, "session": session,
                 "file": row.get::<_, String>(1)?, "item": row.get::<_, String>(2)?,
-                "snippet": row.get::<_, String>(3)?});
+                "snippet": row.get::<_, String>(3)?, "title": row.get::<_, Option<String>>(6)?,
+                "agent": row.get::<_, Option<String>>(7)?, "machine": row.get::<_, Option<String>>(8)?,
+                "path": row.get::<_, Option<String>>(9)?});
             Ok((row.get(4)?, hit))
         })?;
-        hits.extend(found.collect::<rusqlite::Result<Vec<_>>>()?);
+        for found in found {
+            let (score, mut hit) = found?;
+            hit["date"] = self.changed(&hit["session"], &hit["file"])?.into();
+            hits.push((score, hit));
+        }
         hits.sort_by(|a, b| a.0.total_cmp(&b.0));
         Ok(hits.into_iter().take(limit).map(|(_, hit)| hit).collect())
+    }
+
+    /// The day a Transcript copy last grew, which is when its Agent last wrote.
+    fn changed(&self, session: &Value, file: &Value) -> Result<Option<String>> {
+        let (Some(session), Some(file)) = (session.as_str(), file.as_str()) else {
+            return Ok(None);
+        };
+        let Ok(modified) = std::fs::metadata(self.copy_path(session, file)?).and_then(|meta| meta.modified()) else {
+            return Ok(None);
+        };
+        let secs = modified.duration_since(std::time::UNIX_EPOCH).unwrap_or_default().as_secs() as i64;
+        Ok(self.db.query_row("SELECT date(?1, 'unixepoch')", [secs], |row| row.get(0))?)
     }
 }
 
