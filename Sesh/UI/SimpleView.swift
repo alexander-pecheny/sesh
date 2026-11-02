@@ -181,13 +181,12 @@ struct SimpleView: View {
     }
 }
 
-/// A name and a folder for a new Claude session, which starts with remote control.
+/// The folder a new Claude session starts in, with remote control, named after the folder.
 private struct SimpleStartSheet: View {
     @Environment(\.dismiss) private var dismiss
     @EnvironmentObject private var store: Store
     let host: Host
     let started: (SimpleSession) -> Void
-    @State private var name = ""
     @State private var folder = "~"
     @State private var home: String?
     @State private var picking = false
@@ -197,10 +196,9 @@ private struct SimpleStartSheet: View {
     private var machine: Machine { Machine.of(host) }
 
     var body: some View {
-        SheetForm(title: "New Claude session", action: "Start", enabled: !Names.slug(name).isEmpty && home != nil,
+        SheetForm(title: "New Claude session", action: "Start", enabled: home != nil,
                   working: working, perform: { Task { await start() } }) {
             Section {
-                LabeledField("Name", "groceries", text: $name)
                 Button { picking = true } label: {
                     LabeledContent("Folder") { Text(SimpleView.label(folder)) }
                 }
@@ -224,8 +222,9 @@ private struct SimpleStartSheet: View {
         defer { working = false }
         let path = folder == "~" ? home : folder.hasPrefix("~/") ? home + folder.dropFirst(1) : folder
         if let problem = await machine.prepare() { return self.problem = problem }
-        let slug = Names.free(Names.slug(name), taken: await Mux.agentNames(on: machine))
-        switch await Mux.workspace(path, label: name, on: machine) {
+        let base = Names.slug(folder == "~" ? "home" : (folder as NSString).lastPathComponent)
+        let slug = Names.free(base.isEmpty ? "claude" : base, taken: await Mux.agentNames(on: machine))
+        switch await Mux.workspace(path, label: slug, on: machine) {
         case .failure(let failure): problem = failure.message
         case .success(let opened):
             if let failed = await machine.follower.start(.claude, name: slug, pane: opened.pane, remote: true) {
