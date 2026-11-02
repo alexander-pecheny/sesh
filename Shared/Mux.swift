@@ -26,7 +26,7 @@ enum Mux {
                 \(command) integration install $agent >/dev/null 2>&1
             fi
         done
-        for config in ~/.claude ~/.claude-*; do
+        find ~ -maxdepth 1 -type d \\( -name .claude -o -name '.claude-*' \\) | while read -r config; do
             if [ -d "$config/projects" ] && [ ! -f "$config/hooks/sesh-mux-agent-state.sh" ]; then
                 CLAUDE_CONFIG_DIR="$config" \(command) integration install claude >/dev/null 2>&1
             fi
