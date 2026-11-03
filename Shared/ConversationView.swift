@@ -105,7 +105,7 @@ struct ConversationView: View {
         } message: {
             Text("Sesh found no link for \(title). Remote Control needs Claude on the Host signed in with a Claude plan, not an API key. If it is, look for that name in the Claude app.")
         }
-        .alert("Sesh could not do that", isPresented: Binding(
+        .alert("Sesh could not do that on \(conversation.runner?.title ?? "the Host")", isPresented: Binding(
             get: { conversation.problem != nil }, set: { if !$0 { conversation.problem = nil } }
         )) {
             Button("OK", role: .cancel) {}

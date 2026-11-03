@@ -73,7 +73,7 @@ struct SimpleView: View {
         } message: {
             Text("Sesh found no link for \(lost?.name ?? "this session"). Remote control needs Claude on the Host signed in with a Claude plan, not an API key. If it is, look for that name in the Claude app.")
         }
-        .alert("Sesh could not do that", isPresented: Binding(get: { problem != nil }, set: { if !$0 { problem = nil } })) {
+        .alert("Sesh could not do that on \(host?.title ?? "the Host")", isPresented: Binding(get: { problem != nil }, set: { if !$0 { problem = nil } })) {
             Button("OK", role: .cancel) {}
         } message: {
             Text(problem ?? "")
