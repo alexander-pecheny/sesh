@@ -36,7 +36,10 @@ type Result<T> = std::result::Result<T, String>;
 pub fn start(source: &mut dyn Source, pane: &str, request: &Value) -> Result<()> {
     let name = request["name"].as_str().filter(|name| !name.is_empty()).ok_or("an Agent needs a name")?;
     let agent = request["agent"].as_str().and_then(Agent::named).ok_or("no such Agent")?;
-    if let Some(config) = request["config"].as_str().filter(|config| !config.is_empty() && agent == Agent::Claude) {
+    // Claude reads its settings from ~/.claude.json unless CLAUDE_CONFIG_DIR is set, even to
+    // ~/.claude, where there are none and it asks to log in again.
+    let default = crate::serve::expand("~/.claude");
+    if let Some(config) = request["config"].as_str().filter(|config| !config.is_empty() && agent == Agent::Claude && crate::serve::expand(config) != default) {
         configure(source, pane, config)?;
     }
     let started = launch(source, pane, name, agent, request["args"].clone(), TIMEOUT);
@@ -172,6 +175,16 @@ mod tests {
 
     fn started(source: &mut Starting) -> Result<()> {
         start(source, "w1:p1", &json!({"name": "fix-claude", "agent": "claude", "args": ["--dangerously-skip-permissions"]}))
+    }
+
+    #[test]
+    fn claudes_own_config_folder_is_left_unset() {
+        let mut source = Starting::new(&[], &[claude("idle", true, false)]);
+        let home = std::env::var("HOME").unwrap();
+        for config in ["~/.claude", &format!("{home}/.claude")] {
+            // The test's sesh-mux refuses the export, so setting the folder would fail the start.
+            start(&mut source, "w1:p1", &json!({"name": "fix-claude", "agent": "claude", "config": config})).unwrap();
+        }
     }
 
     #[test]
