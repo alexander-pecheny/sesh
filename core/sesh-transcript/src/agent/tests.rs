@@ -85,10 +85,24 @@ fn a_claude_sesh_mux_never_heard_from_is_found_by_its_folder_alone() {
     scratch.write("sessions/2.json", &[json!({"pid": pid, "sessionId": "def", "cwd": "/home/u/seal"})]);
     let pane = |cwd: &str| json!({"pane_id": "w1:p1", "agent": "claude", "agent_session": null, "cwd": cwd});
     let configs = [scratch.0.join("other"), scratch.0.clone()];
-    assert_eq!(running_claude(&configs, &pane("/home/u/walrus")), Some(transcript));
-    assert_eq!(running_claude(&configs, &pane("/home/u/otter")), None);
+    assert_eq!(running_claude(&configs, &pane("/home/u/walrus"), Path::new("/proc")), Some(transcript));
+    assert_eq!(running_claude(&configs, &pane("/home/u/otter"), Path::new("/proc")), None);
     scratch.write("sessions/3.json", &[json!({"pid": pid, "sessionId": "ghi", "cwd": "/home/u/walrus"})]);
-    assert_eq!(running_claude(&configs, &pane("/home/u/walrus")), None);
+    assert_eq!(running_claude(&configs, &pane("/home/u/walrus"), Path::new("/proc")), None);
+}
+
+#[test]
+fn a_lone_claude_in_the_folder_is_not_taken_for_another_panes() {
+    let scratch = Scratch::new("placed");
+    let transcript = scratch.write("projects/-home-u-walrus/abc.jsonl", &[]);
+    scratch.write("sessions/7.json", &[json!({"pid": 7, "sessionId": "abc", "cwd": "/home/u/walrus"})]);
+    let proc = scratch.0.join("proc");
+    std::fs::create_dir_all(proc.join("7")).unwrap();
+    std::fs::write(proc.join("7/environ"), "HOME=/home/u\0SESH_MUX_PANE_ID=w1:p2\0").unwrap();
+    let pane = |id: &str| json!({"pane_id": id, "agent": "claude", "agent_session": null, "cwd": "/home/u/walrus"});
+    let configs = [scratch.0.clone()];
+    assert_eq!(running_claude(&configs, &pane("w1:p1"), &proc), None);
+    assert_eq!(running_claude(&configs, &pane("w1:p2"), &proc), Some(transcript));
 }
 
 #[test]
