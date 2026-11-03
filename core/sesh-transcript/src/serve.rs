@@ -43,6 +43,10 @@ const TAKEN: usize = 64;
 
 type Result<T> = std::result::Result<T, String>;
 
+fn ended() -> [Event; 2] {
+    [Event::State("ended".into()), Event::Live(Default::default())]
+}
+
 /// The follower's protocol and its Session log's schema, as in `p4-s1`, which name its folder:
 /// every helper build that shares both runs the same follower (ADR 0014).
 pub fn follower() -> String {
@@ -121,12 +125,15 @@ pub struct Machine {
     now: Instant,
     /// The ids of the requests taken lately, which a device that heard no answer asks again.
     taken: VecDeque<String>,
+    /// When this follower first listed the panes, until it has ended the sessions an earlier
+    /// follower left as running.
+    first: Option<Instant>,
 }
 
 impl Machine {
     pub fn new(log: Log, source: Shared) -> Self {
         let (hands, failed): (Hands, _) = (Arc::new(|| Box::new(Mux)), mpsc::channel());
-        Machine { log, source, sessions: HashMap::new(), panes: Vec::new(), hands, acts: HashMap::new(), playing: Arc::default(), leaving: None, failed, now: Instant::now(), taken: VecDeque::new() }
+        Machine { log, source, sessions: HashMap::new(), panes: Vec::new(), hands, acts: HashMap::new(), playing: Arc::default(), leaving: None, failed, now: Instant::now(), taken: VecDeque::new(), first: Some(Instant::now()) }
     }
 
     pub fn with_hands(self, hands: Hands) -> Self {
@@ -144,6 +151,7 @@ impl Machine {
     /// One look at every pane: new Agents are met, known ones followed, gone ones ended.
     pub fn tick(&mut self, panes: &[Value], now: Instant) -> Result<()> {
         (self.panes, self.now) = (panes.to_vec(), now);
+        let first = *self.first.get_or_insert(now);
         while let Ok((session, request)) = self.failed.1.try_recv() {
             let Some(followed) = self.sessions.get_mut(&session) else { continue };
             match (request["id"].as_str(), request["lost"].as_str()) {
@@ -196,10 +204,26 @@ impl Machine {
             .collect();
         for key in gone {
             let mut followed = self.sessions.remove(&key).expect("listed above");
-            followed.writer.apply(&self.log, &[Event::State("ended".into()), Event::Live(Default::default())], None)?;
+            followed.writer.apply(&self.log, &ended(), None)?;
+        }
+        if self.first.is_some() && now.duration_since(first) > GONE_AFTER {
+            self.first = None;
+            self.end_left_over()?;
         }
         for (session, request) in hands {
             self.play(&session, request, mpsc::channel().0);
+        }
+        Ok(())
+    }
+
+    /// Ends every session the log holds as running that no Agent here runs: a follower that
+    /// stopped with sesh-mux, or before its Agent did, could not say so itself.
+    fn end_left_over(&mut self) -> Result<()> {
+        for summary in self.log.sessions_since(0)? {
+            let Some(key) = summary["session"].as_str() else { continue };
+            if summary["state"] != "ended" && !self.sessions.contains_key(key) {
+                Writer::new(key, &self.log)?.apply(&self.log, &ended(), None)?;
+            }
         }
         Ok(())
     }
@@ -1083,6 +1107,26 @@ mod tests {
         let items = machine.log.last("w1:p1", 10).unwrap();
         std::fs::remove_dir_all(&dir).unwrap();
         assert_eq!(items, Vec::<Value>::new());
+    }
+
+    #[test]
+    fn a_session_an_earlier_follower_left_running_ends_once_no_agent_runs_it() {
+        let dir = std::env::temp_dir().join(format!("sesh-left-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let log = Log::open(&dir.join("sessions.db")).unwrap();
+        for key in ["w1:p1", "w1:p2"] {
+            log.put_session(key, &json!({"agent": "codex", "state": "done"})).unwrap();
+        }
+        let panes = [json!({"pane_id": "w1:p1", "agent": "codex", "agent_status": "idle"}), json!({"pane_id": "w1:p2"})];
+        let mut machine = Machine::new(log, Shared(Rc::new(RefCell::new(Quiet))));
+        let start = Instant::now();
+        machine.tick(&panes, start).unwrap();
+        let early = machine.log.session("w1:p2").unwrap().unwrap()["state"].clone();
+        machine.tick(&panes, start + GONE_AFTER + TICK).unwrap();
+        let state = |key| machine.log.session(key).unwrap().unwrap()["state"].clone();
+        let (running, left) = (state("w1:p1"), state("w1:p2"));
+        std::fs::remove_dir_all(&dir).unwrap();
+        assert_eq!((early, running, left), (json!("done"), json!("idle"), json!("ended")));
     }
 
     #[test]
