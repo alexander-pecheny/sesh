@@ -10,6 +10,8 @@ struct ConversationView: View {
     var hidden = false
     /// Starts the Agent again, for a session whose Agent has stopped or a found Transcript.
     var resume: ((Resumption) async -> Void)?
+    /// Whether the Library is starting the Agent again, which outlasts this view.
+    var resuming = false
     /// The other machines it can start again on.
     var elsewhere: [Machine] = []
     /// What the bar says in place of "This Agent session has ended."
@@ -58,7 +60,7 @@ struct ConversationView: View {
                     BackgroundLine(conversation: conversation)
                     MessageBox(conversation: conversation, outbox: conversation.outbox, fresh: fresh, hidden: hidden)
                 } else if let resume {
-                    EndedBar(agent: conversation.agent?.title ?? "The Agent", note: ended, elsewhere: elsewhere, resume: resume)
+                    EndedBar(agent: conversation.agent?.title ?? "The Agent", note: ended, elsewhere: elsewhere, resume: resume, starting: resuming)
                 }
             }
         }
@@ -194,6 +196,7 @@ struct ConversationView: View {
 
     private var stateLabel: String {
         let agent = conversation.agent?.title ?? "Agent"
+        if resuming { return "Resuming \(agent)…" }
         if resume != nil { return "Ended" }
         if conversation.starting { return "Starting \(agent)" }
         let over = conversation.runner?.carrier.map { " over \($0)" } ?? ""
@@ -638,13 +641,15 @@ private struct EndedBar: View {
     let note: String
     let elsewhere: [Machine]
     let resume: (Resumption) async -> Void
-    @State private var resuming = false
+    let starting: Bool
+    @State private var pressed = false
+    private var resuming: Bool { pressed || starting }
 
     private func run(_ resumption: Resumption) {
-        resuming = true
+        pressed = true
         Task {
             await resume(resumption)
-            resuming = false
+            pressed = false
         }
     }
 

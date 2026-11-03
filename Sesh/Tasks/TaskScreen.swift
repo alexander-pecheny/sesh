@@ -183,7 +183,8 @@ private struct SessionScreen: View {
                 }
             } else if let conversation, let session = vault.records[id] {
                 ConversationView(conversation: conversation, title: session.body.title ?? "Agent session", fresh: false,
-                                 resume: conversation.pane == nil && library.ended(session) ? { await library.resume(session, as: $0) } : nil,
+                                 resume: conversation.pane == nil && library.resumable(session) ? { await library.resume(session, as: $0) } : nil,
+                                 resuming: library.resuming.contains(session.id),
                                  elsewhere: library.machines.filter { $0.alias != session.body.machine },
                                  place: place(of: session))
                     .id(ObjectIdentifier(conversation))

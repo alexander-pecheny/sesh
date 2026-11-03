@@ -148,6 +148,7 @@ final class Library: ObservableObject {
         } else {
             running = await runs(session, on: machine)
         }
+        resuming.remove(session.id)
         let conversation: Conversation
         if !running, let vault = vault(of: session.id), let last = session.body.transcripts?.last, let agent {
             let copy = "\(vault.folder)/transcripts/\(session.id)/\((last as NSString).lastPathComponent)"
@@ -288,6 +289,9 @@ final class Library: ObservableObject {
         name(from: read)
         for (key, last) in read.last where active[key] != last { active[key] = last }
         if panes != read { panes = read }
+        for id in resuming {
+            if let session = vault(of: id)?.records[id], listsLive(session) { resuming.remove(id) }
+        }
         // One failed look at a pane opens its copy, which has no message box; the poll knows better.
         for (id, conversation) in conversations where conversation.pane == nil {
             if let session = vault(of: id)?.records[id], listsLive(session) {
@@ -462,10 +466,14 @@ final class Library: ObservableObject {
 
     /// The machines whose Agents the last poll listed, by alias, "" for the Mac.
     @Published private(set) var listed: Set<String> = []
-    /// Agent sessions being started again, which sesh-mux lists only once their Agent is up.
+    /// Agent sessions being started again, until their Conversation is loaded afresh, as sesh-mux
+    /// lists each only once its Agent is up.
     @Published private(set) var resuming: Set<String> = []
     /// Bumped when a session's Conversation must be loaded afresh, from its pane or its copy.
     @Published private(set) var reloads: [String: Int] = [:]
+
+    /// Whether the session shows its Resume bar: its Agent has stopped, or is being started again.
+    func resumable(_ session: Record) -> Bool { ended(session) || resuming.contains(session.id) }
 
     /// Whether a session's Agent has stopped: its machine answered and no longer lists it.
     func ended(_ session: Record) -> Bool {
@@ -527,8 +535,8 @@ final class Library: ObservableObject {
     func resume(_ session: Record) async {
         guard let vault = vault(of: session.id), let task = session.body.task.flatMap({ vault.records[$0] }) else { return }
         resuming.insert(session.id)
-        defer { resuming.remove(session.id) }
         if let problem = await TaskActions.resume(vault.records[session.id] ?? session, of: task, in: vault) {
+            resuming.remove(session.id)
             resumeProblem = problem
             return
         }

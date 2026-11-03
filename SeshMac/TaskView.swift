@@ -217,9 +217,10 @@ private struct SessionTab: View {
         // The Conversation stays laid out under the terminal, so coming back costs no layout.
         ZStack {
             if let conversation, let session = vault.records[id] {
-                let ended = conversation.pane == nil && library.ended(session)
+                let resumable = conversation.pane == nil && library.resumable(session)
                 ConversationView(conversation: conversation, title: session.body.title ?? "Agent session", fresh: false, hidden: terminal,
-                                 resume: ended ? { await library.resume(session, as: $0) } : nil,
+                                 resume: resumable ? { await library.resume(session, as: $0) } : nil,
+                                 resuming: library.resuming.contains(session.id),
                                  elsewhere: library.machines.filter { $0.alias != session.body.machine })
                     .id(ObjectIdentifier(conversation))
                     .opacity(terminal ? 0 : 1)
