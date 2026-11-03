@@ -41,3 +41,10 @@ contains = ["active"]
 "#;
     assert!(parse_manifest(manifest).is_err());
 }
+
+#[test]
+fn claude_waiting_for_a_login_code_is_blocked() {
+    let screen = " Browser didn't open? Use the url below to sign in (c to copy)\n\nhttps://claude.com/cai/oauth/authorize?code=true\n\n Paste code here if prompted >\n";
+    let detection = detect_with_osc(Agent::Claude, DetectionInput { screen, osc_title: "", osc_progress: "" });
+    assert_eq!(detection.state, AgentState::Blocked);
+}
