@@ -196,6 +196,8 @@ private struct FolderRow: View {
             Children(vault: vault, parent: folder.id, naming: $naming)
         } label: {
             Label(folder.body.title ?? "Folder", systemImage: "folder")
+                // A folder only holds Tasks; work happens in a Task.
+                .selectionDisabled()
                 .draggable(folder.id)
                 .dropDestination(for: String.self) { ids, _ in Tree.move(ids, into: folder.id, in: vault) }
                 .contextMenu {

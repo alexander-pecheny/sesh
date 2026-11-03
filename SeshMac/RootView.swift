@@ -14,7 +14,7 @@ struct RootView: View {
         } detail: {
             if !search.query.trimmingCharacters(in: .whitespaces).isEmpty {
                 SearchView(search: search)
-            } else if let id = library.selection, let vault = library.vault(of: id) {
+            } else if let id = library.selection, let vault = library.vault(of: id), vault.records[id]?.kind == .task {
                 TaskView(vault: vault, id: id).id(id)
             } else {
                 Text(library.vaults.isEmpty ? "Add a Vault to keep Tasks in." : "Pick a Task")
