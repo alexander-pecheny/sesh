@@ -129,7 +129,7 @@ final class Library: ObservableObject {
     /// The live pane while its machine has it; otherwise the Vault's copy of the last Transcript.
     func conversation(for session: Record) async -> Conversation {
         // An Agent that died while its Tab was hidden left its pane's Conversation cached.
-        if let known = conversations[session.id], known.pane == nil ? panes.live[key(session)] == nil : !ended(session) { return known }
+        if let known = conversations[session.id], known.pane == nil ? !listsLive(session) : !ended(session) { return known }
         conversations.removeValue(forKey: session.id)?.unfollow()
         let machine = TaskActions.machine(session.body.machine)
         let agent = session.body.agent.flatMap(Agent.init)
@@ -168,6 +168,7 @@ final class Library: ObservableObject {
         conversation.draft = drafts[session.id] ?? ""
         conversation.links = vault(of: session.id)?.settings.body.links ?? []
         conversation.saveDraft = { [weak self] text in self?.saveDraft(text, for: session.id) }
+        conversation.stoppedAfterRefusal = { [weak self] in await self?.stoppedAfterRefusal(session) ?? false }
         if let folder = session.body.path {
             Task { [weak conversation] in
                 let remote = await machine.run("git -C \(quote(folder)) remote get-url origin")
@@ -193,7 +194,7 @@ final class Library: ObservableObject {
 
     /// Whether the session's pane still runs its Agent; a pane whose Agent exited is a bare shell.
     private func runs(_ session: Record, on machine: Machine) async -> Bool {
-        if panes.live[key(session)] != nil { return true }
+        if listsLive(session) { return true }
         _ = await machine.prepare()
         if case .found(let pane) = await Mux.look(for: session.body.pane ?? "", on: machine) { return pane.agent != nil }
         return false
@@ -289,7 +290,7 @@ final class Library: ObservableObject {
         if panes != read { panes = read }
         // One failed look at a pane opens its copy, which has no message box; the poll knows better.
         for (id, conversation) in conversations where conversation.pane == nil {
-            if let session = vault(of: id)?.records[id], panes.live[key(session)] != nil {
+            if let session = vault(of: id)?.records[id], listsLive(session) {
                 stopped.remove(id)
                 reload(id)
             }
@@ -468,7 +469,29 @@ final class Library: ObservableObject {
 
     /// Whether a session's Agent has stopped: its machine answered and no longer lists it.
     func ended(_ session: Record) -> Bool {
-        !resuming.contains(session.id) && reachable(session) && panes.live[key(session)] == nil
+        !resuming.contains(session.id) && reachable(session) && !listsLive(session)
+    }
+
+    /// Whether the follower lists the session's Agent as running, and has said something new of
+    /// it since the Agent last refused a message.
+    private func listsLive(_ session: Record) -> Bool {
+        panes.live[key(session)].map { $0 != refused[session.id] } ?? false
+    }
+
+    /// Sessions whose pane held no Agent when it refused a message, with what the follower then
+    /// said of it, which a follower started after its Agent stopped can keep saying.
+    private var refused: [String: Panes.Live] = [:]
+
+    /// Ends the session in Sesh's eyes if its pane no longer runs its Agent.
+    private func stoppedAfterRefusal(_ session: Record) async -> Bool {
+        switch await Mux.look(for: session.body.pane ?? "", on: TaskActions.machine(session.body.machine)) {
+        case .found(let pane) where pane.agent != nil: return false
+        case .unreachable: return false
+        case .found, .gone: break
+        }
+        refused[session.id] = panes.live[key(session)]
+        reload(session.id)
+        return true
     }
 
     /// Whether the session's machine answers, so Sesh knows whether its Agent runs.
@@ -510,6 +533,7 @@ final class Library: ObservableObject {
             return
         }
         stopped.remove(session.id)
+        refused[session.id] = nil
         reload(session.id)
     }
 

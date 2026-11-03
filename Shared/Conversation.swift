@@ -58,6 +58,8 @@ final class Conversation: ObservableObject {
     /// Opens a file the Agent named, relative paths taken from the Agent's folder; nil where
     /// there is nowhere to open it.
     var openPath: ((String) -> Void)?
+    /// Whether the Agent that refused a message has stopped, which the Library then shows as ended.
+    var stoppedAfterRefusal: (() async -> Bool)?
     /// The repository the Agent works in, for linking `#213` to its pull request.
     @Published var repo: Repo?
     /// The Vault's rules for linking text such as `SRCH-9049`.
@@ -379,8 +381,8 @@ final class Conversation: ObservableObject {
     private func deliver(_ text: String, _ send: () async -> String?) async {
         outbox.sending += 1
         if let failed = await send() {
-            problem = failed
             takeBack(text)
+            if await stoppedAfterRefusal?() != true { problem = failed }
         }
         outbox.sending -= 1
     }
