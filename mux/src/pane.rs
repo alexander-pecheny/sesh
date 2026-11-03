@@ -1668,6 +1668,17 @@ fn windows_login_shell_args(shell: &str) -> &'static [&'static str] {
     }
 }
 
+/// The pane's shell running `command` once its startup files have run, rather than typed into
+/// it while they still run and may swallow the input.
+pub(crate) fn pane_shell_command_argv(shell_config: PaneShellConfig<'_>, command: &str) -> Vec<String> {
+    let mut argv = vec![pane_shell(shell_config.default_shell)];
+    if shell_mode_uses_login_shell(shell_config.mode, ShellLaunchTarget::current()) {
+        argv.push("-l".into());
+    }
+    argv.extend(["-i".into(), "-c".into(), command.into()]);
+    argv
+}
+
 fn pane_shell_command_builder_for_target(
     shell_config: PaneShellConfig<'_>,
     target: ShellLaunchTarget,

@@ -1,7 +1,5 @@
 use std::time::Instant;
 
-use bytes::Bytes;
-
 use super::App;
 
 struct PendingAgentResumeCandidate {
@@ -196,16 +194,19 @@ impl App {
             return true;
         }
 
-        let runtime = match crate::terminal::TerminalRuntime::spawn(
+        let shell = crate::pane::PaneShellConfig::new(&self.state.default_shell, self.state.shell_mode);
+        let argv = crate::pane::pane_shell_command_argv(shell, &resume_command);
+        let runtime = match crate::terminal::TerminalRuntime::spawn_argv_command(
             pane_id,
             rows,
             cols,
             cwd,
+            &argv,
+            &launch_env,
+            crate::pane::AgentDetection::Enabled,
             self.state.pane_scrollback_limit_bytes,
             host_terminal_theme,
             self.state.host_terminal_appearance,
-            crate::pane::PaneShellConfig::new(&self.state.default_shell, self.state.shell_mode),
-            &launch_env,
             self.event_tx.clone(),
             self.render_notify.clone(),
             self.render_dirty.clone(),
@@ -228,24 +229,10 @@ impl App {
             }
         };
 
-        let mut input = resume_command;
-        input.push('\r');
-        if let Err(err) = runtime.try_send_bytes(Bytes::from(input)) {
-            tracing::warn!(
-                pane = pane_id.raw(),
-                terminal = %terminal_id,
-                agent = %plan.agent,
-                err = %err,
-                "failed to send deferred agent resume command to shell"
-            );
-            runtime.shutdown();
-            return false;
-        }
-
         self.terminal_runtimes.insert(terminal_id.clone(), runtime);
         if let Some(terminal) = self.state.terminals.get_mut(&terminal_id) {
             terminal.pending_agent_resume_plan = None;
-            terminal.respawn_shell_on_exit = false;
+            terminal.respawn_shell_on_exit = true;
         }
         true
     }
