@@ -289,7 +289,9 @@ impl Parser {
         let (Some(call), Some(status)) = (call, tag("status").or(expired.then(|| "expired".into()))) else {
             return;
         };
-        if status != "running" {
+        // A subagent that stops with shells of its own still running reports "completed" early.
+        let interim = text.contains("background work of its own still running");
+        if status != "running" && !interim {
             self.background.retain(|work| work.call != call);
         }
     }

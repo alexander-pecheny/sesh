@@ -588,6 +588,18 @@ fn an_agent_claude_sent_to_the_background_unasked_counts_until_its_notification(
 }
 
 #[test]
+fn an_agent_waiting_on_its_own_background_work_still_counts() {
+    let at = "2026-11-04T18:11:51.611Z";
+    let launch = json!({"type":"assistant","timestamp":at,"message":{"content":[{"type":"tool_use","id":"toolu_r","name":"Agent",
+        "input":{"description":"Re-extract features","prompt":"...","run_in_background":true}}]}});
+    let notice = |status: &str, note: &str| json!({"type":"user","timestamp":at,"origin":{"kind":"task-notification"},"message":{"role":"user",
+        "content":format!("<task-notification>\n<tool-use-id>toolu_r</tool-use-id>\n<status>{status}</status>\n{note}</task-notification>")}});
+    let interim = notice("completed", "<note>This agent stopped with background work of its own still running.</note>\n");
+    assert_eq!(parse(Agent::Claude, &[launch.clone(), interim.clone()]).background().len(), 1);
+    assert!(parse(Agent::Claude, &[launch, interim, notice("completed", "")]).background().is_empty());
+}
+
+#[test]
 fn a_command_moved_to_the_background_after_it_started_counts_until_its_notification() {
     let at = "2026-10-28T12:02:00.000Z";
     let start = json!({"type":"assistant","timestamp":at,"message":{"content":[{"type":"tool_use","id":"toolu_u","name":"Bash",
