@@ -35,6 +35,9 @@ unicode-width = "0.2"
 unicode-segmentation = "1.13.1"
 schemars = { version = "1.2.1", features = ["derive"] }
 
+[target.'cfg(target_env = "musl")'.dependencies]
+mimalloc = { version = "0.1", default-features = false }
+
 [target.'cfg(target_os = "linux")'.dependencies]
 # logind's delay inhibitor lets the server save before host shutdown kills panes.
 zbus = { version = "5.19", default-features = false, features = ["tokio"] }

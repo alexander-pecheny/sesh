@@ -11,6 +11,7 @@ pub(crate) struct ClientRenderState {
     blit_encoder: BlitEncoder,
     seq: u64,
     repaint_pending: bool,
+    screen: Option<ratatui::Terminal<CursorTrackingBackend>>,
 }
 
 impl ClientRenderState {
@@ -19,6 +20,7 @@ impl ClientRenderState {
             blit_encoder: BlitEncoder::new(),
             seq: 0,
             repaint_pending: false,
+            screen: None,
         }
     }
 
@@ -29,6 +31,49 @@ impl ClientRenderState {
 
     pub(crate) fn request_repaint(&mut self) {
         self.repaint_pending = true;
+    }
+
+    /// Renders into a screen kept between frames, so frames reuse its buffers.
+    pub(crate) fn render_terminal(
+        &mut self,
+        runtime: &crate::terminal::TerminalRuntime,
+        area: Rect,
+    ) -> (&ratatui::buffer::Buffer, Option<CursorState>) {
+        if self
+            .screen
+            .as_ref()
+            .is_none_or(|screen| screen.backend().buffer().area != area)
+        {
+            let backend = CursorTrackingBackend::new(area.width, area.height);
+            self.screen =
+                Some(ratatui::Terminal::new(backend).expect("TestBackend::new should never fail"));
+        }
+        let terminal = self.screen.as_mut().expect("screen was just set");
+        let suppress_cursor = runtime.synchronized_output_active();
+        terminal
+            .draw(|frame| {
+                runtime.render(frame, area, true);
+            })
+            .expect("render to TestBackend should never fail");
+
+        let cursor = (!suppress_cursor)
+            .then(|| runtime.cursor_state(area, true))
+            .flatten()
+            .map(|cursor| CursorState {
+                x: cursor.x,
+                y: cursor.y,
+                visible: cursor.visible
+                    && runtime
+                        .scroll_metrics()
+                        .is_none_or(|metrics| metrics.offset_from_bottom == 0),
+                shape: cursor.shape,
+            })
+            .or_else(|| {
+                (!suppress_cursor)
+                    .then(|| terminal.backend().rendered_cursor())
+                    .flatten()
+            });
+        (terminal.backend().buffer(), cursor)
     }
 
     pub(crate) fn prepare_frame(&mut self, frame: FrameData) -> Option<PreparedRender> {
@@ -152,39 +197,3 @@ impl Backend for CursorTrackingBackend {
     }
 }
 
-/// Renders one server-owned terminal directly for `terminal attach` clients.
-pub(crate) fn render_terminal_virtual(
-    runtime: &crate::terminal::TerminalRuntime,
-    area: Rect,
-) -> (ratatui::buffer::Buffer, Option<CursorState>) {
-    let suppress_cursor = runtime.synchronized_output_active();
-    let backend = CursorTrackingBackend::new(area.width, area.height);
-    let mut terminal = ratatui::Terminal::new(backend).expect("TestBackend::new should never fail");
-
-    terminal
-        .draw(|frame| {
-            runtime.render(frame, area, true);
-        })
-        .expect("render to TestBackend should never fail");
-
-    let buffer = terminal.backend().buffer().clone();
-    let cursor = (!suppress_cursor)
-        .then(|| runtime.cursor_state(area, true))
-        .flatten()
-        .map(|cursor| CursorState {
-            x: cursor.x,
-            y: cursor.y,
-            visible: cursor.visible
-                && runtime
-                    .scroll_metrics()
-                    .is_none_or(|metrics| metrics.offset_from_bottom == 0),
-            shape: cursor.shape,
-        })
-        .or_else(|| {
-            (!suppress_cursor)
-                .then(|| terminal.backend().rendered_cursor())
-                .flatten()
-        });
-
-    (buffer, cursor)
-}

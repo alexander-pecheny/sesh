@@ -1,5 +1,7 @@
 use ratatui::layout::Rect;
 
+use crate::protocol::modifier_to_u16;
+
 use super::*;
 
 impl HeadlessServer {
@@ -123,7 +125,10 @@ impl HeadlessServer {
         let mut broken_clients = Vec::new();
         for (client_id, (cols, rows), terminal_id) in targets {
             let area = Rect::new(0, 0, cols, rows);
-            let Some(runtime) = self.runtime_for_terminal_id_string(&terminal_id) else {
+            let runtime = self
+                .terminal_id_by_string(&terminal_id)
+                .and_then(|id| self.app.terminal_runtimes.get(&id));
+            let (Some(runtime), Some(client)) = (runtime, self.clients.get_mut(&client_id)) else {
                 self.send_to_client(
                     client_id,
                     ServerMessage::ServerShutdown {
@@ -135,34 +140,27 @@ impl HeadlessServer {
                 broken_clients.push(client_id);
                 continue;
             };
-            let (mut buffer, cursor) =
-                crate::server::render_stream::render_terminal_virtual(runtime, area);
-            if let Some(selection) = self
-                .clients
-                .get(&client_id)
-                .and_then(|client| client.attach_selection.selection())
+            let (buffer, cursor) = client.render_state.render_terminal(runtime, area);
+            let hyperlinks = runtime.visible_hyperlinks(area);
+            let mut frame =
+                FrameData::from_ratatui_buffer_with_hyperlinks(buffer, cursor, &hyperlinks);
+            if let Some(selection) = client
+                .attach_selection
+                .selection()
                 .filter(|selection| selection.is_visible())
             {
                 let scroll = runtime.scroll_metrics();
+                let reversed = modifier_to_u16(ratatui::style::Modifier::REVERSED);
                 for y in 0..area.height {
                     for x in 0..area.width {
                         if selection.contains(y, x, scroll) {
-                            let cell = &mut buffer[(x, y)];
-                            cell.set_style(
-                                cell.style()
-                                    .add_modifier(ratatui::style::Modifier::REVERSED),
-                            );
+                            frame.cells[usize::from(y) * usize::from(area.width) + usize::from(x)]
+                                .modifier |= reversed;
                         }
                     }
                 }
             }
-            let hyperlinks = runtime.visible_hyperlinks(area);
-            let frame =
-                FrameData::from_ratatui_buffer_with_hyperlinks(&buffer, cursor, &hyperlinks);
 
-            let Some(client) = self.clients.get_mut(&client_id) else {
-                continue;
-            };
             let Some(writer) = client.writer.as_ref().cloned() else {
                 continue;
             };

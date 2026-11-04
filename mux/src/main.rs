@@ -1,5 +1,10 @@
 use std::io;
 
+// musl's allocator unmaps freed blocks at once, and every unmap flushes the TLB on all CPUs.
+#[cfg(target_env = "musl")]
+#[global_allocator]
+static GLOBAL: mimalloc::MiMalloc = mimalloc::MiMalloc;
+
 mod agent_resume;
 mod api;
 mod app;
