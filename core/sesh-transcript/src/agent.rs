@@ -134,42 +134,10 @@ pub fn transcript_path(pane: &Value) -> Option<String> {
     // A sesh-mux that names no session gets no guess: the newest Transcript in the pane's
     // folder is as often an older session's as the one running.
     if session["kind"] != "id" {
-        let configs = claude_configs(&PathBuf::from(std::env::var_os("HOME")?));
-        return (Agent::of(pane) == Some(Agent::Claude)).then(|| running_claude(&configs, pane, Path::new("/proc"))).flatten()
-            .map(|path| path.to_string_lossy().into_owned());
+        return None;
     }
     let agent = Agent::named(session["agent"].as_str()?)?;
     Some(agent.locate(session["value"].as_str()?)?.to_string_lossy().into_owned())
-}
-
-/// The Transcript of a Claude that started before sesh-mux's hook was installed, from the record
-/// Claude keeps of each running session: the one whose process runs in the pane, or else the
-/// only one in the pane's folder that runs in no pane.
-fn running_claude(configs: &[PathBuf], pane: &Value, proc: &Path) -> Option<PathBuf> {
-    let folders = [pane["foreground_cwd"].as_str(), pane["cwd"].as_str()];
-    let running: Vec<(&PathBuf, Value)> = configs
-        .iter()
-        .flat_map(|config| std::fs::read_dir(config.join("sessions")).into_iter().flatten().flatten().map(move |entry| (config, entry)))
-        .filter_map(|(config, entry)| Some((config, serde_json::from_slice(&std::fs::read(entry.path()).ok()?).ok()?)))
-        .filter(|(_, session): &(_, Value)| session["cwd"].as_str().is_some_and(|cwd| folders.contains(&Some(cwd))))
-        .filter(|(_, session)| !proc.exists() || session["pid"].as_u64().is_some_and(|pid| proc.join(pid.to_string()).exists()))
-        .collect();
-    // A shell herdr-sesh started, and so an Agent run in it, knows its pane by herdr's name.
-    let panes_of = |(_, session): &&(&PathBuf, Value)| -> Vec<String> {
-        let env = std::fs::read(proc.join(format!("{}/environ", session["pid"].as_u64().unwrap_or_default()))).unwrap_or_default();
-        env.split(|byte| *byte == 0)
-            .filter_map(|var| std::str::from_utf8(var).ok())
-            .filter_map(|var| var.strip_prefix("SESH_MUX_PANE_ID=").or_else(|| var.strip_prefix("HERDR_PANE_ID=")).map(str::to_string))
-            .collect()
-    };
-    let here = pane["pane_id"].as_str().unwrap_or_default();
-    // A lone Claude that another pane runs is that pane's, not this one's.
-    let unplaced: Vec<_> = running.iter().filter(|session| panes_of(session).is_empty()).collect();
-    let (config, session) = running.iter().find(|session| panes_of(session).iter().any(|pane| pane == here)).or(match unplaced.as_slice() {
-        [one] => Some(*one),
-        _ => None,
-    })?;
-    Agent::Claude.find(&config.join("projects"), session["sessionId"].as_str()?)
 }
 
 /// Every folder Claude keeps an account in: `CLAUDE_CONFIG_DIR` first, then each `~/.claude*`.

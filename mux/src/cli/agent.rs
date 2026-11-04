@@ -125,6 +125,7 @@ fn agent_start(args: &[String]) -> std::io::Result<i32> {
                 kind: kind.clone(),
                 pane_id: pane_id.clone(),
                 args: agent_args.clone(),
+                env: Default::default(),
                 timeout_ms,
             }),
         })?;

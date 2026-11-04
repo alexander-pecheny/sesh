@@ -93,6 +93,14 @@ pub fn persisted_session_from_launch_args(
     agent: crate::detect::Agent,
     args: &[String],
 ) -> Option<PersistedAgentSession> {
+    if agent == crate::detect::Agent::Claude {
+        let at = args.iter().position(|arg| arg == "--session-id")?;
+        return Some(PersistedAgentSession {
+            source: "sesh-mux:claude".into(),
+            agent: "claude".into(),
+            session_ref: AgentSessionRef::id(args.get(at + 1)?.clone())?,
+        });
+    }
     let [command, session_id] = args else {
         return None;
     };
@@ -279,6 +287,14 @@ mod tests {
             ]
         )
         .is_none());
+    }
+
+    #[test]
+    fn claude_launch_with_a_session_id_names_its_session() {
+        let args = ["--remote-control".into(), "x".into(), "--session-id".into(), "5c91096a-1a44-4e89-93ba-28c19f080748".into()];
+        let session = persisted_session_from_launch_args(crate::detect::Agent::Claude, &args).unwrap();
+        assert_eq!((session.source.as_str(), session.session_ref.value.as_str()), ("sesh-mux:claude", "5c91096a-1a44-4e89-93ba-28c19f080748"));
+        assert!(persisted_session_from_launch_args(crate::detect::Agent::Claude, &["--resume".into(), "x".into()]).is_none());
     }
 
     #[test]

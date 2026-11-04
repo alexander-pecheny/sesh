@@ -12,7 +12,9 @@ enum Agent: String, CaseIterable, Identifiable {
     func args(_ name: String, resuming transcript: String? = nil, remote: Bool = true) -> [String] {
         let id = ((transcript ?? "") as NSString).lastPathComponent.replacingOccurrences(of: ".jsonl", with: "")
         switch self {
-        case .claude: return (remote ? ["--remote-control", name] : []) + ["--dangerously-skip-permissions"] + (transcript == nil ? [] : ["--resume", id])
+        // A new Claude gets its session id from Sesh, so sesh-mux knows its Transcript before any hook runs.
+        case .claude: return (remote ? ["--remote-control", name] : []) + ["--dangerously-skip-permissions"]
+            + (transcript == nil ? ["--session-id", UUID().uuidString.lowercased()] : ["--resume", id])
         // Codex names its files rollout-<time>-<uuid>.
         case .codex: return (transcript == nil ? [] : ["resume", String(id.suffix(36))]) + ["--dangerously-bypass-approvals-and-sandbox"]
         case .pi: return transcript.map { ["--session", $0] } ?? []

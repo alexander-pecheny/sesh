@@ -326,10 +326,10 @@ fn agent_start_command_works() {
         run_cli_json(&socket_path, &["pane", "get", &pane_id])["result"]["pane"]["label"],
         "shell-pane"
     );
-    assert_eq!(started["result"]["argv"][0], "pi");
-    assert_eq!(started["result"]["argv"][1], "--name");
-    assert_eq!(started["result"]["argv"][2], "scratch");
-    assert_eq!(started["result"]["argv"][3], "--no-session");
+    let argv: Vec<&str> = started["result"]["argv"].as_array().unwrap().iter().map(|arg| arg.as_str().unwrap()).collect();
+    assert_eq!(argv[0], "env");
+    assert!(argv.contains(&format!("SESH_MUX_PANE_ID={pane_id}").as_str()));
+    assert_eq!(argv[argv.len() - 4..], ["pi", "--name", "scratch", "--no-session"]);
     assert_eq!(
         fs::read_to_string(&captured_args).unwrap(),
         "--name\nscratch\n--no-session\n"

@@ -176,8 +176,15 @@ final class TaskCommandTests: XCTestCase {
     }
 
     func testClaudeStartsWithRemoteControlUnlessTheTaskSaysNo() {
-        XCTAssertEqual(Agent.claude.args("fix"), ["--remote-control", "fix", "--dangerously-skip-permissions"])
-        XCTAssertEqual(Agent.claude.args("fix", remote: false), ["--dangerously-skip-permissions"])
+        XCTAssertEqual(Agent.claude.args("fix").prefix(3), ["--remote-control", "fix", "--dangerously-skip-permissions"])
+        XCTAssertEqual(Agent.claude.args("fix", remote: false).prefix(1), ["--dangerously-skip-permissions"])
+    }
+
+    func testANewClaudeGetsItsSessionIdFromSesh() {
+        let args = Agent.claude.args("fix", remote: false)
+        XCTAssertEqual(args.dropLast(), ["--dangerously-skip-permissions", "--session-id"])
+        XCTAssertNotNil(UUID(uuidString: args.last ?? ""))
+        XCTAssertEqual(Agent.claude.args("fix", resuming: "~/.claude/projects/-w/abc.jsonl", remote: false).suffix(2), ["--resume", "abc"])
     }
 
     func testANewWorktreesBranchTakesTheNextFreeNumber() {

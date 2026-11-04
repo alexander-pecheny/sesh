@@ -240,10 +240,6 @@ enum TaskActions {
         var pane = ""
         if let left = session.body.pane, case .found(let found) = await Mux.look(for: left, on: machine), found.agent == nil {
             pane = left
-            // A shell herdr-sesh started knows its pane only by herdr's name, which sesh-mux's hooks
-            // do not read, so Claude's questions would reach no one.
-            let names = "[ -n \"$SESH_MUX_PANE_ID\" ] || export SESH_MUX_PANE_ID=\"$HERDR_PANE_ID\" SESH_MUX_SOCKET_PATH=\"$HOME/.sesh/mux/sesh-mux.sock\""
-            _ = await machine.run("\(Mux.command) pane run \(quote(pane)) \(quote(names))")
         } else {
             switch await self.pane(for: task, on: machine, label: agent.title, folder: session.body.path) {
             case .failure(let failure): return failure.message

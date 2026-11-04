@@ -39,10 +39,11 @@ pub fn start(source: &mut dyn Source, pane: &str, request: &Value) -> Result<()>
     // Claude reads its settings from ~/.claude.json unless CLAUDE_CONFIG_DIR is set, even to
     // ~/.claude, where there are none and it asks to log in again.
     let default = crate::serve::expand("~/.claude");
+    let mut env = serde_json::Map::new();
     if let Some(config) = request["config"].as_str().filter(|config| !config.is_empty() && agent == Agent::Claude && crate::serve::expand(config) != default) {
-        configure(source, pane, config)?;
+        env.insert("CLAUDE_CONFIG_DIR".into(), configure(config).into());
     }
-    let started = launch(source, pane, name, agent, request["args"].clone(), TIMEOUT);
+    let started = launch(source, pane, name, agent, request["args"].clone(), env, TIMEOUT);
     let Err(problem) = started else { return Ok(()) };
     let screen = source.call("pane.read", json!({"pane_id": pane, "source": "recent_unwrapped", "lines": 40}));
     let _ = source.input(pane, &Input::Close);
@@ -51,23 +52,19 @@ pub fn start(source: &mut dyn Source, pane: &str, request: &Value) -> Result<()>
     Err([&[problem.as_str()][..], &lines[lines.len().saturating_sub(TAIL)..]].concat().join("\n"))
 }
 
-/// Points the pane's Claude at another config folder, with sesh-mux's hooks installed in it.
-fn configure(source: &mut dyn Source, pane: &str, config: &str) -> Result<()> {
+/// Another config folder for Claude, with sesh-mux's hooks installed in it.
+fn configure(config: &str) -> String {
     let dir = crate::serve::expand(config);
     if !dir.join("hooks/sesh-mux-agent-state.sh").exists() {
         // The CLI installs hooks itself; sesh-mux's server knows only its own config folder.
         let home = std::env::var("HOME").unwrap_or_default();
         let _ = Command::new(format!("{home}/.sesh/bin/sesh-mux")).args(["integration", "install", "claude"]).env("CLAUDE_CONFIG_DIR", &dir).output();
     }
-    let quoted = format!("'{}'", dir.to_string_lossy().replace('\'', "'\\''"));
-    source
-        .call("pane.send_input", json!({"pane_id": pane, "text": format!("export CLAUDE_CONFIG_DIR={quoted}"), "keys": ["Enter"]}))
-        .map(drop)
-        .map_err(|err| refusal(&err))
+    dir.to_string_lossy().into_owned()
 }
 
-fn launch(source: &mut dyn Source, pane: &str, name: &str, agent: Agent, args: Value, timeout: Duration) -> Result<()> {
-    let params = json!({"name": name, "kind": agent.name(), "pane_id": pane, "args": args, "timeout_ms": timeout.as_millis() as u64});
+fn launch(source: &mut dyn Source, pane: &str, name: &str, agent: Agent, args: Value, env: serde_json::Map<String, Value>, timeout: Duration) -> Result<()> {
+    let params = json!({"name": name, "kind": agent.name(), "pane_id": pane, "args": args, "env": env, "timeout_ms": timeout.as_millis() as u64});
     let shell = Instant::now() + SHELL_START;
     while let Err(err) = source.call("agent.start", params.clone()) {
         if err["code"] != "agent_pane_busy" || Instant::now() > shell {
@@ -133,11 +130,12 @@ mod tests {
         screens: Vec<&'static str>,
         states: Vec<Value>,
         inputs: Vec<Input>,
+        starts: Vec<Value>,
     }
 
     impl Starting {
         fn new(screens: &[&'static str], states: &[Value]) -> Self {
-            Starting { screens: screens.to_vec(), states: states.to_vec(), inputs: Vec::new() }
+            Starting { screens: screens.to_vec(), states: states.to_vec(), inputs: Vec::new(), starts: Vec::new() }
         }
     }
 
@@ -158,9 +156,12 @@ mod tests {
             Ok(())
         }
 
-        fn call(&mut self, method: &str, _: Value) -> std::result::Result<Value, Value> {
+        fn call(&mut self, method: &str, params: Value) -> std::result::Result<Value, Value> {
             match method {
-                "agent.start" => Ok(json!({})),
+                "agent.start" => {
+                    self.starts.push(params);
+                    Ok(json!({}))
+                }
                 "agent.get" if self.states.len() > 1 => Ok(json!({"agent": self.states.remove(0)})),
                 "agent.get" => Ok(json!({"agent": self.states[0]})),
                 "pane.read" => Ok(json!({"read": {"text": "Welcome\n\n  Error: no such model  \n"}})),
@@ -178,13 +179,15 @@ mod tests {
     }
 
     #[test]
-    fn claudes_own_config_folder_is_left_unset() {
+    fn another_config_folder_reaches_claude_on_its_command_line_and_its_own_is_left_unset() {
         let mut source = Starting::new(&[], &[claude("idle", true, false)]);
         let home = std::env::var("HOME").unwrap();
-        for config in ["~/.claude", &format!("{home}/.claude")] {
-            // The test's sesh-mux refuses the export, so setting the folder would fail the start.
+        for config in ["~/.claude", &format!("{home}/.claude"), "/nowhere/.claude-work"] {
             start(&mut source, "w1:p1", &json!({"name": "fix-claude", "agent": "claude", "config": config})).unwrap();
         }
+        let env: Vec<&Value> = source.starts.iter().map(|start| &start["env"]).collect();
+        assert_eq!(env, [&json!({}), &json!({}), &json!({"CLAUDE_CONFIG_DIR": "/nowhere/.claude-work"})]);
+        assert!(source.inputs.is_empty(), "nothing is typed into the shell");
     }
 
     #[test]

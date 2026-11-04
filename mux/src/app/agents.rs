@@ -12,6 +12,17 @@ const INVALID_AGENT_TIMEOUT_MESSAGE: &str =
     "agent start timeout must be greater than 3000ms and at most 300000ms";
 const INVALID_AGENT_NAME_MESSAGE: &str = "agent name must start with a lowercase letter and contain only lowercase letters, digits, '-' or '_' (1-32 characters)";
 
+/// The Agent's command line, under `env` when it takes variables of its own.
+fn launch_argv(executable: &str, env: &std::collections::BTreeMap<String, String>, args: Vec<String>) -> Option<Vec<String>> {
+    let valid = |name: &String| !name.is_empty() && name.chars().all(|ch| ch.is_ascii_alphanumeric() || ch == '_');
+    if !env.iter().all(|(name, value)| valid(name) && !value.chars().any(char::is_control)) {
+        return None;
+    }
+    let assignments = env.iter().map(|(name, value)| format!("{name}={value}"));
+    let head = (!env.is_empty()).then(|| "env".to_string());
+    Some(head.into_iter().chain(assignments).chain([executable.to_string()]).chain(args).collect())
+}
+
 fn valid_agent_name(name: &str) -> bool {
     let mut chars = name.chars();
     matches!(chars.next(), Some('a'..='z'))
@@ -179,8 +190,12 @@ impl App {
         let shell_name = available_shell_name(runtime)
             .ok_or_else(|| AgentStartError::TargetBusy(params.pane_id.clone()))?;
 
-        let mut argv = vec![crate::detect::interactive_agent_executable(kind).to_string()];
-        argv.extend(params.args);
+        // A shell another server started may not know its pane, and the Agent's hooks need it.
+        let mut env = params.env;
+        env.insert(crate::integration::SESH_MUX_PANE_ID_ENV_VAR.into(), params.pane_id.clone());
+        env.insert(crate::api::SOCKET_PATH_ENV_VAR.into(), crate::api::socket_path().to_string_lossy().into_owned());
+        let argv = launch_argv(crate::detect::interactive_agent_executable(kind), &env, params.args)
+            .ok_or(AgentStartError::InvalidArgument)?;
         let command = crate::platform::interactive_shell_command(&argv, &shell_name)
             .ok_or(AgentStartError::InvalidArgument)?;
         let bytes = crate::app::api_helpers::encode_api_submission(runtime, &command);
@@ -459,6 +474,17 @@ pub(super) enum AgentRenameError {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn an_agent_takes_its_variables_on_its_own_command_line() {
+        let env = [("CLAUDE_CONFIG_DIR".to_string(), "/home/a b/.claude-work".to_string())].into();
+        assert_eq!(
+            super::launch_argv("claude", &env, vec!["--resume".into(), "x".into()]).unwrap(),
+            ["env", "CLAUDE_CONFIG_DIR=/home/a b/.claude-work", "claude", "--resume", "x"]
+        );
+        assert_eq!(super::launch_argv("pi", &Default::default(), Vec::new()).unwrap(), ["pi"]);
+        assert!(super::launch_argv("pi", &[("A=B".to_string(), "c".to_string())].into(), Vec::new()).is_none());
+    }
+
     use super::valid_agent_name;
 
     #[test]
