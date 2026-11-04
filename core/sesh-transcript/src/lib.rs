@@ -437,7 +437,7 @@ impl Transcript {
             let line = &bytes[start..start + end];
             let offset = self.offset + start as u64;
             start += end + 1;
-            let Ok(value) = serde_json::from_slice::<Value>(line) else {
+            let Some(value) = parse_line(line) else {
                 continue;
             };
             let mut ids = Ids {
@@ -498,6 +498,16 @@ impl Transcript {
             .unwrap_or_default();
         agent::claude::question(&self.tag, &Value::String(at), input)
     }
+}
+
+/// A line as JSON. Claude now and then leaves a line half-written and starts the next one on
+/// it, so a line that does not parse is read from the first line start in it that does.
+fn parse_line(line: &[u8]) -> Option<Value> {
+    serde_json::from_slice(line).ok().or_else(|| {
+        (1..line.len())
+            .filter(|&at| line[at..].starts_with(b"{\"parentUuid\"") || line[at..].starts_with(b"{\"type\""))
+            .find_map(|at| serde_json::from_slice(&line[at..]).ok())
+    })
 }
 
 /// The complete lines among the `size` bytes before `end`, and where they start.

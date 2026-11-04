@@ -84,14 +84,14 @@ impl super::Parse for Parser {
     /// Only the lines that start or end background work are parsed, so a long Transcript
     /// stays quick.
     fn scan(&mut self, file: File) -> std::io::Result<()> {
-        let mut scan = Self::new(false);
+        let mut scan = Self::new(self.subagent);
         let mut ids = Ids { tag: String::new(), prefix: String::new(), next: 0 };
         let mut out = Vec::new();
         let mut reader = std::io::BufReader::with_capacity(1 << 20, file);
         let mut line = Vec::new();
         while reader.read_until(b'\n', &mut line)? > 0 {
             let text = std::str::from_utf8(&line).unwrap_or_default();
-            if ["run_in_background", "task-notification", "async_launched", "backgroundTaskId", "TaskStop", "Monitor", "\"name\":\"Bash\""].iter().any(|word| text.contains(word)) {
+            if ["run_in_background", "task-notification", "async_launched", "backgroundTaskId", "\"taskId\"", "TaskStop", "Monitor", "\"name\":\"Bash\""].iter().any(|word| text.contains(word)) {
                 if let Ok(value) = serde_json::from_str::<Value>(text) {
                     scan.read(&value, &mut ids, &mut out);
                     out.clear();
@@ -113,6 +113,10 @@ impl Parser {
     }
 
     fn read(&mut self, line: &Value, ids: &mut Ids, out: &mut Vec<Entry>) {
+        // A subagent is told of its own background work on meta lines.
+        if line["type"] == "user" && line["origin"]["kind"] == "task-notification" && (line["isSidechain"] != true || self.subagent) {
+            return self.finished(&block_text(&line["message"]["content"]));
+        }
         if line["isMeta"] == true && line["type"] == "user" {
             return self.image_source(&block_text(&line["message"]["content"]), out);
         }
@@ -142,9 +146,6 @@ impl Parser {
                 }
             }
             Some("user") => {
-                if line["origin"]["kind"] == "task-notification" {
-                    return self.finished(&block_text(content));
-                }
                 if line["origin"]["kind"]
                     .as_str()
                     .is_some_and(|kind| kind != "human")
@@ -185,8 +186,13 @@ impl Parser {
                     Some(_) => self.turn_over = false,
                     None => {}
                 }
+                let before = self.background.len();
                 for block in content.as_array().into_iter().flatten() {
                     self.assistant_block(block, at, ids, out);
+                }
+                // A fork's Transcript opens with the call in its parent that started it.
+                if self.subagent && line["parentUuid"].is_null() {
+                    self.background.truncate(before);
                 }
             }
             _ => {}
