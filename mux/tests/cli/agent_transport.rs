@@ -41,7 +41,7 @@ fn agent_start_waits_through_unknown_then_rejects_blocked() {
                         "terminal_id": "term_1",
                         "name": "reviewer"
                     },
-                    "argv": ["opencode"]
+                    "argv": ["pi"]
                 }
             })
         )
@@ -86,7 +86,7 @@ fn agent_start_waits_through_unknown_then_rejects_blocked() {
                 "result": {
                     "type": "agent_info",
                     "agent": {
-                        "agent": "opencode",
+                        "agent": "pi",
                         "agent_status": "blocked",
                         "interactive_ready": true,
                         "launch_pending": false,
@@ -104,7 +104,7 @@ fn agent_start_waits_through_unknown_then_rejects_blocked() {
     let started = run_cli(
         &socket_path,
         &[
-            "agent", "start", "reviewer", "--kind", "opencode", "--pane", "w1:p1",
+            "agent", "start", "reviewer", "--kind", "pi", "--pane", "w1:p1",
         ],
     );
     assert_eq!(started.status.code(), Some(1));

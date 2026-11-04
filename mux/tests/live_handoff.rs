@@ -64,7 +64,7 @@ fn spawn_server_with_env(
     fs::create_dir_all(runtime_dir).unwrap();
     fs::write(
         config_home.join(".sesh/mux/config.toml"),
-        "onboarding = false\n",
+        "",
     )
     .unwrap();
 
@@ -107,7 +107,7 @@ fn spawn_named_session_server(
     fs::create_dir_all(runtime_dir).unwrap();
     fs::write(
         config_home.join(".sesh/mux/config.toml"),
-        "onboarding = false\n",
+        "",
     )
     .unwrap();
 
@@ -141,7 +141,7 @@ fn spawn_default_session_server(config_home: &Path, runtime_dir: &Path) -> Spawn
     fs::create_dir_all(runtime_dir).unwrap();
     fs::write(
         config_home.join(".sesh/mux/config.toml"),
-        "onboarding = false\n",
+        "",
     )
     .unwrap();
 

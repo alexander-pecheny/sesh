@@ -258,13 +258,8 @@ fn closing_pane_terminates_processes_inside_it() {
     );
     assert!(created.status.success());
 
-    let split = run_cli(
-        &socket_path,
-        &["pane", "split", "1-1", "--direction", "right"],
-    );
-    assert!(split.status.success());
-    let split_json: serde_json::Value = serde_json::from_slice(&split.stdout).unwrap();
-    let pane_id = split_json["result"]["pane"]["pane_id"].as_str().unwrap();
+    let tab = run_cli_json(&socket_path, &["tab", "create"]);
+    let pane_id = tab["result"]["root_pane"]["pane_id"].as_str().unwrap();
 
     let pid_file = base.join("pane-close.pid");
     let command = format!(
@@ -375,21 +370,21 @@ fn workspace_ids_and_public_pane_ids_are_stable() {
         .unwrap()
         .to_string();
 
-    let split_12_json = run_cli_json(
+    let tab_12_json = run_cli_json(
         &socket_path,
-        &["pane", "split", "1-1", "--direction", "right", "--no-focus"],
+        &["tab", "create", "--workspace", &ws1_id],
     );
     assert_eq!(
-        split_12_json["result"]["pane"]["pane_id"],
+        tab_12_json["result"]["root_pane"]["pane_id"],
         format!("{ws1_id}:p2")
     );
 
-    let split_13_json = run_cli_json(
+    let tab_13_json = run_cli_json(
         &socket_path,
-        &["pane", "split", "1-1", "--direction", "down", "--no-focus"],
+        &["tab", "create", "--workspace", &ws1_id],
     );
     assert_eq!(
-        split_13_json["result"]["pane"]["pane_id"],
+        tab_13_json["result"]["root_pane"]["pane_id"],
         format!("{ws1_id}:p3")
     );
 
@@ -403,19 +398,12 @@ fn workspace_ids_and_public_pane_ids_are_stable() {
         .to_string();
     assert_ne!(ws2_id, ws1_id);
 
-    let ws2_focus = run_cli(&socket_path, &["workspace", "focus", &ws2_id]);
-    assert!(
-        ws2_focus.status.success(),
-        "stderr: {}",
-        String::from_utf8_lossy(&ws2_focus.stderr)
-    );
-
-    let ws2_split_json = run_cli_json(
+    let ws2_tab_json = run_cli_json(
         &socket_path,
-        &["pane", "split", "2-1", "--direction", "right", "--no-focus"],
+        &["tab", "create", "--workspace", &ws2_id],
     );
     assert_eq!(
-        ws2_split_json["result"]["pane"]["pane_id"],
+        ws2_tab_json["result"]["root_pane"]["pane_id"],
         format!("{ws2_id}:p2")
     );
 
@@ -490,19 +478,12 @@ fn workspace_ids_and_public_pane_ids_are_stable() {
         String::from_utf8_lossy(&closed_lookup.stdout)
     );
 
-    let split_14_json = run_cli_json(
+    let tab_14_json = run_cli_json(
         &socket_path,
-        &[
-            "pane",
-            "split",
-            &format!("{ws1_id}:p1"),
-            "--direction",
-            "right",
-            "--no-focus",
-        ],
+        &["tab", "create", "--workspace", &ws1_id],
     );
     assert_eq!(
-        split_14_json["result"]["pane"]["pane_id"],
+        tab_14_json["result"]["root_pane"]["pane_id"],
         format!("{ws1_id}:p4")
     );
 

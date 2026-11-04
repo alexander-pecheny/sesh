@@ -123,7 +123,7 @@ async fn host_shutdown_saves_layout_before_releasing_delay_lock() {
     let mut service = login_service(&address, peer.clone()).await;
     let socket = base.join(".sesh/mux/sesh-mux.sock");
     let config = base.join("config.toml");
-    std::fs::write(&config, "onboarding = false\n[experimental]\nallow_nested = true\n[terminal]\ndefault_shell = \"/bin/sh\"\n").unwrap();
+    std::fs::write(&config, "[terminal]\ndefault_shell = \"/bin/sh\"\n").unwrap();
     let mut server = ChildGuard(
         Command::new(env!("CARGO_BIN_EXE_sesh-mux"))
             .args(["--session", "shutdown", "server"])

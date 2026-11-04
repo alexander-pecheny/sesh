@@ -109,7 +109,7 @@ fn spawn_server(
     register_runtime_dir(runtime_dir);
     fs::write(
         config_home.join(".sesh/mux/config.toml"),
-        "onboarding = false\n",
+        "",
     )
     .unwrap();
 

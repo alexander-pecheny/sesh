@@ -1,34 +1,5 @@
 use super::harness::*;
 
-#[test]
-fn agent_explain_missing_file_reports_json_error() {
-    let base = unique_test_dir();
-    let missing = base.join("missing-screen.txt");
-    let output = run_named_cli(
-        &base.join("config"),
-        &base.join("runtime"),
-        &[
-            "agent",
-            "explain",
-            "--file",
-            missing.to_str().unwrap(),
-            "--agent",
-            "claude",
-            "--json",
-        ],
-    );
-
-    assert_eq!(output.status.code(), Some(1));
-    assert!(output.stdout.is_empty());
-    let error: serde_json::Value = serde_json::from_slice(&output.stderr).unwrap();
-    assert_eq!(error["id"], "cli:agent:explain");
-    assert_eq!(error["error"]["code"], "agent_explain_file_read_failed");
-    assert!(error["error"]["message"]
-        .as_str()
-        .unwrap()
-        .contains(missing.to_str().unwrap()));
-}
-
 fn write_delayed_shell_and_fake_pi(
     base: &Path,
     shell_delay_seconds: &str,
@@ -67,7 +38,7 @@ fn agent_start_waits_for_a_new_pane_shell_to_finish_initializing() {
     let socket_path = runtime_dir.join("sesh-mux.sock");
     let (bin, delayed_shell, invocations) = write_delayed_shell_and_fake_pi(&base, "0.4");
     let config = format!(
-        "onboarding = false\n[terminal]\ndefault_shell = {:?}\nshell_mode = \"non_login\"\n",
+        "[terminal]\ndefault_shell = {:?}\nshell_mode = \"non_login\"\n",
         delayed_shell.to_str().unwrap()
     );
     let server = spawn_sesh_mux_with_config(
@@ -148,7 +119,7 @@ fn agent_start_stops_retrying_when_the_pane_shell_stays_busy() {
     let socket_path = runtime_dir.join("sesh-mux.sock");
     let (bin, delayed_shell, invocations) = write_delayed_shell_and_fake_pi(&base, "2.3");
     let config = format!(
-        "onboarding = false\n[terminal]\ndefault_shell = {:?}\nshell_mode = \"non_login\"\n",
+        "[terminal]\ndefault_shell = {:?}\nshell_mode = \"non_login\"\n",
         delayed_shell.to_str().unwrap()
     );
     let server = spawn_sesh_mux_with_config(
@@ -566,11 +537,8 @@ fn agent_start_timeout_releases_the_name_for_reuse() {
         .as_str()
         .unwrap()
         .to_string();
-    let split = run_cli_json(
-        &socket_path,
-        &["pane", "split", &pane_id, "--direction", "right"],
-    );
-    let reuse_pane_id = split["result"]["pane"]["pane_id"]
+    let tab = run_cli_json(&socket_path, &["tab", "create"]);
+    let reuse_pane_id = tab["result"]["root_pane"]["pane_id"]
         .as_str()
         .unwrap()
         .to_string();
@@ -648,11 +616,8 @@ fn agent_start_reports_detected_kind_mismatch_before_released_name() {
         .as_str()
         .unwrap()
         .to_string();
-    let split = run_cli_json(
-        &socket_path,
-        &["pane", "split", &pane_id, "--direction", "right"],
-    );
-    let reuse_pane_id = split["result"]["pane"]["pane_id"]
+    let tab = run_cli_json(&socket_path, &["tab", "create"]);
+    let reuse_pane_id = tab["result"]["root_pane"]["pane_id"]
         .as_str()
         .unwrap()
         .to_string();
@@ -693,90 +658,6 @@ fn agent_start_reports_detected_kind_mismatch_before_released_name() {
     .success());
     let reused = run_cli(&socket_path, &["agent", "rename", &reuse_pane_id, "worker"]);
     assert!(reused.status.success());
-
-    cleanup_spawned_sesh_mux(server, base);
-}
-
-#[test]
-fn agent_start_follows_its_named_terminal_when_the_pane_moves() {
-    use std::os::unix::fs::PermissionsExt;
-
-    let base = unique_test_dir();
-    let config_home = base.join("config");
-    let runtime_dir = base.join("runtime");
-    let socket_path = runtime_dir.join("sesh-mux.sock");
-    let bin = base.join("bin");
-    fs::create_dir_all(&bin).unwrap();
-    let fake_pi = bin.join("pi");
-    fs::write(
-        &fake_pi,
-        "#!/bin/sh\nSESH_MUX_AGENT=pi exec /bin/sleep 10\n",
-    )
-    .unwrap();
-    fs::set_permissions(&fake_pi, fs::Permissions::from_mode(0o755)).unwrap();
-
-    let server = spawn_sesh_mux_with_path(&config_home, &runtime_dir, &socket_path, Some(&bin));
-    wait_for_socket(&socket_path, Duration::from_secs(5));
-    let created = run_cli_json(
-        &socket_path,
-        &["workspace", "create", "--cwd", base.to_str().unwrap()],
-    );
-    let first = created["result"]["root_pane"]["pane_id"]
-        .as_str()
-        .unwrap()
-        .to_string();
-    let start_socket = socket_path.clone();
-    let start_pane = first.clone();
-    let starter = thread::spawn(move || {
-        run_cli(
-            &start_socket,
-            &[
-                "agent",
-                "start",
-                "worker",
-                "--kind",
-                "pi",
-                "--pane",
-                &start_pane,
-                "--timeout",
-                "8000",
-            ],
-        )
-    });
-    assert!(wait_until(
-        Duration::from_secs(2),
-        Duration::from_millis(25),
-        || run_cli(&socket_path, &["agent", "get", "worker"])
-            .status
-            .success()
-    ));
-
-    let moved = run_cli(
-        &socket_path,
-        &[
-            "pane",
-            "move",
-            &first,
-            "--new-workspace",
-            "--label",
-            "moved",
-            "--no-focus",
-        ],
-    );
-    assert!(
-        moved.status.success(),
-        "move failed: {}",
-        String::from_utf8_lossy(&moved.stderr)
-    );
-
-    let started = starter.join().unwrap();
-    assert!(
-        started.status.success(),
-        "start failed after swap: {}",
-        String::from_utf8_lossy(&started.stderr)
-    );
-    let started: serde_json::Value = serde_json::from_slice(&started.stdout).unwrap();
-    assert_ne!(started["result"]["agent"]["pane_id"], first);
 
     cleanup_spawned_sesh_mux(server, base);
 }
@@ -1080,9 +961,6 @@ fn agent_commands_work() {
     let agent_renamed = run_cli_json(&socket_path, &["agent", "rename", "worker", "reviewer"]);
     assert_eq!(agent_renamed["result"]["agent"]["name"], "reviewer");
 
-    let focused = run_cli_json(&socket_path, &["agent", "focus", "reviewer"]);
-    assert_eq!(focused["result"]["agent"]["focused"], true);
-
     cleanup_spawned_sesh_mux(server, base);
 }
 
@@ -1108,13 +986,9 @@ fn agent_wait_returns_immediately_for_unseen_done_agent() {
         .unwrap();
     let second_tab = run_cli_json(
         &socket_path,
-        &["tab", "create", "--workspace", workspace_id],
+        &["tab", "create", "--workspace", workspace_id, "--focus"],
     );
-    let second_tab_id = second_tab["result"]["tab"]["tab_id"].as_str().unwrap();
-    assert_ne!(second_tab_id, "w1:t1");
-    assert!(run_cli(&socket_path, &["tab", "focus", second_tab_id])
-        .status
-        .success());
+    assert_ne!(second_tab["result"]["tab"]["tab_id"], "w1:t1");
     assert!(run_cli(
         &socket_path,
         &[
@@ -1315,11 +1189,8 @@ fn agent_wait_pins_the_original_terminal_when_name_is_reused() {
         .as_str()
         .unwrap()
         .to_string();
-    let split = run_cli_json(
-        &socket_path,
-        &["pane", "split", &first, "--direction", "right"],
-    );
-    let second = split["result"]["pane"]["pane_id"]
+    let tab = run_cli_json(&socket_path, &["tab", "create"]);
+    let second = tab["result"]["root_pane"]["pane_id"]
         .as_str()
         .unwrap()
         .to_string();
@@ -1405,11 +1276,8 @@ fn agent_wait_ignores_other_panes_and_errors_when_its_pane_closes() {
         .as_str()
         .unwrap()
         .to_string();
-    let split = run_cli_json(
-        &socket_path,
-        &["pane", "split", &first, "--direction", "right"],
-    );
-    let second = split["result"]["pane"]["pane_id"]
+    let tab = run_cli_json(&socket_path, &["tab", "create"]);
+    let second = tab["result"]["root_pane"]["pane_id"]
         .as_str()
         .unwrap()
         .to_string();

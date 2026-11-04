@@ -127,7 +127,7 @@ fn spawn_sesh_mux_with_options(
     register_runtime_dir(runtime_dir);
     fs::write(
         config_home.join(".sesh/mux/config.toml"),
-        "onboarding = false\n",
+        "",
     )
     .unwrap();
 
@@ -719,16 +719,6 @@ fn tab_methods_round_trip_over_socket() {
     );
     assert_eq!(renamed["result"]["tab"]["label"], "logs");
 
-    let focused = send_request(
-        &socket_path,
-        &format!(
-            r#"{{"id":"req_t6","method":"tab.focus","params":{{"tab_id":"{}"}}}}"#,
-            first_tab_id
-        ),
-    );
-    assert_eq!(focused["result"]["tab"]["tab_id"], first_tab_id);
-    assert_eq!(focused["result"]["tab"]["focused"], true);
-
     let closed = send_request(
         &socket_path,
         &format!(
@@ -878,21 +868,17 @@ fn pane_info_reports_foreground_cwd_without_changing_pane_cwd() {
         foreground.display().to_string()
     );
 
-    let split = send_request(
+    let tab = send_request(
         &socket_path,
         &serde_json::json!({
-            "id": "fg_split",
-            "method": "pane.split",
-            "params": {
-                "target_pane_id": pane_id,
-                "direction": "right",
-                "focus": false,
-            },
+            "id": "fg_tab",
+            "method": "tab.create",
+            "params": { "focus": false },
         })
         .to_string(),
     );
     assert_eq!(
-        split["result"]["pane"]["cwd"],
+        tab["result"]["root_pane"]["cwd"],
         foreground.display().to_string()
     );
 
@@ -1004,21 +990,6 @@ fn new_terminal_cwd_follow_ignores_nonleader_group_member_cwd() {
         base.display().to_string()
     );
 
-    let split = send_request(
-        &socket_path,
-        &serde_json::json!({
-            "id": "member_split",
-            "method": "pane.split",
-            "params": {
-                "target_pane_id": pane_id,
-                "direction": "right",
-                "focus": false,
-            },
-        })
-        .to_string(),
-    );
-    assert_eq!(split["result"]["pane"]["cwd"], base.display().to_string());
-
     let tab = send_request(
         &socket_path,
         &serde_json::json!({
@@ -1100,7 +1071,13 @@ fn agent_start_targets_existing_pane_over_socket() {
     assert_eq!(started["result"]["agent"]["terminal_id"], terminal_id);
     assert_eq!(
         started["result"]["argv"],
-        serde_json::json!(["pi", "--no-session"])
+        serde_json::json!([
+            "/usr/bin/env",
+            format!("SESH_MUX_PANE_ID={pane_id}"),
+            format!("SESH_MUX_SOCKET_PATH={}", socket_path.display()),
+            "pi",
+            "--no-session"
+        ])
     );
 
     let duplicate = send_request(
@@ -1373,7 +1350,7 @@ fn events_subscribe_streams_workspace_tab_and_agent_events() {
 
     let mut reader = open_subscription(
         &socket_path,
-        r#"{"id":"sub_life_a","method":"events.subscribe","params":{"subscriptions":[{"type":"workspace.created"},{"type":"workspace.focused"},{"type":"tab.created"},{"type":"tab.focused"},{"type":"tab.renamed"},{"type":"pane.created"},{"type":"pane.focused"},{"type":"pane.agent_detected"}]}}"#,
+        r#"{"id":"sub_life_a","method":"events.subscribe","params":{"subscriptions":[{"type":"workspace.created"},{"type":"tab.created"},{"type":"tab.renamed"},{"type":"pane.created"},{"type":"pane.agent_detected"}]}}"#,
     );
 
     let ack = reader.read_json_line(Duration::from_secs(2));
@@ -1394,14 +1371,7 @@ fn events_subscribe_streams_workspace_tab_and_agent_events() {
 
     let initial_events = wait_for_events(
         &mut reader,
-        &[
-            "workspace_created",
-            "workspace_focused",
-            "tab_created",
-            "tab_focused",
-            "pane_created",
-            "pane_focused",
-        ],
+        &["workspace_created", "tab_created", "pane_created"],
         Duration::from_secs(2),
     );
 
@@ -1410,22 +1380,16 @@ fn events_subscribe_streams_workspace_tab_and_agent_events() {
         workspace_created["data"]["workspace"]["workspace_id"],
         workspace_id
     );
-    let workspace_focused = event_by_kind(&initial_events, "workspace_focused");
-    assert_eq!(workspace_focused["data"]["workspace_id"], workspace_id);
 
     let first_tab_id = format!("{workspace_id}:t1");
     let tab_created = event_by_kind(&initial_events, "tab_created");
     assert_eq!(tab_created["data"]["tab"]["tab_id"], first_tab_id);
-    let tab_focused = event_by_kind(&initial_events, "tab_focused");
-    assert_eq!(tab_focused["data"]["tab_id"], first_tab_id);
 
     let pane_created = event_by_kind(&initial_events, "pane_created");
     let pane_id = pane_created["data"]["pane"]["pane_id"]
         .as_str()
         .unwrap()
         .to_string();
-    let pane_focused = event_by_kind(&initial_events, "pane_focused");
-    assert_eq!(pane_focused["data"]["pane_id"], pane_id);
 
     let send_pi = send_request(
         &socket_path,
@@ -1463,8 +1427,6 @@ fn events_subscribe_streams_workspace_tab_and_agent_events() {
 
     let created_tab_event = wait_for_event(&mut reader, "tab_created", Duration::from_secs(2));
     assert_eq!(created_tab_event["data"]["tab"]["tab_id"], second_tab_id);
-    let focused_tab_event = wait_for_event(&mut reader, "tab_focused", Duration::from_secs(2));
-    assert_eq!(focused_tab_event["data"]["tab_id"], second_tab_id);
 
     let renamed_tab = send_request(
         &socket_path,
@@ -1541,7 +1503,7 @@ fn a_session_id_a_hook_reports_is_announced_as_a_pane_update() {
 
 #[cfg(not(target_os = "macos"))]
 #[test]
-fn events_subscribe_streams_pane_split_and_close_events() {
+fn events_subscribe_streams_pane_create_and_close_events() {
     let _lock = test_lock();
     let base = unique_test_dir();
     let config_home = base.join("config");
@@ -1558,10 +1520,6 @@ fn events_subscribe_streams_pane_split_and_close_events() {
             base.display()
         ),
     );
-    let pane_id = created["result"]["root_pane"]["pane_id"]
-        .as_str()
-        .unwrap()
-        .to_string();
     let workspace_id = created["result"]["workspace"]["workspace_id"]
         .as_str()
         .unwrap()
@@ -1582,25 +1540,25 @@ fn events_subscribe_streams_pane_split_and_close_events() {
         "new subscription must not replay the root pane creation"
     );
 
-    let split = send_request(
+    let tab = send_request(
         &socket_path,
         &format!(
-            r#"{{"id":"req_pc_2","method":"pane.split","params":{{"target_pane_id":"{}","direction":"right","focus":true}}}}"#,
-            pane_id
+            r#"{{"id":"req_pc_2","method":"tab.create","params":{{"workspace_id":"{}","focus":true}}}}"#,
+            workspace_id
         ),
     );
-    let split_pane_id = split["result"]["pane"]["pane_id"]
+    let new_pane_id = tab["result"]["root_pane"]["pane_id"]
         .as_str()
         .unwrap()
         .to_string();
 
-    let split_created = wait_for_event_matching(
+    let pane_created = wait_for_event_matching(
         &mut reader,
         "pane_created",
         Duration::from_secs(2),
-        |value| value["data"]["pane"]["pane_id"] == split_pane_id,
+        |value| value["data"]["pane"]["pane_id"] == new_pane_id,
     );
-    assert_eq!(split_created["data"]["pane"]["pane_id"], split_pane_id);
+    assert_eq!(pane_created["data"]["pane"]["pane_id"], new_pane_id);
 
     let closed = send_request(
         &socket_path,
@@ -1615,9 +1573,9 @@ fn events_subscribe_streams_pane_split_and_close_events() {
         &mut reader,
         "pane_closed",
         Duration::from_secs(2),
-        |value| value["data"]["pane_id"] == split_pane_id,
+        |value| value["data"]["pane_id"] == new_pane_id,
     );
-    assert_eq!(pane_closed["data"]["pane_id"], split_pane_id);
+    assert_eq!(pane_closed["data"]["pane_id"], new_pane_id);
 
     cleanup_spawned_sesh_mux(child, base);
 }

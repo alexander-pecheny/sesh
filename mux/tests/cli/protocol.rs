@@ -93,30 +93,3 @@ fn server_live_handoff_bypasses_protocol_guard() {
     cleanup_test_base(&base);
 }
 
-#[test]
-fn plugin_list_preserves_protocol_mismatch_envelope() {
-    let base = unique_test_dir();
-    fs::create_dir_all(&base).unwrap();
-    let socket_path = base.join("sesh-mux.sock");
-    let listener = UnixListener::bind(&socket_path).unwrap();
-
-    let server = thread::spawn(move || {
-        let (mut stream, _) = listener.accept().unwrap();
-        let mut line = String::new();
-        BufReader::new(stream.try_clone().unwrap())
-            .read_line(&mut line)
-            .unwrap();
-        let request: serde_json::Value = serde_json::from_str(&line).unwrap();
-        assert_eq!(request["method"], "ping");
-        write_fake_pong(&mut stream, &request, "0.7.1", 14);
-    });
-
-    let listed = run_cli(&socket_path, &["plugin", "list", "--json"]);
-    assert_eq!(listed.status.code(), Some(1));
-    assert!(listed.stdout.is_empty());
-    let error: serde_json::Value = serde_json::from_slice(&listed.stderr).unwrap();
-    assert_eq!(error["id"], "cli:plugin");
-    assert_eq!(error["error"]["code"], "protocol_mismatch");
-    server.join().unwrap();
-    cleanup_test_base(&base);
-}
