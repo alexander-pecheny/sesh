@@ -122,8 +122,9 @@ struct Ran {
     let out: String
     let err: String
     var ok: Bool { status == 0 }
-    /// The Host stopped answering, as it does to a Mac that sleeps.
-    var lost: Bool { status == 255 }
+    /// The Host stopped answering, as it does to a Mac that sleeps: a mosh pipe says 255, and a
+    /// Link whose connection or channel died says -1.
+    var lost: Bool { status == 255 || status < 0 }
 
     /// sesh-mux prints its errors as JSON on stderr; anything else is shown as it came.
     var problem: String {

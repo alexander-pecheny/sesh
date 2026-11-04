@@ -41,7 +41,7 @@ enum Git {
     /// A new linked worktree of `repo` at `path` on a new `branch`, from `base` or else from what
     /// `repo` has checked out.
     static func addWorktree(_ path: String, branch: String, from base: String?, of repo: String, on runner: Runner) async -> Ran {
-        await runner.run("git -C \(quote(repo)) worktree add -b \(quote(branch)) \(quote(path))" + (base.map { " " + quote($0) } ?? ""))
+        await runner.run("git -C \(shellPath(repo)) worktree add -b \(quote(branch)) \(quote(path))" + (base.map { " " + quote($0) } ?? ""))
     }
 
     /// Brings the branch `repo` has checked out up to its upstream, as `git pull --ff-only` would,
