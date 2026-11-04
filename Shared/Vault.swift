@@ -21,11 +21,21 @@ final class Vault: ObservableObject, Identifiable, Records {
         let deleted: Bool
     }
 
+    /// Changes sent together under one id, which the Host remembers, so sending them again after
+    /// a lost answer gets the same answer and writes nothing twice (ADR 0022).
+    private struct Batch: Codable {
+        let id: String
+        let changes: [Change]
+    }
+
     private struct Saved: Codable {
         /// Not `seq`, so a copy saved while acknowledge could skip records fetches them all again.
         var since: Int?
         var records: [String: Record] = [:]
         var queue: [Change] = []
+        var batch: Batch?
+        var identity: String?
+        var shadows: [String: Record]?
     }
 
     private struct Line: Decodable {
@@ -36,6 +46,12 @@ final class Vault: ObservableObject, Identifiable, Records {
         let body: Record.Body?
         let deleted: Bool?
         let message: String?
+        let vault_id: String?
+
+        var record: Record? {
+            guard t == "record", let id, let kind, let seq else { return nil }
+            return Record(id: id, kind: kind, body: body ?? Record.Body(), seq: seq, deleted: deleted ?? false)
+        }
     }
 
     @Published private(set) var records: [String: Record] = [:]
@@ -47,7 +63,15 @@ final class Vault: ObservableObject, Identifiable, Records {
     let machine: Machine
     private var seq = 0
     private var queue: [Change] = []
+    private var batch: Batch?
+    /// The id of the Vault on the Host this copy follows; another id means the Host's Vault was made again.
+    private var identity: String?
+    /// The Host's newest record of each id that follow passed over while a change to it was queued.
+    private var shadows: [String: Record] = [:]
     private var flushing = false
+    private var retrying: Task<Void, Never>?
+    private var backoff = Vault.firstRetry
+    private static let firstRetry = Duration.seconds(2)
     private var following: Task<Void, Never>?
     private(set) lazy var copier = Copier(vault: self)
     private(set) lazy var mirror = Mirror(vault: self, folder: file.deletingPathExtension().appending(path: "transcripts"))
@@ -79,11 +103,14 @@ final class Vault: ObservableObject, Identifiable, Records {
         seq = saved.since ?? 0
         records = saved.records
         queue = saved.queue
+        batch = saved.batch
+        identity = saved.identity
+        shadows = saved.shadows ?? [:]
         pending = queue.count
     }
 
     private func save() {
-        let saved = Saved(since: seq, records: records, queue: queue)
+        let saved = Saved(since: seq, records: records, queue: queue, batch: batch, identity: identity, shadows: shadows)
         try? FileManager.default.createDirectory(at: file.deletingLastPathComponent(), withIntermediateDirectories: true)
         try? JSONEncoder().encode(saved).write(to: file, options: .atomic)
     }
@@ -124,6 +151,8 @@ final class Vault: ObservableObject, Identifiable, Records {
     func stop() {
         following?.cancel()
         following = nil
+        retrying?.cancel()
+        retrying = nil
     }
 
     /// Stops following the Host and deletes this device's copy; the Host keeps the Vault.
@@ -148,7 +177,14 @@ final class Vault: ObservableObject, Identifiable, Records {
         guard made.ok else { return problem = made.problem }
         problem = nil
         online = true
-        if let head = try? JSONDecoder().decode(Line.self, from: Data(made.out.utf8)).seq, head < seq { await restore() }
+        if let head = try? JSONDecoder().decode(Line.self, from: Data(made.out.utf8)) {
+            if head.seq.map({ $0 < seq }) == true || (identity != nil && head.vault_id != identity) {
+                await restore(head.vault_id)
+            } else if identity == nil {
+                identity = head.vault_id
+                save()
+            }
+        }
         await flush()
         let ended = await machine.follower.vault(folder, from: { [weak self] in self?.seq ?? 0 }, online: { [weak self] up in
             guard let self else { return }
@@ -162,11 +198,14 @@ final class Vault: ObservableObject, Identifiable, Records {
         guard let line = try? JSONDecoder().decode(Line.self, from: Data(text.utf8)) else { return }
         switch line.t {
         case "record":
-            guard let id = line.id, let kind = line.kind, let lineSeq = line.seq else { return }
-            seq = max(seq, lineSeq)
-            // A change still queued here is newer than what the Host had.
-            guard !queue.contains(where: { $0.id == id }) else { return }
-            records[id] = Record(id: id, kind: kind, body: line.body ?? Record.Body(), seq: lineSeq, deleted: line.deleted ?? false)
+            guard let record = line.record else { return }
+            seq = max(seq, record.seq)
+            // A change still queued here is newer than what the Host had; acknowledge settles which stays.
+            if queue.contains(where: { $0.id == record.id }) {
+                shadows[record.id] = record
+            } else {
+                records[record.id] = record
+            }
             save()
         case "head": if let head = line.seq { seq = max(seq, head); save() }
         case "vault_error": problem = line.message
@@ -174,58 +213,92 @@ final class Vault: ObservableObject, Identifiable, Records {
         }
     }
 
-    /// The Host is older than this copy, as after its disk was erased: it gets back every record
-    /// it lacks and the recent Transcripts, and this copy reads it all again.
-    private func restore() async {
-        var have: Set<String> = []
+    /// The Host is older than this copy, or holds another Vault, as after its disk was erased: it
+    /// gets back every record it lacks or holds an older edit of, and the recent Transcripts, and
+    /// this copy reads it all again.
+    private func restore(_ vault: String?) async {
+        var have: [String: Record.Body] = [:]
         let pulled = await machine.fetch("\(Helper.path) vault pull \(folder)") { text in
-            if let id = try? JSONDecoder().decode(Line.self, from: Data(text.utf8)).id { have.insert(id) }
+            if let record = (try? JSONDecoder().decode(Line.self, from: Data(text.utf8)))?.record { have[record.id] = record.body }
         }
         guard pulled.ok else { return }
-        for record in records.values where !have.contains(record.id) && !queue.contains(where: { $0.id == record.id }) {
+        for record in records.values where !queue.contains(where: { $0.id == record.id }) {
+            let had = have[record.id]
+            // Another device may have refilled it from an older copy.
+            guard had == nil || had != record.body && had?.edited ?? 0 < record.body.edited ?? 0 else { continue }
             queue.append(Change(id: record.id, kind: record.kind, body: record.body, base: 0, deleted: record.deleted))
         }
         seq = 0
+        shadows = [:]
+        identity = vault
         pending = queue.count
         save()
         await mirror.giveBack()
     }
 
     /// Sends the queue as a file, since one Document can outgrow a command line, until it is empty.
+    /// A batch whose answer is lost goes again as it was, and a failure is tried again on a timer.
     private func flush() async {
         guard online, !flushing else { return }
         flushing = true
         defer { flushing = false }
         while online, !queue.isEmpty {
-            let sent = queue
-            let lines = sent.compactMap { try? JSONEncoder().encode($0) }.map { String(decoding: $0, as: UTF8.self) }
-            let name = "\(folder)/inbox/\(UUID().uuidString.lowercased()).jsonl"
+            let sending = batch ?? Batch(id: UUID().uuidString.lowercased(), changes: queue)
+            batch = sending
+            save()
+            let lines = sending.changes.compactMap { try? JSONEncoder().encode($0) }.map { String(decoding: $0, as: UTF8.self) }
+            let name = "\(folder)/inbox/\(sending.id).jsonl"
             let put = await machine.put(Data((lines.joined(separator: "\n") + "\n").utf8), to: name)
-            guard put.ok else { return problem = put.problem }
-            let ran = await machine.run("\(Helper.path) vault push \(folder) \(name)")
-            guard ran.ok else { return problem = ran.problem }
+            guard put.ok else { return failed(put.problem) }
+            let ran = await machine.run("\(Helper.path) vault push \(folder) \(name) --batch \(sending.id)")
+            guard ran.ok else { return failed(ran.problem) }
+            let answer = ran.out.split(separator: "\n").compactMap { try? JSONDecoder().decode(Line.self, from: Data($0.utf8)) }
+            // The Host's Vault was made again since this copy connected. The next connection
+            // refills it and sends the batch again, which the Vault it was written to answers.
+            if let identity, let other = answer.last?.vault_id, other != identity {
+                return problem = "The Vault on \(machine.title) was made again; Sesh refills it once it reconnects."
+            }
+            batch = nil
             // Only what was sent leaves the queue; edits made meanwhile wait for the next round.
-            for change in sent {
+            for change in sending.changes {
                 guard let index = queue.firstIndex(where: { $0.id == change.id }),
                       queue[index].body == change.body, queue[index].deleted == change.deleted else { continue }
                 queue.remove(at: index)
             }
-            for text in ran.out.split(separator: "\n") { acknowledge(String(text)) }
+            answer.compactMap(\.record).forEach(acknowledge)
+            backoff = Self.firstRetry
             pending = queue.count
             save()
         }
     }
 
-    /// A record the Host wrote for us. An edit still queued for it now builds on its new seq,
-    /// or the Host would take it for a clash with our own earlier write. Only `follow` moves
-    /// `seq`, or a push from a copy that lags would skip every record it had not yet seen.
-    private func acknowledge(_ text: String) {
-        guard let line = try? JSONDecoder().decode(Line.self, from: Data(text.utf8)), line.t == "record",
-              let id = line.id, let lineSeq = line.seq else { return }
-        if let index = queue.firstIndex(where: { $0.id == id }) {
-            let change = queue[index]
-            queue[index] = Change(id: id, kind: change.kind, body: change.body, base: lineSeq, deleted: change.deleted)
+    private func failed(_ why: String) {
+        problem = why
+        guard retrying == nil else { return }
+        let delay = backoff
+        backoff = min(backoff * 2, .seconds(60))
+        retrying = Task { [weak self] in
+            try? await Task.sleep(for: delay)
+            guard !Task.isCancelled, let self else { return }
+            retrying = nil
+            await flush()
         }
-        records[id]?.seq = lineSeq
+    }
+
+    /// A record the Host wrote for us, or kept over our losing edit. An edit still queued for it
+    /// now builds on its new seq, or the Host would take it for a clash with our own earlier
+    /// write. Otherwise this copy takes it, or the newer record follow passed over meanwhile.
+    /// Only `follow` moves `seq`, or a push from a copy that lags would skip every record it had
+    /// not yet seen.
+    private func acknowledge(_ record: Record) {
+        if let index = queue.firstIndex(where: { $0.id == record.id }) {
+            let change = queue[index]
+            queue[index] = Change(id: change.id, kind: change.kind, body: change.body, base: record.seq, deleted: change.deleted)
+            records[record.id]?.seq = record.seq
+        } else if let shadow = shadows.removeValue(forKey: record.id), shadow.seq > record.seq {
+            records[record.id] = shadow
+        } else {
+            records[record.id] = record
+        }
     }
 }

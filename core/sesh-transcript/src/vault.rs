@@ -42,7 +42,11 @@ CREATE TABLE IF NOT EXISTS copies (
 );
 CREATE VIRTUAL TABLE IF NOT EXISTS line_text
     USING fts5(session UNINDEXED, file UNINDEXED, item UNINDEXED, text);
+CREATE TABLE IF NOT EXISTS meta (key TEXT PRIMARY KEY, value TEXT NOT NULL);
+CREATE TABLE IF NOT EXISTS pushes (n INTEGER PRIMARY KEY, batch TEXT NOT NULL UNIQUE, answer TEXT NOT NULL);
 ";
+/// How many push batches a Vault remembers the answers to, so one sent again is not written twice.
+const BATCHES: i64 = 1000;
 const DEFAULT_LIMIT: usize = 20;
 const SNIPPET_TOKENS: i32 = 12;
 
@@ -90,6 +94,16 @@ impl Record {
             "seq": self.seq, "deleted": self.deleted})
     }
 
+    fn from_line(line: &Value) -> Self {
+        Self {
+            id: line["id"].as_str().unwrap_or_default().into(),
+            kind: line["kind"].as_str().unwrap_or_default().into(),
+            body: line["body"].clone(),
+            seq: line["seq"].as_i64().unwrap_or_default(),
+            deleted: line["deleted"].as_bool().unwrap_or_default(),
+        }
+    }
+
     fn edited(&self) -> i64 {
         self.body["edited"].as_i64().unwrap_or_default()
     }
@@ -119,13 +133,11 @@ pub struct Change {
     pub deleted: bool,
 }
 
-pub fn head_line(seq: i64) -> Value {
-    json!({"t": "head", "seq": seq})
-}
-
 pub struct Vault {
     dir: PathBuf,
     db: Connection,
+    /// Made at random with the Vault, so a device tells a Vault made again from the one it knew.
+    pub id: String,
 }
 
 impl Vault {
@@ -144,7 +156,13 @@ impl Vault {
         db.busy_timeout(std::time::Duration::from_secs(10))?;
         db.pragma_update(None, "journal_mode", "wal")?;
         db.execute_batch(SCHEMA)?;
-        Ok(Self { dir, db })
+        db.execute("INSERT OR IGNORE INTO meta (key, value) VALUES ('id', ?1)", [uuid()])?;
+        let id = db.query_row("SELECT value FROM meta WHERE key = 'id'", [], |row| row.get(0))?;
+        Ok(Self { dir, db, id })
+    }
+
+    pub fn head_line(&self, seq: i64) -> Value {
+        json!({"t": "head", "seq": seq, "vault_id": self.id})
     }
 
     pub fn head(&self) -> Result<i64> {
@@ -169,12 +187,25 @@ impl Vault {
         Ok((records, head))
     }
 
-    pub fn push(&mut self, changes: Vec<Change>) -> Result<(Vec<Record>, i64)> {
+    /// Writes `changes`, keeping a conflict copy of each Entry or Document edit that missed
+    /// another's, and answers with what it wrote and the record each losing edit left standing.
+    /// A `batch` pushed before is answered as it was then and not written again.
+    pub fn push(&mut self, batch: Option<&str>, changes: Vec<Change>) -> Result<(Vec<Record>, i64)> {
         let write = self
             .db
             .transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)?;
+        if let Some(batch) = batch {
+            let answered: Option<String> = write
+                .query_row("SELECT answer FROM pushes WHERE batch = ?1", [batch], |row| row.get(0))
+                .optional()?;
+            if let Some(answer) = answered {
+                let answer: Value = serde_json::from_str(&answer).unwrap_or_default();
+                let records = answer["records"].as_array().into_iter().flatten().map(Record::from_line).collect();
+                return Ok((records, answer["head"].as_i64().unwrap_or_default()));
+            }
+        }
         let mut head = head(&write)?;
-        let mut written = Vec::new();
+        let (mut written, mut kept) = (Vec::new(), Vec::new());
         for change in changes {
             let stored = write
                 .query_row(
@@ -196,6 +227,7 @@ impl Vault {
                     if incoming.edited() >= stored.edited() {
                         (Some(incoming), stored)
                     } else {
+                        kept.push(stored);
                         (None, incoming)
                     }
                 }
@@ -224,6 +256,12 @@ impl Vault {
                     record.deleted
                 ],
             )?;
+        }
+        written.extend(kept);
+        if let Some(batch) = batch {
+            let answer = json!({"records": written.iter().map(Record::line).collect::<Vec<_>>(), "head": head});
+            write.execute("INSERT INTO pushes (batch, answer) VALUES (?1, ?2)", params![batch, answer.to_string()])?;
+            write.execute("DELETE FROM pushes WHERE n <= (SELECT MAX(n) FROM pushes) - ?1", [BATCHES])?;
         }
         write.commit()?;
         Ok((written, head))
@@ -515,7 +553,7 @@ mod tests {
         let mut vault = scratch.vault();
         assert_eq!(vault.pull(0).unwrap(), (Vec::new(), 0));
         let written = vault
-            .push(vec![
+            .push(None, vec![
                 change("t1", "task", 0, json!({"title": "Fix the login test"})),
                 change(
                     "e1",
@@ -544,25 +582,26 @@ mod tests {
         let mut vault = scratch.vault();
         let body = |text: &str, edited: i64| json!({"task": "t1", "text": text, "edited": edited});
         vault
-            .push(vec![change("e1", "entry", 0, body("one", 1))])
+            .push(None, vec![change("e1", "entry", 0, body("one", 1))])
             .unwrap();
         vault
-            .push(vec![change("e1", "entry", 1, body("two", 20))])
+            .push(None, vec![change("e1", "entry", 1, body("two", 20))])
             .unwrap();
 
         let older = vault
-            .push(vec![change("e1", "entry", 1, body("three", 10))])
+            .push(None, vec![change("e1", "entry", 1, body("three", 10))])
             .unwrap()
             .0;
-        assert_eq!(older.len(), 1);
+        assert_eq!(older.len(), 2, "the conflict copy, then the edit that stands");
         assert_eq!(older[0].kind, "conflict");
+        assert_eq!((older[1].body["text"].as_str(), older[1].seq), (Some("two"), 2));
         assert_eq!(
             older[0].body,
             json!({"of": "e1", "kind": "entry", "task": "t1", "title": null, "text": "three", "edited": 10})
         );
 
         let newer = vault
-            .push(vec![change("e1", "entry", 1, body("four", 30))])
+            .push(None, vec![change("e1", "entry", 1, body("four", 30))])
             .unwrap()
             .0;
         let kinds: Vec<&str> = newer.iter().map(|record| record.kind.as_str()).collect();
@@ -572,11 +611,11 @@ mod tests {
         assert_ne!(newer[1].id, older[0].id);
 
         let task = vault
-            .push(vec![change("t1", "task", 0, json!({"title": "A"}))])
+            .push(None, vec![change("t1", "task", 0, json!({"title": "A"}))])
             .unwrap()
             .0;
         vault
-            .push(vec![change("t1", "task", 0, json!({"title": "B"}))])
+            .push(None, vec![change("t1", "task", 0, json!({"title": "B"}))])
             .unwrap();
         let (records, _) = vault.pull(task[0].seq).unwrap();
         assert_eq!(records.len(), 1);
@@ -588,11 +627,11 @@ mod tests {
         let scratch = Scratch::new("delete");
         let mut vault = scratch.vault();
         let plan = json!({"title": "Plan", "text": "zebra", "edited": 1});
-        vault.push(vec![change("d1", "document", 0, plan)]).unwrap();
+        vault.push(None, vec![change("d1", "document", 0, plan)]).unwrap();
         assert_eq!(vault.search("zebra", None).unwrap().len(), 1);
         let mut gone = change("d1", "document", 1, json!({}));
         gone.deleted = true;
-        vault.push(vec![gone]).unwrap();
+        vault.push(None, vec![gone]).unwrap();
         let (records, head) = vault.pull(0).unwrap();
         assert_eq!((records.len(), records[0].deleted, head), (1, true, 2));
         assert!(vault.search("zebra", None).unwrap().is_empty());
@@ -629,7 +668,7 @@ mod tests {
         assert_eq!(copy, std::fs::read(&source).unwrap());
 
         vault
-            .push(vec![
+            .push(None, vec![
                 change("s1", "session", 0, json!({"task": "t1"})),
                 change("t1", "task", 0, json!({"title": "Walrus"})),
             ])
@@ -704,3 +743,7 @@ mod tests {
         assert_eq!(ids, [hits[0]["item"].as_str().unwrap()]);
     }
 }
+
+#[cfg(test)]
+#[path = "sync_tests.rs"]
+mod sync_tests;

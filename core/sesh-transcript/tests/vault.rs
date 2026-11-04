@@ -135,24 +135,29 @@ fn a_vault_is_served_over_the_command_line() {
     let scratch = Scratch::new("cli");
     let dir = scratch.path(".sesh/vaults/hobby");
     let init = lines(helper(&["vault", "init", &dir]).output().unwrap());
-    assert_eq!(init, [json!({"t": "head", "seq": 0})]);
+    let id = init[0]["vault_id"].as_str().unwrap().to_string();
+    assert_eq!(init, [json!({"t": "head", "seq": 0, "vault_id": id})]);
     let (mut follow, changes) = spawn(&["vault", "follow", &dir, "--since", "0"]);
-    assert_eq!(until(&changes, "head"), [json!({"t": "head", "seq": 0})]);
+    assert_eq!(until(&changes, "head"), init);
 
     let push = scratch.path("push.jsonl");
-    std::fs::write(&push, [
+    let batch = [
         json!({"id": "t1", "kind": "task", "body": {"title": "Feed the walrus"}, "base": 0, "deleted": false}).to_string(),
         json!({"id": "e1", "kind": "entry", "body": {"task": "t1", "text": "Fish bought", "edited": 5}, "base": 0}).to_string(),
-    ].join("\n")).unwrap();
-    let pushed = lines(helper(&["vault", "push", &dir, &push]).output().unwrap());
+    ].join("\n");
+    std::fs::write(&push, &batch).unwrap();
+    let pushed = lines(helper(&["vault", "push", &dir, &push, "--batch", "b1"]).output().unwrap());
     assert_eq!(pushed.len(), 3);
     assert_eq!(
         pushed[1],
         json!({"t": "record", "id": "e1", "kind": "entry",
         "body": {"task": "t1", "text": "Fish bought", "edited": 5}, "seq": 2, "deleted": false})
     );
-    assert_eq!(pushed[2], json!({"t": "head", "seq": 2}));
+    assert_eq!(pushed[2], json!({"t": "head", "seq": 2, "vault_id": id}));
     assert!(!std::path::Path::new(&push).exists());
+    std::fs::write(&push, &batch).unwrap();
+    let again = lines(helper(&["vault", "push", &dir, &push, "--batch", "b1"]).output().unwrap());
+    assert_eq!(again, pushed, "a batch sent again is answered as before and not written twice");
     let followed = until(&changes, "head");
     assert_eq!(followed, pushed);
     follow.kill().unwrap();
