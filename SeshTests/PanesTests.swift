@@ -50,6 +50,22 @@ final class PanesTests: XCTestCase {
         XCTAssertNil(mark(#""state":"ended""#))
     }
 
+    func testASessionsLifeComesFromTheFollowerAndWhatThisDeviceSetGoing() {
+        let idle = Panes(["vps": ["w1:p1": summary(#""state":"idle","done":2"#)]], sessions: [])
+        let gone = Panes(["vps": ["w1:p1": summary(#""state":"ended""#)]], sessions: [])
+        let running = Panes.Life.running(.init(status: "idle", done: 2))
+        XCTAssertEqual(idle.life(of: session(), reachable: true), running)
+        XCTAssertEqual(gone.life(of: session(), reachable: true), .ended)
+        XCTAssertEqual(gone.life(of: session(), reachable: false), .unknown, "an unreachable machine ends nothing")
+        XCTAssertEqual(gone.life(of: session(), reachable: true, resuming: true), .resuming)
+        XCTAssertEqual(idle.life(of: session(), reachable: true, resuming: true), running)
+        XCTAssertEqual(idle.life(of: session(), reachable: true, starting: true), .starting)
+        XCTAssertEqual(idle.life(of: session(name: "other"), reachable: true), .ended, "another Agent in the pane is not the session's")
+        XCTAssertEqual(idle.life(of: session(), reachable: true, refused: .init(status: "idle", done: 2)), .ended)
+        XCTAssertEqual(idle.life(of: session(), reachable: true, refused: .init(status: "idle", done: 1)), running,
+                       "the follower said something new since the refusal")
+    }
+
     func testTheLastMessageTimeIsRead() {
         let panes = Panes(["vps": ["w1:p1": summary(#""state":"idle","last":"2026-11-01T02:00:00.500Z""#)]], sessions: [])
         XCTAssertEqual(panes.last["vps:w1:p1"], 1_793_498_400_500)

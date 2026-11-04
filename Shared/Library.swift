@@ -117,7 +117,7 @@ final class Library: ObservableObject {
     func prewatch(_ sessions: [String], in vault: Vault) async {
         var held: [Conversation] = []
         for id in sessions {
-            guard let record = vault.records[id], record.body.pane != nil, !ended(record), !Task.isCancelled else { continue }
+            guard let record = vault.records[id], showsPane(record), !Task.isCancelled else { continue }
             let conversation = await conversation(for: record)
             conversation.shown()
             held.append(conversation)
@@ -128,30 +128,14 @@ final class Library: ObservableObject {
 
     /// The live pane while its machine has it; otherwise the Vault's copy of the last Transcript.
     func conversation(for session: Record) async -> Conversation {
-        // An Agent that died while its Tab was hidden left its pane's Conversation cached.
-        if let known = conversations[session.id], known.pane == nil ? !listsLive(session) : !ended(session) { return known }
+        let pane = showsPane(session)
+        if let known = conversations[session.id], (known.pane != nil) == pane { return known }
         conversations.removeValue(forKey: session.id)?.unfollow()
         let machine = TaskActions.machine(session.body.machine)
         let agent = session.body.agent.flatMap(Agent.init)
         let cache = Self.cache(of: session.id)
-        // A session kept on the device opens from what it last showed, at once; whether its Agent
-        // still runs is found out meanwhile.
-        let kept = FileManager.default.fileExists(atPath: cache.path) && !stopped.contains(session.id) && !ended(session)
-        let running: Bool
-        if kept {
-            running = true
-            Task { [weak self] in
-                guard let self, !(await self.runs(session, on: machine)) else { return }
-                stopped.insert(session.id)
-                reload(session.id)
-            }
-        } else {
-            running = await runs(session, on: machine)
-        }
-        resuming.remove(session.id)
         let conversation: Conversation
-        if !running, let vault = vault(of: session.id), let last = session.body.transcripts?.last, let agent {
-            let copy = "\(vault.folder)/transcripts/\(session.id)/\((last as NSString).lastPathComponent)"
+        if !pane, let copy = copy(of: session), let agent, let vault = vault(of: session.id) {
             conversation = Conversation(source: .file(path: copy, agent: agent), agent: agent, runner: vault.machine)
         } else {
             conversation = Conversation(pane: session.body.pane ?? "", agent: agent, runner: machine)
@@ -185,20 +169,9 @@ final class Library: ObservableObject {
         return conversation
     }
 
-    /// Sessions found stopped since the app started, which open from their Vault copy.
-    private var stopped: Set<String> = []
-
     private static func cache(of session: String) -> URL {
         FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
             .appending(path: "Sesh/conversations/\(session).json")
-    }
-
-    /// Whether the session's pane still runs its Agent; a pane whose Agent exited is a bare shell.
-    private func runs(_ session: Record, on machine: Machine) async -> Bool {
-        if listsLive(session) { return true }
-        _ = await machine.prepare()
-        if case .found(let pane) = await Mux.look(for: session.body.pane ?? "", on: machine) { return pane.agent != nil }
-        return false
     }
 
     init() {
@@ -263,6 +236,7 @@ final class Library: ObservableObject {
                     self.followers[machine.id] = Task { [weak self] in
                         await machine.follower.sessions { online in
                             if online { self?.listed.insert(machine.id) } else { self?.listed.remove(machine.id) }
+                            self?.sync()
                         } line: { self?.summarize($0, on: machine.id) }
                     }
                 }
@@ -289,17 +263,22 @@ final class Library: ObservableObject {
         name(from: read)
         for (key, last) in read.last where active[key] != last { active[key] = last }
         if panes != read { panes = read }
-        for id in resuming {
-            if let session = vault(of: id)?.records[id], listsLive(session) { resuming.remove(id) }
-        }
-        // One failed look at a pane opens its copy, which has no message box; the poll knows better.
-        for (id, conversation) in conversations where conversation.pane == nil {
-            if let session = vault(of: id)?.records[id], listsLive(session) {
-                stopped.remove(id)
-                reload(id)
-            }
-        }
+        sync()
         markSeen()
+    }
+
+    /// Reloads each kept Conversation whose source no longer fits its session's Life: the pane
+    /// while its Agent may run, else the Vault's copy. Resuming ends once the follower lists the
+    /// Agent, or after a while, should it never come up.
+    private func sync() {
+        for (id, until) in resuming {
+            guard let session = vault(of: id)?.records[id] else { continue }
+            if case .running = panes.life(of: session, reachable: reachable(session), refused: refused[id]) { resuming[id] = nil }
+            if until < .now { resuming[id] = nil }
+        }
+        for (id, conversation) in conversations {
+            if let session = vault(of: id)?.records[id], (conversation.pane != nil) != showsPane(session) { reload(id) }
+        }
     }
 
     // MARK: Marks
@@ -466,24 +445,36 @@ final class Library: ObservableObject {
 
     /// The machines whose Agents the last poll listed, by alias, "" for the Mac.
     @Published private(set) var listed: Set<String> = []
-    /// Agent sessions being started again, until their Conversation is loaded afresh, as sesh-mux
-    /// lists each only once its Agent is up.
-    @Published private(set) var resuming: Set<String> = []
+    /// Agent sessions being started again, with when to give up waiting for the follower to list
+    /// each, as sesh-mux lists an Agent only once it is up.
+    @Published private var resuming: [String: Date] = [:]
+    private static let resumeGrace: TimeInterval = 30
     /// Bumped when a session's Conversation must be loaded afresh, from its pane or its copy.
     @Published private(set) var reloads: [String: Int] = [:]
 
-    /// Whether the session shows its Resume bar: its Agent has stopped, or is being started again.
-    func resumable(_ session: Record) -> Bool { ended(session) || resuming.contains(session.id) }
-
-    /// Whether a session's Agent has stopped: its machine answered and no longer lists it.
-    func ended(_ session: Record) -> Bool {
-        !resuming.contains(session.id) && reachable(session) && !listsLive(session)
+    /// Whether the session's Agent runs, the one answer every view reads.
+    func life(of session: Record) -> Panes.Life {
+        panes.life(of: session, reachable: reachable(session), starting: launching.contains(session.id),
+                   resuming: resuming[session.id] != nil, refused: refused[session.id])
     }
 
-    /// Whether the follower lists the session's Agent as running, and has said something new of
-    /// it since the Agent last refused a message.
-    private func listsLive(_ session: Record) -> Bool {
-        panes.live[key(session)].map { $0 != refused[session.id] } ?? false
+    func ended(_ session: Record) -> Bool { life(of: session) == .ended }
+
+    func isResuming(_ session: Record) -> Bool { life(of: session) == .resuming }
+
+    /// Whether the session shows its Resume bar: its Agent has stopped, or is being started again.
+    func resumable(_ session: Record) -> Bool { [.ended, .resuming].contains(life(of: session)) }
+
+    /// Whether the session shows its pane, live or kept from last time, rather than the Vault's
+    /// copy of its last Transcript; a session with no copy has only its pane.
+    func showsPane(_ session: Record) -> Bool {
+        session.body.pane != nil && (life(of: session) != .ended || copy(of: session) == nil || session.body.agent == nil)
+    }
+
+    /// The Vault's copy of the session's last Transcript.
+    private func copy(of session: Record) -> String? {
+        guard let vault = vault(of: session.id), let last = session.body.transcripts?.last else { return nil }
+        return "\(vault.folder)/transcripts/\(session.id)/\((last as NSString).lastPathComponent)"
     }
 
     /// Sessions whose pane held no Agent when it refused a message, with what the follower then
@@ -498,7 +489,7 @@ final class Library: ObservableObject {
         case .found, .gone: break
         }
         refused[session.id] = panes.live[key(session)]
-        reload(session.id)
+        sync()
         return true
     }
 
@@ -513,7 +504,7 @@ final class Library: ObservableObject {
         await vault(of: session.id)?.copier.copy([session])
         if let pane = session.body.pane, holdsPane(session) { _ = await TaskActions.machine(session.body.machine).follower.stop(pane) }
         panes.live[key(session)] = nil
-        reload(session.id)
+        sync()
     }
 
     /// A session the user asked to end while its Agent was busy, until they confirm.
@@ -534,15 +525,14 @@ final class Library: ObservableObject {
 
     func resume(_ session: Record) async {
         guard let vault = vault(of: session.id), let task = session.body.task.flatMap({ vault.records[$0] }) else { return }
-        resuming.insert(session.id)
+        resuming[session.id] = .now + Self.resumeGrace
         if let problem = await TaskActions.resume(vault.records[session.id] ?? session, of: task, in: vault) {
-            resuming.remove(session.id)
+            resuming[session.id] = nil
             resumeProblem = problem
             return
         }
-        stopped.remove(session.id)
         refused[session.id] = nil
-        reload(session.id)
+        sync()
     }
 
     /// Every machine an Agent session can start on: the Mac, then each Vault's Host.
@@ -556,9 +546,8 @@ final class Library: ObservableObject {
     func resume(_ session: Record, as resumption: Resumption) async {
         guard resumption != .here else { return await resume(session) }
         guard let vault = vault(of: session.id), let agent = session.body.agent.flatMap(Agent.init),
-              let last = session.body.transcripts?.last, let task = session.body.task else { return }
+              let copy = copy(of: session), let task = session.body.task else { return }
         await vault.copier.copy([session])
-        let copy = "\(vault.folder)/transcripts/\(session.id)/\((last as NSString).lastPathComponent)"
         let target = if case .on(let machine) = resumption { machine } else { TaskActions.machine(session.body.machine) }
         guard let placed = await place(copy, agent: agent, from: vault.machine, on: target, fork: resumption == .fork, in: vault) else { return }
         var record = vault.records[session.id] ?? session

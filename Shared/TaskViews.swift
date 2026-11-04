@@ -65,7 +65,7 @@ struct TabMenuItems: View {
     let rename: (Record) -> Void
 
     var body: some View {
-        let menu = TabMenu(tab, in: vault, ended: { library.ended($0) }, resuming: library.resuming, reachable: { library.reachable($0) })
+        let menu = TabMenu(tab, in: vault, life: { library.life(of: $0) })
         if let record = menu.record { Button("Rename…") { rename(record) } }
         if let path = menu.path { Button("Copy Path") { Pasteboard.copy(path) } }
         if menu.closes { Button("Close Tab") { library.close(tab, in: task) } }
@@ -118,10 +118,7 @@ extension View {
     /// Loads an Agent session's Conversation, again whenever the Library asks. An Agent that
     /// exits by itself leaves a bare shell; its Conversation then comes from the copy.
     func loadsConversation(_ conversation: Binding<Conversation?>, of id: String, in vault: Vault, library: Library) -> some View {
-        onChange(of: vault.records[id].map(library.ended) ?? false) { _, ended in
-            if ended, conversation.wrappedValue?.pane != nil { library.reload(id) }
-        }
-        .task(id: library.reloads[id, default: 0]) {
+        task(id: library.reloads[id, default: 0]) {
             guard let session = vault.records[id] else { return }
             conversation.wrappedValue = await library.conversation(for: session)
             #if DEBUG

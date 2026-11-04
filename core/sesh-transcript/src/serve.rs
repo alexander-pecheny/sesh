@@ -28,6 +28,8 @@ const TICK: Duration = Duration::from_millis(100);
 /// sesh-mux's panes are listed less often than the screens of working Agents are read.
 const LIST_EVERY: u32 = 2;
 const GONE_AFTER: Duration = Duration::from_secs(2);
+/// How long sesh-mux may fail to list its panes, as while it restarts, before its Agents count as gone.
+const MUX_GONE_AFTER: Duration = Duration::from_secs(30);
 /// With no device attached this long, the follower leaves; the Transcript fills the gap later.
 const IDLE_EXIT: Duration = Duration::from_secs(6 * 60 * 60);
 const PING: Duration = Duration::from_secs(30);
@@ -458,11 +460,16 @@ fn run(record: Option<(PathBuf, String)>) -> Result<i32> {
     let mut busy = Instant::now();
     let mut ticks = 0u32;
     let mut panes: Vec<Value> = Vec::new();
+    let mut listed = Instant::now();
     loop {
         let started = Instant::now();
         accept(&listener, &mut clients);
         if ticks % LIST_EVERY == 0 {
-            panes = source.borrow_mut().panes().unwrap_or_default();
+            match source.borrow_mut().panes() {
+                Ok(now) => (panes, listed) = (now, started),
+                Err(_) if started.duration_since(listed) > MUX_GONE_AFTER => panes.clear(),
+                Err(_) => {}
+            }
         }
         ticks += 1;
         if let Err(err) = machine.tick(&panes, started) {

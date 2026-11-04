@@ -102,6 +102,28 @@ struct Panes: Equatable {
         session.body.pane != nil && !key(of: session).hasSuffix("#replaced")
     }
 
+    /// Whether an Agent session's Agent runs, the one answer every view reads.
+    enum Life: Equatable {
+        /// Its machine has not answered, so nothing is known either way.
+        case unknown
+        /// Its pane exists and its Agent cannot take a prompt yet.
+        case starting
+        /// Sesh started it again and the follower has not listed it yet.
+        case resuming
+        case running(Live)
+        case ended
+    }
+
+    /// The session's Life, from the followers' summaries and what this device itself set going.
+    /// `refused` is what the follower said of the pane when its Agent refused a message for want
+    /// of an Agent; the session stays ended until the follower says something new.
+    func life(of session: Record, reachable: Bool, starting: Bool = false, resuming: Bool = false, refused: Live? = nil) -> Life {
+        if starting { return .starting }
+        if let live = live[key(of: session)], live != refused { return .running(live) }
+        if resuming { return .resuming }
+        return reachable ? .ended : .unknown
+    }
+
     /// An Agent waiting on the user outranks one working, which outranks one finished unseen.
     func mark(of session: Record, seen: [String: UInt64]) -> Mark? {
         let key = key(of: session)

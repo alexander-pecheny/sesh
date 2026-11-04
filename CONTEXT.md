@@ -85,6 +85,11 @@ Resume may also start the Agent on another machine, which gets a copy of the Tra
 in the same folder or the same place under its home, or Fork it under a new session id.
 _Avoid_: closed, killed, dead
 
+**Life**:
+Whether an Agent session's Agent runs, as Sesh shows it: unknown while its machine does not
+answer, starting, resuming, running or ended. The follower on its machine decides running and
+ended; a device adds only what it set going itself. A machine that does not answer ends nothing.
+
 **Workspace**:
 sesh-mux's group of Agent sessions, usually one per folder or branch copy. Each Task is one
 Workspace named after its title.

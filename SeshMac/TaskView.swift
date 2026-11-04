@@ -36,7 +36,7 @@ struct TaskView: View {
                     .help("New Tab")
                 }
                 Spacer()
-                if case .session(let session) = current, let record = vault.records[session], record.body.pane != nil, !library.ended(record) {
+                if case .session(let session) = current, let record = vault.records[session], library.showsPane(record) {
                     FaceSwitch(session: session).padding(.horizontal, Metric.gap)
                 }
                 if let task = vault.records[id], let worktree = current.worktree(of: task, in: vault) {
@@ -220,7 +220,7 @@ private struct SessionTab: View {
                 let resumable = conversation.pane == nil && library.resumable(session)
                 ConversationView(conversation: conversation, title: session.body.title ?? "Agent session", fresh: false, hidden: terminal,
                                  resume: resumable ? { await library.resume(session, as: $0) } : nil,
-                                 resuming: library.resuming.contains(session.id),
+                                 resuming: library.isResuming(session),
                                  elsewhere: library.machines.filter { $0.alias != session.body.machine })
                     .id(ObjectIdentifier(conversation))
                     .opacity(terminal ? 0 : 1)

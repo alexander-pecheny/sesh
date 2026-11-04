@@ -184,7 +184,7 @@ private struct SessionScreen: View {
             } else if let conversation, let session = vault.records[id] {
                 ConversationView(conversation: conversation, title: session.body.title ?? "Agent session", fresh: false,
                                  resume: conversation.pane == nil && library.resumable(session) ? { await library.resume(session, as: $0) } : nil,
-                                 resuming: library.resuming.contains(session.id),
+                                 resuming: library.isResuming(session),
                                  elsewhere: library.machines.filter { $0.alias != session.body.machine },
                                  place: place(of: session))
                     .id(ObjectIdentifier(conversation))
@@ -193,7 +193,7 @@ private struct SessionScreen: View {
             }
         }
         .toolbar {
-            if conversation?.pane != nil {
+            if let session = vault.records[id], library.showsPane(session) {
                 ToolbarItem(placement: .topBarTrailing) {
                     Button {
                         if terminal { library.terminalFace.remove(id) } else { library.terminalFace.insert(id) }

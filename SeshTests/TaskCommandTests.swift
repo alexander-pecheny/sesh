@@ -94,8 +94,8 @@ final class TaskCommandTests: XCTestCase {
         XCTAssertEqual(Tree.moveTargets(for: document, in: vault).map(\.body.title), ["Other"])
     }
 
-    private func menu(_ tab: TabItem, ended: Bool = false, resuming: Set<String> = []) -> TabMenu {
-        TabMenu(tab, in: vault, ended: { _ in ended }, resuming: resuming)
+    private func menu(_ tab: TabItem, life: Panes.Life = .running(.init(status: "idle", done: 0))) -> TabMenu {
+        TabMenu(tab, in: vault, life: { _ in life })
     }
 
     func testTheJournalOffersNothing() {
@@ -127,10 +127,10 @@ final class TaskCommandTests: XCTestCase {
         XCTAssertEqual(running.endTitle, "Close Tab and End Codex Session")
         XCTAssertEqual(running.endOnlyTitle, "End Codex Session")
         XCTAssertNil(running.path)
-        let ended = menu(.session(session.id), ended: true)
+        let ended = menu(.session(session.id), life: .ended)
         XCTAssertEqual(ended.resume?.id, session.id)
         XCTAssertNil(ended.end)
-        let resuming = menu(.session(session.id), resuming: [session.id])
+        let resuming = menu(.session(session.id), life: .resuming)
         XCTAssertNil(resuming.end)
         XCTAssertNil(resuming.resume)
     }
@@ -172,7 +172,7 @@ final class TaskCommandTests: XCTestCase {
         let away = make(.session, "Away", task: task.id)
         let menu = NewTabMenu(task: task.id, machines: ["Mac"], in: vault, ended: { _ in false }, reachable: { $0.id != away.id })
         XCTAssertEqual(menu.sections.map(\.title), [nil, nil, "On machines Sesh cannot reach"])
-        XCTAssertNil(TabMenu(.session(away.id), in: vault, ended: { _ in false }, resuming: [], reachable: { _ in false }).end)
+        XCTAssertNil(TabMenu(.session(away.id), in: vault, life: { _ in .unknown }).end)
     }
 
     func testClaudeStartsWithRemoteControlUnlessTheTaskSaysNo() {

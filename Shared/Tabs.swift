@@ -103,14 +103,19 @@ struct TabMenu {
     /// A running Agent session, to close with its Tab.
     let end: Record?
 
-    init(_ tab: TabItem, in vault: some Records, ended: (Record) -> Bool, resuming: Set<String>, reachable: (Record) -> Bool = { _ in true }) {
+    init(_ tab: TabItem, in vault: some Records, life: (Record) -> Panes.Life) {
         record = tab.record.flatMap { vault.records[$0] }
         targets = record.map { Tree.moveTargets(for: $0, in: vault) } ?? []
         path = record?.kind == .document ? record?.body.path : nil
         closes = tab != .journal
         let session = record?.kind == .session ? record : nil
-        resume = session.flatMap { ended($0) ? $0 : nil }
-        end = session.flatMap { ended($0) || resuming.contains($0.id) || !reachable($0) ? nil : $0 }
+        resume = session.flatMap { life($0) == .ended ? $0 : nil }
+        end = session.flatMap {
+            switch life($0) {
+            case .running, .starting: $0
+            case .unknown, .resuming, .ended: nil
+            }
+        }
     }
 
     var endTitle: String { "Close Tab and \(endOnlyTitle)" }
