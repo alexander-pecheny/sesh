@@ -671,18 +671,19 @@ pub fn login_environment() -> &'static [(String, String)] {
     static READ: OnceLock<Vec<(String, String)>> = OnceLock::new();
     READ.get_or_init(|| {
         const MARK: &str = "--sesh-environment--";
-        let own: Vec<(String, String)> = std::env::vars().collect();
+        let own: Vec<(String, String)> = std::env::vars().filter(|(name, _)| crate::environment::kept(name)).collect();
         let shell = std::env::var("SHELL").unwrap_or_else(|_| "/bin/zsh".into());
         let read = std::process::Command::new(&shell)
             .args(["-l", "-i", "-c", &format!("printf '{MARK}'; env -0")])
+            .env_clear()
+            .envs(own.iter().cloned())
             .stdin(Stdio::null())
             .stderr(Stdio::null())
             .output();
         let Ok(read) = read else { return own };
         let text = String::from_utf8_lossy(&read.stdout);
         let Some((_, env)) = text.split_once(MARK) else { return own };
-        let mut found: Vec<(String, String)> =
-            env.split('\0').filter_map(|pair| pair.split_once('=')).map(|(n, v)| (n.to_string(), v.to_string())).collect();
+        let mut found = crate::environment::parse(env);
         // The app's own variables, such as the agent's socket, stay where the shell has none.
         for (name, value) in own {
             if !found.iter().any(|(known, _)| *known == name) {

@@ -1,51 +1,30 @@
 import Foundation
 
-/// Commands the Mac runs on itself, through its login shell's environment.
+/// Commands the Mac runs on itself, in `/bin/sh` with its login shell's environment, as a Link
+/// runs them on a Host.
 @MainActor
 final class Local {
     private var running: Set<Process> = []
     private var tethers: [ObjectIdentifier: Pipe] = [:]
 
-    /// An interactive shell may greet first; everything before this line is its greeting.
-    nonisolated static let mark = "--sesh-output--"
-
-    /// The login shell's environment as `export` lines, read once, so PATH has what the user
-    /// installed without a login shell for every command.
-    private var environment: Task<String?, Never>?
+    /// The login shell's environment as `export` lines, read once by sesh-core, so PATH has what
+    /// the user installed without a login shell for every command.
+    private static let exports = Task.detached {
+        let exports = sesh_login_exports()
+        defer { sesh_string_free(exports) }
+        return exports.map { String(cString: $0) } ?? ""
+    }
 
     func stop() { running.forEach { $0.terminate() } }
 
-    private func loginExports() async -> String? {
-        if environment == nil {
-            environment = Task {
-                let ran = await launch("env -0", line: nil, input: nil, opened: nil, exports: nil)
-                if !ran.ok { environment = nil }
-                return ran.ok ? exports(fromEnv: ran.out) : nil
-            }
-        }
-        return await environment?.value
-    }
-
-    /// A stream runs until the app's end of its stdin closes, which happens however the app
-    /// ends, so no command outlives the app that reads it.
-    private static func tethered(_ command: String) -> String {
-        "{ \(command)\n} & child=$!; { cat >/dev/null; kill $child 2>/dev/null; } >/dev/null 2>&1 & wait $child"
-    }
-
     func run(_ command: String, line: ((String) -> Void)?, input: Data?,
              opened: ((@escaping (String) -> Void) -> Void)?) async -> Ran {
-        let exports = await loginExports()
+        let exports = await Self.exports.value
         // The tether reads stdin itself, so a stream that is written to goes without one.
-        let command = line == nil || opened != nil ? command : Self.tethered(command)
-        return await launch(command, line: line, input: input, opened: opened, exports: exports)
-    }
-
-    private func launch(_ command: String, line: ((String) -> Void)?, input: Data?,
-                        opened: ((@escaping (String) -> Void) -> Void)?, exports: String?) async -> Ran {
+        let command = line == nil || opened != nil ? command : tethered(command)
         let process = Process()
-        let marked = "echo \(Self.mark); " + command
-        process.executableURL = URL(filePath: "/bin/zsh")
-        process.arguments = exports.map { ["-c", $0 + marked] } ?? ["-lic", marked]
+        process.executableURL = URL(filePath: "/bin/sh")
+        process.arguments = ["-c", exports + command]
         process.standardInput = FileHandle.nullDevice
         let out = Pipe(), err = Pipe()
         process.standardOutput = out
@@ -53,7 +32,7 @@ final class Local {
         // Data to write, or, for a stream, an input the app never writes and only closes.
         let feed = input != nil || line != nil ? Pipe() : nil
         if let feed { process.standardInput = feed }
-        let lines = Greeted(line)
+        let lines = Lines(line)
         let collected = Collector()
         // Output is read only by its handlers, to its end, and taken once the process has also
         // exited: a second reader at exit raced them and could put a chunk out of order.
@@ -80,11 +59,9 @@ final class Local {
                     self.running.remove(process)
                     try? self.tethers.removeValue(forKey: ObjectIdentifier(process))?.fileHandleForWriting.close()
                     lines.flush()
-                    let out = String(decoding: collected.out.data, as: UTF8.self)
-                    let marked = out.range(of: Self.mark + "\n")
                     done.resume(returning: Ran(
                         status: process.terminationStatus,
-                        out: marked.map { String(out[$0.upperBound...]) } ?? out,
+                        out: String(decoding: collected.out.data, as: UTF8.self),
                         err: String(decoding: collected.err.data, as: UTF8.self)))
                 } }
                 do {
@@ -127,24 +104,21 @@ private final class Collector: @unchecked Sendable {
     let err = Buffer()
 }
 
-/// A stream's whole lines, those of the shell's greeting left out.
+/// A stream's whole lines.
 @MainActor
-private final class Greeted {
+private final class Lines {
     private let line: ((String) -> Void)?
     private var lines = LineSplitter()
-    private(set) var greeted = false
 
     init(_ line: ((String) -> Void)?) { self.line = line }
 
     func feed(_ chunk: Data) {
         guard let line else { return }
-        for text in lines.feed(chunk) {
-            if greeted { line(text) } else { greeted = text == Local.mark }
-        }
+        lines.feed(chunk).forEach(line)
     }
 
     func flush() {
-        guard let line, greeted, let rest = lines.flush() else { return }
+        guard let line, let rest = lines.flush() else { return }
         line(rest)
     }
 }
