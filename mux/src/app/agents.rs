@@ -19,7 +19,7 @@ fn launch_argv(executable: &str, env: &std::collections::BTreeMap<String, String
         return None;
     }
     let assignments = env.iter().map(|(name, value)| format!("{name}={value}"));
-    let head = (!env.is_empty()).then(|| "env".to_string());
+    let head = (!env.is_empty()).then(|| "/usr/bin/env".to_string());
     Some(head.into_iter().chain(assignments).chain([executable.to_string()]).chain(args).collect())
 }
 
@@ -479,7 +479,7 @@ mod tests {
         let env = [("CLAUDE_CONFIG_DIR".to_string(), "/home/a b/.claude-work".to_string())].into();
         assert_eq!(
             super::launch_argv("claude", &env, vec!["--resume".into(), "x".into()]).unwrap(),
-            ["env", "CLAUDE_CONFIG_DIR=/home/a b/.claude-work", "claude", "--resume", "x"]
+            ["/usr/bin/env", "CLAUDE_CONFIG_DIR=/home/a b/.claude-work", "claude", "--resume", "x"]
         );
         assert_eq!(super::launch_argv("pi", &Default::default(), Vec::new()).unwrap(), ["pi"]);
         assert!(super::launch_argv("pi", &[("A=B".to_string(), "c".to_string())].into(), Vec::new()).is_none());

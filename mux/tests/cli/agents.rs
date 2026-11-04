@@ -327,7 +327,7 @@ fn agent_start_command_works() {
         "shell-pane"
     );
     let argv: Vec<&str> = started["result"]["argv"].as_array().unwrap().iter().map(|arg| arg.as_str().unwrap()).collect();
-    assert_eq!(argv[0], "env");
+    assert_eq!(argv[0], "/usr/bin/env");
     assert!(argv.contains(&format!("SESH_MUX_PANE_ID={pane_id}").as_str()));
     assert_eq!(argv[argv.len() - 4..], ["pi", "--name", "scratch", "--no-session"]);
     assert_eq!(

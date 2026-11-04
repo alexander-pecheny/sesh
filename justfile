@@ -56,6 +56,10 @@ icon name:
 core-test:
     cd core && cargo test
 
+# sesh-mux's tests on Linux, in a container, since some build only there.
+mux-linux-test *args:
+    ./scripts/mux-linux-test.sh {{args}}
+
 sshd:
     ./scripts/local-sshd.sh
 
