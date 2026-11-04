@@ -1,6 +1,6 @@
 import XCTest
 
-/// The Mac or a Host as Sesh reaches it, through a login shell, for closing real Tasks.
+/// The Mac or a Host as Sesh reaches it, `/bin/sh` in a login shell, for closing real Tasks.
 @MainActor
 final class LiveShell: Runner {
     let alias: String?
@@ -14,12 +14,13 @@ final class LiveShell: Runner {
     func run(_ command: String) async -> Ran {
         let command = command.replacingOccurrences(of: Helper.path, with: "~/.sesh/bin/sesh-transcript")
         let process = Process()
+        let plain = "exec /bin/sh -c \(quote("echo \(Self.mark); " + command))"
         if let alias {
             process.executableURL = URL(filePath: "/usr/bin/ssh")
-            process.arguments = ["-o", "BatchMode=yes", "-o", "ControlMaster=auto", "-o", "ControlPath=\(NSHomeDirectory())/.sesh/ssh/%C", "-o", "ControlPersist=600", alias, "exec \"$SHELL\" -lic \(quote("echo \(Self.mark); " + command))"]
+            process.arguments = ["-o", "BatchMode=yes", "-o", "ControlMaster=auto", "-o", "ControlPath=\(NSHomeDirectory())/.sesh/ssh/%C", "-o", "ControlPersist=600", alias, "exec \"$SHELL\" -lic \(quote(plain))"]
         } else {
             process.executableURL = URL(filePath: "/bin/zsh")
-            process.arguments = ["-lic", "echo \(Self.mark); " + command]
+            process.arguments = ["-lic", plain]
         }
         let out = Pipe(), err = Pipe()
         process.standardOutput = out

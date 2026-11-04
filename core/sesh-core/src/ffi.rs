@@ -295,6 +295,19 @@ pub unsafe extern "C" fn sesh_set_device(id: *const c_char) {
     }
 }
 
+/// Takes the variables of whichever terminal or Agent started the app out of its environment,
+/// so no command it runs inherits them. Call it once, first thing.
+#[no_mangle]
+pub extern "C" fn sesh_forget_session_environment() {
+    crate::environment::forget_sessions();
+}
+
+/// The user's login environment on this machine as `export` lines for `/bin/sh`, read once;
+/// the first call waits for the login shell. Free it with `sesh_string_free`.
+#[no_mangle]
+pub extern "C" fn sesh_login_exports() -> *mut c_char {
+    raw(crate::environment::exports(crate::dial::login_environment()))
+}
 
 /// Opens a Link to a Host from the phone's list and returns immediately; its state arrives
 /// on `on_state`. Returns NULL only when `config` is NULL.

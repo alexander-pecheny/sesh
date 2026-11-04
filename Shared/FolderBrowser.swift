@@ -187,7 +187,8 @@ struct FolderBrowser: View {
         var data = Data()
         var sized = false
         var broken = false
-        let ran = await machine.fetch("set -o pipefail; \(send) | base64 | tr -d '\\n' | fold -w 65536") { line in
+        // dash before 0.5.13 has no pipefail; there the size check alone catches a short file.
+        let ran = await machine.fetch("! (set -o pipefail) 2>/dev/null || set -o pipefail; \(send) | base64 | tr -d '\\n' | fold -w 65536") { line in
             guard sized else {
                 sized = true
                 return expected = Int(line.trimmingCharacters(in: .whitespaces))

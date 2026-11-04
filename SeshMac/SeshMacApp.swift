@@ -4,7 +4,10 @@ import SwiftUI
 struct SeshMacApp: App {
     @StateObject private var library = Library()
 
-    init() { Device.name() }
+    init() {
+        sesh_forget_session_environment()
+        Device.name()
+    }
 
     var body: some Scene {
         WindowGroup(id: "main") {

@@ -219,19 +219,11 @@ func shellPath(_ path: String) -> String {
 
 func quote(_ text: String) -> String { "'" + text.replacingOccurrences(of: "'", with: "'\\''") + "'" }
 
-/// What `env -0` printed, as `export` lines that give a plain shell the same environment, or
-/// nil when it lacks a PATH to run anything by.
-func exports(fromEnv env: String) -> String? {
-    // Variables the shell sets for itself, which it refuses or ignores when given.
-    let own: Set = ["_", "PWD", "OLDPWD", "SHLVL", "SHELLOPTS", "BASHOPTS", "BASHPID", "PPID", "UID", "EUID"]
-    let exports = env.split(separator: "\0").compactMap { pair -> String? in
-        guard let equals = pair.firstIndex(of: "=") else { return nil }
-        let name = String(pair[..<equals])
-        let valid = !name.isEmpty && name.allSatisfy { $0 == "_" || ($0.isASCII && ($0.isLetter || $0.isNumber)) }
-        guard valid, !own.contains(name) else { return nil }
-        return "export \(name)=\(quote(String(pair[pair.index(after: equals)...]))); "
-    }.joined()
-    return exports.contains("export PATH=") ? exports : nil
+/// `command` run until the app's end of its stdin closes, which happens however the app ends, so
+/// no command the Mac streams outlives the app that reads it. sh gives a background job
+/// /dev/null for stdin, so the watcher reads the real one through fd 3.
+func tethered(_ command: String) -> String {
+    "exec 3<&0; { \(command)\n} 3<&- & child=$!; { cat <&3 >/dev/null; kill $child 2>/dev/null; } >/dev/null 2>&1 & wait $child"
 }
 
 enum Names {

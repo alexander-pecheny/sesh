@@ -11,6 +11,7 @@ use russh::{ChannelMsg, Sig};
 use tokio::sync::oneshot;
 
 use crate::dial::{self, Handler};
+use crate::environment;
 use crate::flags::MoshFlags;
 use crate::session::{in_login_shell, Command, Context, Events, Session, State};
 use crate::ssh_config::Host;
@@ -118,16 +119,13 @@ async fn serve(dialed: dial::Dialed, mosh: Option<MoshFlags>, context: Context) 
     Ok(())
 }
 
-/// How a command reaches the Host's shell. Each one used to start the login shell afresh, rc
-/// files and all, which on a busy Host costs seconds; its environment is read once instead,
-/// and each command runs in a plain `$SHELL -c` with it.
+/// How a command reaches the Host. Each one used to start the login shell afresh, rc files and
+/// all, which on a busy Host costs seconds; its environment is read once instead, and each
+/// command runs in a plain `/bin/sh -c` with it.
 enum Shell {
     Login,
     Plain(String),
 }
-
-/// Variables the shell sets for itself, which it refuses or ignores when given.
-const OWN: &[&str] = &["_", "PWD", "OLDPWD", "SHLVL", "SHELLOPTS", "BASHOPTS", "BASHPID", "PPID", "UID", "EUID"];
 
 impl Shell {
     async fn read<H: client::Handler>(handle: &client::Handle<H>) -> Self {
@@ -140,24 +138,19 @@ impl Shell {
 
     /// The shell that gives each command the environment `env -0` printed.
     fn from_env(env: &str) -> Self {
-        let exports: String = env
-            .split('\0')
-            .filter_map(|pair| pair.split_once('='))
-            .filter(|(name, _)| !OWN.contains(name) && !name.is_empty() && name.chars().all(|c| c == '_' || c.is_ascii_alphanumeric()))
-            .map(|(name, value)| format!("export {name}={}; ", mosh::opts::shell_quote(value)))
-            .collect();
-        if exports.contains("export PATH=") { Self::Plain(exports) } else { Self::Login }
+        let vars = environment::parse(env);
+        if vars.iter().any(|(name, _)| name == "PATH") { Self::Plain(environment::exports(&vars)) } else { Self::Login }
     }
 
     fn wrap(&self, command: &str) -> String {
         self.command(&format!("echo {MARK}; {command}"))
     }
 
-    /// `command` with the login shell's environment, with no mark before its output.
+    /// `command` in `/bin/sh` with the login shell's environment, with no mark before its output.
     fn command(&self, command: &str) -> String {
         match self {
-            Self::Login => in_login_shell(command),
-            Self::Plain(exports) => format!("exec \"$SHELL\" -c {}", mosh::opts::shell_quote(&format!("{exports}{command}"))),
+            Self::Login => in_login_shell(&environment::plain("", command)),
+            Self::Plain(exports) => environment::plain(exports, command),
         }
     }
 }
@@ -267,7 +260,7 @@ mod tests {
         let shell = Shell::from_env("PATH=/usr/bin:/bin\0GREETING=it's a \"walrus\"\nhere\0SHLVL=7\0");
         let output = std::process::Command::new("sh")
             .args(["-c", &shell.wrap(r#"printf '%s|%s' "$GREETING" "$SHLVL""#)])
-            .env("SHELL", "/bin/sh")
+            .env("SHELL", "/bin/zsh")
             .output()
             .unwrap();
         let printed = String::from_utf8(output.stdout).unwrap();
