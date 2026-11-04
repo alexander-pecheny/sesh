@@ -548,12 +548,6 @@ fn ensure_cleanup_hooks() {
 
         let _ = CLEANUP_GUARD.set(CleanupGuard);
 
-        let previous_hook = std::panic::take_hook();
-        std::panic::set_hook(Box::new(move |panic_info| {
-            cleanup_registered_sesh_mux_pids();
-            previous_hook(panic_info);
-        }));
-
         let _ = ctrlc::set_handler(|| {
             cleanup_registered_sesh_mux_pids();
             std::process::exit(130);

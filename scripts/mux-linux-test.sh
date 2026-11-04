@@ -6,4 +6,4 @@ root=$(cd "$(dirname "$0")/.." && pwd)
 docker info >/dev/null 2>&1 || colima start >/dev/null
 git -C "$root" submodule update --init mux/vendor/ghostty
 docker build -q -t sesh-mux-linux-test "$root/scripts/linux-test" >/dev/null
-docker run --rm -v "$root/mux":/src:ro -v sesh-mux-linux-target:/target -w /src sesh-mux-linux-test cargo test "$@"
+docker run --rm --init -v "$root/mux":/src:ro -v sesh-mux-linux-target:/target -w /src sesh-mux-linux-test cargo test "$@"

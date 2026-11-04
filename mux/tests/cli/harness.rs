@@ -12,27 +12,12 @@ pub(super) use crate::support::{
 };
 use portable_pty::{native_pty_system, Child, CommandBuilder, MasterPty, PtySize};
 
-pub(super) const WORKTREE_BOOTSTRAP_MANAGED_COMPONENT: &str =
-    "example.worktree-bootstrap-ef876653ffc3";
-
 pub(super) fn unique_test_dir() -> PathBuf {
     let nanos = SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .map(|d| d.as_nanos())
         .unwrap_or(0);
     PathBuf::from(format!("/tmp/hcli-{}-{nanos}", std::process::id()))
-}
-
-pub(super) fn managed_github_plugin_dir(config_home: &Path) -> PathBuf {
-    config_home.join(".sesh/mux").join("plugins").join("github")
-}
-
-pub(super) fn path_missing_or_empty(path: &Path) -> bool {
-    match fs::read_dir(path) {
-        Ok(mut entries) => entries.next().is_none(),
-        Err(err) if err.kind() == std::io::ErrorKind::NotFound => true,
-        Err(err) => panic!("failed to read {}: {err}", path.display()),
-    }
 }
 
 pub(super) fn run_git(repo: &Path, args: &[&str]) {
@@ -63,19 +48,6 @@ pub(super) fn create_committed_repo(path: &Path) {
 pub(super) struct SpawnedSeshMux {
     _master: Box<dyn MasterPty + Send>,
     pub(super) child: Box<dyn Child + Send + Sync>,
-}
-
-pub(super) struct SpawnedServerProcess {
-    child: std::process::Child,
-}
-
-impl Drop for SpawnedServerProcess {
-    fn drop(&mut self) {
-        let pid = self.child.id();
-        let _ = self.child.kill();
-        let _ = self.child.wait();
-        unregister_spawned_sesh_mux_pid(Some(pid));
-    }
 }
 
 impl Drop for SpawnedSeshMux {
@@ -126,137 +98,8 @@ pub(super) fn spawn_sesh_mux(
         runtime_dir,
         socket_path,
         None,
-        "onboarding = false\n",
+        "",
     )
-}
-
-pub(super) fn spawn_sesh_mux_with_pane_history(
-    config_home: &Path,
-    runtime_dir: &Path,
-    socket_path: &Path,
-) -> SpawnedSeshMux {
-    spawn_sesh_mux_with_config(
-        config_home,
-        runtime_dir,
-        socket_path,
-        None,
-        "onboarding = false\n[experimental]\npane_history = true\n",
-    )
-}
-
-pub(super) fn app_dir_name() -> &'static str {
-    if cfg!(debug_assertions) {
-        "sesh-mux-dev"
-    } else {
-        "sesh-mux"
-    }
-}
-
-pub(super) fn named_session_socket(config_home: &Path, session: &str) -> PathBuf {
-    config_home
-        .join(app_dir_name())
-        .join("sessions")
-        .join(session)
-        .join("sesh-mux.sock")
-}
-
-pub(super) fn spawn_named_server(
-    config_home: &Path,
-    runtime_dir: &Path,
-    session: &str,
-) -> SpawnedServerProcess {
-    fs::create_dir_all(config_home.join(app_dir_name())).unwrap();
-    fs::create_dir_all(runtime_dir).unwrap();
-    register_runtime_dir(runtime_dir);
-    fs::write(
-        config_home.join(app_dir_name()).join("config.toml"),
-        "onboarding = false\n",
-    )
-    .unwrap();
-
-    let mut command = Command::new(env!("CARGO_BIN_EXE_sesh-mux"));
-    command
-        .args(["--session", session, "server"])
-        .env("HOME", config_home)
-        .env("XDG_RUNTIME_DIR", runtime_dir)
-        .env_remove("SESH_MUX_SOCKET_PATH")
-        .env_remove("SESH_MUX_CLIENT_SOCKET_PATH")
-        .env_remove("SESH_MUX_ENV")
-        .stdin(std::process::Stdio::null())
-        .stdout(std::process::Stdio::null())
-        .stderr(std::process::Stdio::null());
-
-    let child = command.spawn().unwrap();
-    register_spawned_sesh_mux_pid(Some(child.id()));
-    SpawnedServerProcess { child }
-}
-
-pub(super) fn run_named_cli(
-    config_home: &Path,
-    runtime_dir: &Path,
-    args: &[&str],
-) -> std::process::Output {
-    run_named_cli_with_socket_override(config_home, runtime_dir, args, None)
-}
-
-pub(super) fn run_named_cli_with_socket_override(
-    config_home: &Path,
-    runtime_dir: &Path,
-    args: &[&str],
-    socket_override: Option<&Path>,
-) -> std::process::Output {
-    run_named_cli_with_env_and_socket_override(config_home, runtime_dir, args, &[], socket_override)
-}
-
-pub(super) fn run_named_cli_with_env(
-    config_home: &Path,
-    runtime_dir: &Path,
-    args: &[&str],
-    envs: &[(&str, &Path)],
-) -> std::process::Output {
-    run_named_cli_with_env_and_socket_override(config_home, runtime_dir, args, envs, None)
-}
-
-pub(super) fn run_named_cli_with_env_and_socket_override(
-    config_home: &Path,
-    runtime_dir: &Path,
-    args: &[&str],
-    envs: &[(&str, &Path)],
-    socket_override: Option<&Path>,
-) -> std::process::Output {
-    let mut command = Command::new(env!("CARGO_BIN_EXE_sesh-mux"));
-    command
-        .args(args)
-        .env("HOME", config_home)
-        .env("XDG_RUNTIME_DIR", runtime_dir)
-        .env_remove("SESH_MUX_CLIENT_SOCKET_PATH")
-        .env_remove("SESH_MUX_ENV");
-    for (key, value) in envs {
-        command.env(key, value);
-    }
-    if let Some(socket_override) = socket_override {
-        command.env("SESH_MUX_SOCKET_PATH", socket_override);
-    } else {
-        command.env_remove("SESH_MUX_SOCKET_PATH");
-    }
-    command.output().unwrap()
-}
-
-pub(super) fn run_named_cli_json(
-    config_home: &Path,
-    runtime_dir: &Path,
-    args: &[&str],
-) -> serde_json::Value {
-    let output = run_named_cli(config_home, runtime_dir, args);
-    assert!(
-        output.status.success(),
-        "command failed: sesh-mux {}\nstatus: {:?}\nstderr: {}\nstdout: {}",
-        args.join(" "),
-        output.status.code(),
-        String::from_utf8_lossy(&output.stderr),
-        String::from_utf8_lossy(&output.stdout)
-    );
-    serde_json::from_slice(&output.stdout).unwrap()
 }
 
 pub(super) fn spawn_sesh_mux_with_path(
@@ -270,7 +113,7 @@ pub(super) fn spawn_sesh_mux_with_path(
         runtime_dir,
         socket_path,
         path_override,
-        "onboarding = false\n",
+        "",
     )
 }
 
@@ -281,14 +124,10 @@ pub(super) fn spawn_sesh_mux_with_config(
     path_override: Option<&Path>,
     config_toml: &str,
 ) -> SpawnedSeshMux {
-    fs::create_dir_all(config_home.join(app_dir_name())).unwrap();
+    fs::create_dir_all(config_home.join(".sesh/mux")).unwrap();
     fs::create_dir_all(runtime_dir).unwrap();
     register_runtime_dir(runtime_dir);
-    fs::write(
-        config_home.join(app_dir_name()).join("config.toml"),
-        config_toml,
-    )
-    .unwrap();
+    fs::write(config_home.join(".sesh/mux/config.toml"), config_toml).unwrap();
 
     let pair = native_pty_system()
         .openpty(PtySize {
@@ -406,17 +245,6 @@ pub(super) fn wait_until(
         thread::sleep(interval);
     }
     false
-}
-
-pub(super) fn pane_read_recent_contains(socket_path: &Path, pane_id: &str, expected: &str) -> bool {
-    let output = run_cli(
-        socket_path,
-        &["pane", "read", pane_id, "--source", "recent"],
-    );
-    if !output.status.success() {
-        return false;
-    }
-    String::from_utf8_lossy(&output.stdout).contains(expected)
 }
 
 pub(super) fn process_exists(pid: u32) -> bool {
