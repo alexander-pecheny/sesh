@@ -25,7 +25,7 @@ pub fn socket() -> PathBuf {
         .unwrap_or_else(|| std::env::var_os("HOME").map(PathBuf::from).unwrap_or_default().join(".sesh/mux/sesh-mux.sock"))
 }
 
-/// The version of sesh-mux's socket API this helper reads (ADR 0022). A sesh-mux that names none
+/// The version of sesh-mux's socket API this helper reads (ADR 0023). A sesh-mux that names none
 /// speaks 1, the API from before it said so.
 pub const MUX_API: u64 = 1;
 

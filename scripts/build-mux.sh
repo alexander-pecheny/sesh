@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Builds sesh-mux from mux/ for every Host platform, gzipped into build/helpers beside the
 # transcript helper, with the hash of the mux/ tree they were built from in mux-version and the
-# build's UTC stamp, which orders it among others (ADR 0022), in mux-build.
+# build's UTC stamp, which orders it among others (ADR 0023), in mux-build.
 set -euo pipefail
 
 export PATH="$HOME/.cargo/bin:$PATH"

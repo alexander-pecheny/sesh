@@ -22,7 +22,7 @@ final class HelperInstaller {
         + "\ncat ~/.sesh/bin/sesh-mux.version 2>/dev/null || echo"
 
     /// Whether this build's sesh-mux should replace the one whose `--version` printed `found`.
-    /// It never replaces a newer build another device put there (ADR 0022); a pin from before
+    /// It never replaces a newer build another device put there (ADR 0023); a pin from before
     /// builds were stamped goes by the version the last install noted.
     static func replacesMux(found: String, noted: String, build: UInt64? = Helper.muxBuild,
                             version: String? = Helper.muxVersion) -> Bool {

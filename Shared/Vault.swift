@@ -22,7 +22,7 @@ final class Vault: ObservableObject, Identifiable, Records {
     }
 
     /// Changes sent together under one id, which the Host remembers, so sending them again after
-    /// a lost answer gets the same answer and writes nothing twice (ADR 0022).
+    /// a lost answer gets the same answer and writes nothing twice (ADR 0023).
     private struct Batch: Codable {
         let id: String
         let changes: [Change]
