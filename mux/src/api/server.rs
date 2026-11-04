@@ -396,6 +396,7 @@ fn handle_request(
             result: ResponseResult::Pong {
                 version: crate::build_info::version(),
                 protocol: crate::protocol::PROTOCOL_VERSION,
+                api: crate::build_info::API,
                 capabilities,
             },
         })

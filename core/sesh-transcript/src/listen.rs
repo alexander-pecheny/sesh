@@ -25,9 +25,41 @@ pub fn socket() -> PathBuf {
         .unwrap_or_else(|| std::env::var_os("HOME").map(PathBuf::from).unwrap_or_default().join(".sesh/mux/sesh-mux.sock"))
 }
 
+/// The version of sesh-mux's socket API this helper reads (ADR 0022). A sesh-mux that names none
+/// speaks 1, the API from before it said so.
+pub const MUX_API: u64 = 1;
+
+/// Whether the sesh-mux behind the socket said it speaks `MUX_API`; asked again after the
+/// socket fails or the event stream ends, as when sesh-mux is handed over to another build.
+static AGREED: AtomicBool = AtomicBool::new(false);
+
 /// Asks sesh-mux's server `method` over its socket, which takes one request per connection: the
-/// result, or the error, which carries a code and a message.
+/// result, or the error, which carries a code and a message. It refuses to ask a sesh-mux whose
+/// API is not this helper's, which would answer in a shape the helper misreads.
 pub fn call(method: &str, params: Value) -> Result<Value, Value> {
+    if !AGREED.load(Ordering::SeqCst) {
+        agree(&ask("ping", json!({}))?)?;
+        AGREED.store(true, Ordering::SeqCst);
+    }
+    ask(method, params).inspect_err(|err| {
+        if err["code"] == "unreachable" {
+            AGREED.store(false, Ordering::SeqCst);
+        }
+    })
+}
+
+fn agree(pong: &Value) -> Result<(), Value> {
+    let api = pong["api"].as_u64().unwrap_or(1);
+    if api == MUX_API {
+        return Ok(());
+    }
+    let fix = if api > MUX_API { "Update Sesh on this device" } else { "Connect with the newest Sesh to update it" };
+    Err(json!({"code": "api_mismatch", "message": format!(
+        "sesh-mux {} speaks API {api}, and this helper speaks API {MUX_API}. {fix}.",
+        pong["version"].as_str().unwrap_or_default())}))
+}
+
+fn ask(method: &str, params: Value) -> Result<Value, Value> {
     let failed = |err: std::io::Error| json!({"code": "unreachable", "message": format!("sesh-mux: {err}")});
     let stream = UnixStream::connect(socket()).map_err(failed)?;
     stream.set_read_timeout(Some(ANSWER)).map_err(failed)?;
@@ -120,6 +152,7 @@ impl Events {
                 changed.store(true, Ordering::SeqCst);
             }
             heard.store(false, Ordering::SeqCst);
+            AGREED.store(false, Ordering::SeqCst);
         });
         Ok(Events { stream, panes, alive })
     }

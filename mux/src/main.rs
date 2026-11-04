@@ -99,7 +99,7 @@ fn main() -> io::Result<()> {
         Some("server") => server::headless::run_server(&args),
         Some("--version" | "-V") => {
             platform::begin_cli_output();
-            println!("sesh-mux {}", build_info::version());
+            println!("sesh-mux {} api {} build {}", build_info::version(), build_info::API, build_info::build());
             Ok(())
         }
         Some("--help" | "-h" | "help") | None => {

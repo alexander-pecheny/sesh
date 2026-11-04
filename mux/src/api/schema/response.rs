@@ -36,6 +36,8 @@ pub enum ResponseResult {
         version: String,
         protocol: u32,
         #[serde(default)]
+        api: u32,
+        #[serde(default)]
         capabilities: Option<ServerCapabilities>,
     },
     WorkspaceInfo {
