@@ -37,6 +37,8 @@ enum Helper {
         let version: String
         let url: String
         let sha256: [String: String]
+        /// When it was built, which orders sesh-mux builds; missing from older pins.
+        var build: UInt64?
     }
     static let published = pinned("helpers")
 
@@ -78,6 +80,7 @@ enum Helper {
     /// sesh-mux, the terminal server Tasks run in, pinned by the commit it was built from.
     static let mux = pinned("sesh-mux")
     static let muxVersion = version(local: "mux-version", pinned: mux)
+    static let muxBuild = local == nil ? mux?.build : version(local: "mux-build", pinned: nil).flatMap { UInt64($0) }
 
     private static func pinned(_ resource: String) -> Published? {
         Bundle.main.url(forResource: resource, withExtension: "json")

@@ -18,7 +18,18 @@ final class HelperInstaller {
 
     static let probe = "uname -sm\n\(Helper.path) --version 2>/dev/null || echo"
         + "\ntest -x ~/.sesh/bin/\(Helper.moshFile ?? "-") && echo mosh || echo"
+        + "\n\(Mux.command) --version 2>/dev/null || echo"
         + "\ncat ~/.sesh/bin/sesh-mux.version 2>/dev/null || echo"
+
+    /// Whether this build's sesh-mux should replace the one whose `--version` printed `found`.
+    /// It never replaces a newer build another device put there (ADR 0022); a pin from before
+    /// builds were stamped goes by the version the last install noted.
+    static func replacesMux(found: String, noted: String, build: UInt64? = Helper.muxBuild,
+                            version: String? = Helper.muxVersion) -> Bool {
+        guard let version else { return false }
+        guard let build else { return noted != version }
+        return found.isEmpty || (found.components(separatedBy: " build ").last.flatMap { UInt64($0) } ?? 0) < build
+    }
 
     static func plan(_ probed: Ran, on title: String, version: String? = Helper.version, local: Bool = Helper.local != nil,
                      published: Helper.Published? = Helper.published) -> Plan {
@@ -59,17 +70,17 @@ final class HelperInstaller {
         if let problem = await install(plan) { return problem }
         if plan != .ready { _ = await run(Helper.link) }
         let lines = probed.out.components(separatedBy: "\n")
-        guard lines.count > 3 else { return nil }
+        guard lines.count > 4 else { return nil }
         let name = Helper.name(lines[0])
         if let file = Helper.moshFile, lines[2] != "mosh",
            let problem = await install("mosh-server", as: file, for: name, from: Helper.mosh) { return problem }
-        let mux = lines[3]
-        if let version = Helper.muxVersion, mux != version {
+        let replaces = Self.replacesMux(found: lines[3], noted: lines[4])
+        if replaces, let version = Helper.muxVersion {
             if let problem = await install("sesh-mux", as: "sesh-mux", for: name, from: Helper.mux) { return problem }
             let noted = await run(Mux.importer + "\nprintf '%s\\n' \(quote(version)) > ~/.sesh/bin/sesh-mux.version")
             guard noted.ok else { return "Sesh could not install sesh-mux on \(title): \(noted.problem)" }
         }
-        let woke = await run(Mux.wake(upgrade: !mux.isEmpty && mux != Helper.muxVersion) + "\n" + Mux.integrations)
+        let woke = await run(Mux.wake(upgrade: replaces && !lines[3].isEmpty) + "\n" + Mux.integrations)
         return woke.ok ? nil : "Sesh could not start sesh-mux on \(title): \(woke.problem)"
     }
 

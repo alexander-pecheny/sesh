@@ -145,6 +145,8 @@ fn answer(dir: &Path, stream: UnixStream) {
             note("inputs");
             json!({"result": {"type": "ok"}}).to_string()
         }
+        ("ping", _) => json!({"result": {"type": "pong", "version": "0.1.0", "protocol": 100,
+            "api": read("api").trim().parse::<u64>().unwrap_or(1)}}).to_string(),
         ("pane.get", _) => read("pane.json"),
         ("pane.list", _) => read("panes.json"),
         ("agent.start", _) => json!({"result": {"type": "ok"}}).to_string(),
@@ -313,6 +315,21 @@ fn history_pages_back_through_a_transcript_found_by_id() {
         [json!("message 1"), json!("message 2"), Value::Null]
     );
     assert_eq!(page.last().unwrap(), &json!({"t": "history", "more": true}));
+}
+
+#[test]
+fn a_sesh_mux_of_another_api_is_refused_before_it_is_asked_anything() {
+    let host = Host::new("api");
+    host.session("s1", "idle");
+    host.say("s1", "user", "hello");
+    let asked = |api: &str| {
+        std::fs::write(host.root.join("api"), api).unwrap();
+        let output = host.command(&["history", "w1:p1", "--before", "none", "--last", "1"]).output().unwrap();
+        String::from_utf8(output.stderr).unwrap()
+    };
+    let refused = asked("2");
+    assert!(refused.contains("speaks API 2, and this helper speaks API 1. Update Sesh"), "{refused}");
+    assert!(!asked("1").contains("API"));
 }
 
 #[test]

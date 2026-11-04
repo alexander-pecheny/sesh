@@ -26,7 +26,7 @@ const USAGE: &str = "usage: sesh-transcript --version | follow --protocol | foll
        | send KEY ID TEXT | unqueue KEY ID | hand KEY | ask REQUEST | ask --file FILE
        | keys KEY NAME... | answer KEY --json ANSWERS | permit KEY allow|deny | stop KEY
        | history <pane> --before ID [--last N] | entry <pane> ID | background <pane>...
-       | vault init DIR | vault pull|follow DIR [--since SEQ] | vault push DIR FILE
+       | vault init DIR | vault pull|follow DIR [--since SEQ] | vault push DIR FILE [--batch ID]
        | vault size DIR SESSION FILE | vault append DIR SESSION FILE --offset N BYTES_FILE
        | vault copy DIR SESSION --from PATH | vault search DIR QUERY [--limit N]
        | transcripts search QUERY [--limit N] | transcripts place FILE --agent AGENT [--config DIR] [--fork]
@@ -438,7 +438,7 @@ fn marked(text: &str, bold: bool) -> String {
 // MARK: vault
 
 fn vault(args: &[String]) -> Exit {
-    let Some((plain, options)) = parse_args(args, &["since", "offset", "from", "limit"]) else {
+    let Some((plain, options)) = parse_args(args, &["since", "offset", "from", "limit", "batch"]) else {
         return usage();
     };
     let number = |name| {
@@ -455,11 +455,11 @@ fn vault(args: &[String]) -> Exit {
     let lines = match (plain.as_slice(), offset, options.get("from")) {
         (&["init", dir], None, None) => {
             let vault = Vault::open(dir, true)?;
-            vec![vault::head_line(vault.head()?)]
+            vec![vault.head_line(vault.head()?)]
         }
         (&["pull", dir], None, None) => return vault_follow(dir, since, false),
         (&["follow", dir], None, None) => return vault_follow(dir, since, true),
-        (&["push", dir, file], None, None) => vault_push(dir, file)?,
+        (&["push", dir, file], None, None) => vault_push(dir, file, options.get("batch").copied())?,
         (&["size", dir, session, file], None, None) => {
             let vault = Vault::open(dir, false)?;
             vec![json!({"size": vault.size(session, file)?})]
@@ -536,7 +536,7 @@ fn vault_follow(dir: &str, mut since: i64, follow: bool) -> Exit {
             let (records, head) = vault.pull(since)?;
             if version.is_none() || !records.is_empty() {
                 let mut lines: Vec<Value> = records.iter().map(vault::Record::line).collect();
-                lines.push(vault::head_line(head));
+                lines.push(vault.head_line(head));
                 print_lines(&lines)?;
             }
             (version, since) = (now, head);
@@ -551,7 +551,7 @@ fn vault_follow(dir: &str, mut since: i64, follow: bool) -> Exit {
     }
 }
 
-fn vault_push(dir: &str, file: &str) -> Result<Vec<Value>, String> {
+fn vault_push(dir: &str, file: &str, batch: Option<&str>) -> Result<Vec<Value>, String> {
     let text = std::fs::read_to_string(file).map_err(|err| format!("{file}: {err}"))?;
     let changes = text
         .lines()
@@ -560,9 +560,9 @@ fn vault_push(dir: &str, file: &str) -> Result<Vec<Value>, String> {
         .collect::<Result<Vec<vault::Change>, _>>()
         .map_err(|err| format!("{file}: {err}"))?;
     let mut vault = Vault::open(dir, false)?;
-    let (records, head) = vault.push(changes)?;
+    let (records, head) = vault.push(batch, changes)?;
     std::fs::remove_file(file).map_err(|err| format!("{file}: {err}"))?;
     let mut lines: Vec<Value> = records.iter().map(vault::Record::line).collect();
-    lines.push(vault::head_line(head));
+    lines.push(vault.head_line(head));
     Ok(lines)
 }

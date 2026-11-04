@@ -704,7 +704,7 @@ impl Client {
             match pulled {
                 Ok(Some((records, head))) => {
                     followed.since = head;
-                    lines.extend(records.iter().map(crate::vault::Record::line).chain([crate::vault::head_line(head)]).map(|mut line| {
+                    lines.extend(records.iter().map(crate::vault::Record::line).chain([followed.vault.head_line(head)]).map(|mut line| {
                         line["vault"] = dir.clone().into();
                         line
                     }));
@@ -1015,7 +1015,7 @@ mod tests {
         let folder = dir.join("hobby");
         let mut written = crate::vault::Vault::open(&folder, true).unwrap();
         let change = |id: &str| serde_json::from_value::<crate::vault::Change>(json!({"id": id, "kind": "task", "body": {"title": id}, "base": 0})).unwrap();
-        written.push(vec![change("t1")]).unwrap();
+        written.push(None, vec![change("t1")]).unwrap();
         let mut machine = Machine::new(Log::open(&dir.join("sessions.db")).unwrap(), Shared(Rc::new(RefCell::new(Quiet))));
         let mut client = Client::new(UnixStream::pair().unwrap().0);
         let named = folder.display().to_string();
@@ -1027,10 +1027,10 @@ mod tests {
         client.request(&mut machine, &json!({"op": "vault", "dir": named, "since": 0})).unwrap();
         let first = heard(&mut client, &mut machine);
         let quiet = heard(&mut client, &mut machine);
-        written.push(vec![change("t2")]).unwrap();
+        written.push(None, vec![change("t2")]).unwrap();
         let later = heard(&mut client, &mut machine);
         client.request(&mut machine, &json!({"op": "unvault", "dir": named})).unwrap();
-        written.push(vec![change("t3")]).unwrap();
+        written.push(None, vec![change("t3")]).unwrap();
         let after = heard(&mut client, &mut machine);
         let marked = client.vaults.is_empty();
         std::fs::remove_dir_all(&dir).unwrap();

@@ -25,15 +25,19 @@ fi
 published="$out/published-mux"
 mkdir -p "$published"
 gh release download "$tag" -R "$repo" -D "$published" --clobber -p 'sesh-mux-*.gz'
-uv run python - "$published" "$version" "https://github.com/$repo/releases/download/$tag/" \
+# The stamp of the published build, not of the one just made, which may be a rebuild.
+gunzip -c "$published/sesh-mux-darwin-$(uname -m).gz" > "$published/sesh-mux"
+chmod 755 "$published/sesh-mux"
+build=$("$published/sesh-mux" --version | sed -n 's/.* build //p')
+uv run python - "$published" "$version" "https://github.com/$repo/releases/download/$tag/" "${build:-0}" \
     > "$root/Resources/sesh-mux.json" <<'PY'
 import hashlib, json, pathlib, sys
 
-folder, version, url = pathlib.Path(sys.argv[1]), sys.argv[2], sys.argv[3]
+folder, version, url, build = pathlib.Path(sys.argv[1]), sys.argv[2], sys.argv[3], int(sys.argv[4])
 sha256 = {
     f.name.removeprefix("sesh-mux-").removesuffix(".gz"): hashlib.sha256(f.read_bytes()).hexdigest()
     for f in sorted(folder.glob("*.gz"))
 }
-print(json.dumps({"version": version, "url": url, "sha256": sha256}, indent=2))
+print(json.dumps({"version": version, "build": build, "url": url, "sha256": sha256}, indent=2))
 PY
 cat "$root/Resources/sesh-mux.json"

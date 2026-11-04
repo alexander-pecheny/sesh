@@ -167,6 +167,20 @@ final class HelperInstallerTests: XCTestCase {
         XCTAssertEqual(plan("", status: 255), .failed("no route"))
     }
 
+    @MainActor
+    func testSeshMuxIsReplacedOnlyByANewerBuild() {
+        let replaces = { (found: String, build: UInt64?) in
+            HelperInstaller.replacesMux(found: found, noted: "aaa", build: build, version: "bbb")
+        }
+        XCTAssertTrue(replaces("", 20261104120000))
+        XCTAssertTrue(replaces("sesh-mux 0.1.0", 20261104120000))
+        XCTAssertTrue(replaces("sesh-mux 0.1.0 api 1 build 20261101000000", 20261104120000))
+        XCTAssertFalse(replaces("sesh-mux 0.1.0 api 1 build 20261104120000", 20261104120000))
+        XCTAssertFalse(replaces("sesh-mux 0.1.0 api 2 build 20261201000000", 20261104120000))
+        XCTAssertTrue(replaces("sesh-mux 0.1.0", nil))
+        XCTAssertFalse(HelperInstaller.replacesMux(found: "", noted: "bbb", build: nil, version: "bbb"))
+    }
+
     func testBuildsOfOneFollowerShareItsCache() {
         XCTAssertEqual(Helper.follower(of: "sesh-transcript 0.1.0+932cb2c6076a8838.p4-s1"), "p4-s1")
         XCTAssertEqual(Helper.follower(of: "sesh-transcript 0.1.0+25b5aeb667961443.p4-s1"), "p4-s1")
