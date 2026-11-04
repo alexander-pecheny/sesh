@@ -644,21 +644,10 @@ fn print_agent_help() {
         "  sesh-mux agent prompt <target> <text> [--wait] [--until STATUS]... [--timeout MS]"
     );
     eprintln!("  sesh-mux agent rename <target> <name>|--clear");
-    eprintln!("  sesh-mux agent focus <target>");
     eprintln!("  sesh-mux agent wait <target> [--until STATUS]... [--timeout MS]");
-    eprintln!("  sesh-mux agent attach <target> [--takeover]");
     eprintln!(
         "  sesh-mux agent start <name> --kind KIND --pane ID [--timeout MS] [-- <agent-args...>]"
     );
-    eprintln!("  sesh-mux agent explain <target> [--json|--format text|json] [--verbose]");
-    eprintln!(
-        "  sesh-mux agent explain --file PATH --agent LABEL [--json|--format text|json] [--verbose]"
-    );
-    eprintln!("  sesh-mux agent follow <pane> [--since CURSOR] [--last N] | --protocol");
-    eprintln!("  sesh-mux agent entry <pane> <id>");
-    eprintln!("  sesh-mux agent history <pane> --before ID [--last N]");
-    eprintln!("  sesh-mux agent answer <pane> --json ANSWERS");
-    eprintln!("  sesh-mux agent permit <pane> allow|deny");
     eprintln!("  targets accept unique agent names and pane ids that currently host agents");
     eprintln!(
         "  kinds: {}",

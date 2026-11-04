@@ -99,9 +99,6 @@ fn print_server_help() {
     eprintln!("  sesh-mux server                run as headless server");
     eprintln!("  sesh-mux server stop           stop the running server via the API socket");
     eprintln!("  sesh-mux server live-handoff   hand off live panes to a new local server");
-    eprintln!("  sesh-mux server reload-config  reload config.toml in the running server");
-    eprintln!("  sesh-mux server agent-manifests [--json]  show agent detection manifest status");
-    eprintln!("  sesh-mux server reload-agent-manifests  reload agent detection manifests in the running server");
 }
 
 #[cfg(test)]

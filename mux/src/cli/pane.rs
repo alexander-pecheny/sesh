@@ -917,26 +917,9 @@ fn print_pane_help() {
     eprintln!("  sesh-mux pane list [--workspace <workspace_id>]");
     eprintln!("  sesh-mux pane current [--pane ID|--current]");
     eprintln!("  sesh-mux pane get <pane_id>");
-    eprintln!("  sesh-mux pane layout [--pane ID|--current]");
     eprintln!("  sesh-mux pane process-info [--pane ID|--current]");
-    eprintln!("  sesh-mux pane neighbor --direction left|right|up|down [--pane ID|--current]");
-    eprintln!("  sesh-mux pane edges [--pane ID|--current]");
-    eprintln!("  sesh-mux pane focus --direction left|right|up|down [--pane ID|--current]");
-    eprintln!(
-        "  sesh-mux pane resize --direction left|right|up|down [--amount FLOAT] [--pane ID|--current]"
-    );
-    eprintln!("  sesh-mux pane zoom [<pane_id>|--pane ID|--current] [--toggle|--on|--off]");
     eprintln!("  sesh-mux pane rename <pane_id> <label>|--clear");
     eprintln!("  sesh-mux pane read <pane_id> [--source visible|recent|recent-unwrapped] [--lines N] [--format text|ansi] [--ansi]");
-    eprintln!("  sesh-mux pane input [<pane_id>|--pane ID|--current] --right-click sesh-mux|pane");
-    eprintln!(
-        "  sesh-mux pane split [<pane_id>|--pane ID|--current] --direction right|down [--ratio FLOAT] [--cwd PATH] [--env KEY=VALUE] [--right-click sesh-mux|pane] [--focus] [--no-focus]"
-    );
-    eprintln!("  sesh-mux pane swap --direction left|right|up|down [--pane ID|--current]");
-    eprintln!("  sesh-mux pane swap --source-pane ID --target-pane ID");
-    eprintln!("  sesh-mux pane move <pane_id> --tab <tab_id> --split right|down [--target-pane ID] [--ratio FLOAT] [--focus|--no-focus]");
-    eprintln!("  sesh-mux pane move <pane_id> --new-tab [--workspace ID] [--label TEXT] [--focus|--no-focus]");
-    eprintln!("  sesh-mux pane move <pane_id> --new-workspace [--label TEXT] [--tab-label TEXT] [--focus|--no-focus]");
     eprintln!("  sesh-mux pane close <pane_id>");
     eprintln!("  sesh-mux pane send-text <pane_id> <text>");
     eprintln!("  sesh-mux pane send-keys <pane_id> <key> [key ...]");

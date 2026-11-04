@@ -232,7 +232,6 @@ fn print_workspace_help() {
     eprintln!("  sesh-mux workspace list");
     eprintln!("  sesh-mux workspace create [--cwd PATH] [--label TEXT] [--env KEY=VALUE] [--focus] [--no-focus]");
     eprintln!("  sesh-mux workspace get <workspace_id>");
-    eprintln!("  sesh-mux workspace focus <workspace_id>");
     eprintln!("  sesh-mux workspace rename <workspace_id> <label>");
     eprintln!("  sesh-mux workspace report-metadata <workspace_id> --source ID [--token NAME=VALUE] [--clear-token NAME] [--seq N] [--ttl-ms N]");
     eprintln!("  sesh-mux workspace close <workspace_id> [--group]");

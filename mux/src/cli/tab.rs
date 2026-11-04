@@ -167,7 +167,6 @@ fn print_tab_help() {
         "  sesh-mux tab create [--workspace <workspace_id>] [--cwd PATH] [--label TEXT] [--env KEY=VALUE] [--focus] [--no-focus]"
     );
     eprintln!("  sesh-mux tab get <tab_id>");
-    eprintln!("  sesh-mux tab focus <tab_id>");
     eprintln!("  sesh-mux tab rename <tab_id> <label>");
     eprintln!("  sesh-mux tab close <tab_id>");
 }
