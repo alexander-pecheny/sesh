@@ -1,11 +1,11 @@
 {
-  "version": "49f04f184256",
-  "build": 20261104204421,
-  "url": "https://github.com/alexander-pecheny/sesh/releases/download/sesh-mux-49f04f184256/",
+  "version": "f0b30be10a37",
+  "build": 20261104214106,
+  "url": "https://github.com/alexander-pecheny/sesh/releases/download/sesh-mux-f0b30be10a37/",
   "sha256": {
-    "darwin-arm64": "a1b9d4c1539868101ebc69d7b923ca47fce86d2836afea046c96fbe338840e40",
-    "darwin-x86_64": "bfd7807d84c996f8df13dce173cb43e9e79bbc250305c1d64333002e70ce081f",
-    "linux-aarch64": "9d2acd4fe564f9c372e24a642069d3d13cfe98695f4247b9167340fe86af1af1",
-    "linux-x86_64": "cfb778bea259d186f2721e2e982d07190276aeff32cee410fa6b3fdbbe92d0bc"
+    "darwin-arm64": "9b631303776b921525522a09cc4008c2b485dcb4aa2347ae9ebbb2349449731a",
+    "darwin-x86_64": "61d3cbbdc9eaa2fd9ace966d72da7c82ca832a8ecffd2bc3272ae983c55d3976",
+    "linux-aarch64": "d4677960d828b64af8f9972ede779d0ffec0ab9afe37e2fe8bf9e02ef8b2e011",
+    "linux-x86_64": "a2a294169a08e8b4755c735226d481bf5d724f2b6c24f51724b2d9859371b729"
   }
 }
