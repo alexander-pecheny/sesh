@@ -147,6 +147,7 @@ pub struct TerminalState {
     agent_name_owner: Option<AgentNameOwner>,
     managed_agent: Option<ManagedAgent>,
     managed_agent_launch_session: Option<crate::agent_resume::PersistedAgentSession>,
+    pub managed_agent_launch: Option<crate::agent_resume::AgentLaunch>,
     hook_report_sequences: HashMap<String, u64>,
     suppressed_full_lifecycle_hook_reports: HashMap<String, SuppressedFullLifecycleHookReport>,
     stale_full_lifecycle_hook_sessions: HashMap<String, Vec<StaleFullLifecycleHookSession>>,
@@ -187,6 +188,7 @@ impl TerminalState {
             agent_name_owner: None,
             managed_agent: None,
             managed_agent_launch_session: None,
+            managed_agent_launch: None,
             hook_report_sequences: HashMap::new(),
             suppressed_full_lifecycle_hook_reports: HashMap::new(),
             stale_full_lifecycle_hook_sessions: HashMap::new(),
@@ -1706,7 +1708,7 @@ impl TerminalState {
             return false;
         };
         crate::detect::parse_agent_label(agent_label) == Some(detected_agent)
-            && crate::agent_resume::plan(source, agent_label, session_ref).is_some()
+            && crate::agent_resume::plan(source, agent_label, session_ref, None).is_some()
     }
 
     fn accept_hook_report(&mut self, source: &str, seq: Option<u64>) -> bool {
@@ -2091,7 +2093,13 @@ impl TerminalState {
         false
     }
 
-    pub fn restore_managed_agent(&mut self, name: String, kind: Agent) {
+    pub fn restore_managed_agent(
+        &mut self,
+        name: String,
+        kind: Agent,
+        launch: Option<crate::agent_resume::AgentLaunch>,
+    ) {
+        self.managed_agent_launch = launch;
         self.set_agent_name(name);
         self.agent_name_owner = Some(AgentNameOwner {
             agent_label: crate::detect::agent_label(kind).to_string(),
@@ -2115,6 +2123,7 @@ impl TerminalState {
         self.agent_name = None;
         self.agent_name_owner = None;
         self.managed_agent = None;
+        self.managed_agent_launch = None;
     }
 
     pub fn clear_agent_runtime_identity_after_respawn(&mut self) {

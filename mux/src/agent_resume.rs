@@ -1,3 +1,4 @@
+use std::collections::BTreeMap;
 use std::path::Path;
 
 use serde::{Deserialize, Serialize};
@@ -39,6 +40,59 @@ pub struct PersistedAgentSession {
     pub source: String,
     pub agent: String,
     pub session_ref: AgentSessionRef,
+}
+
+/// What `agent.start` ran an Agent with, minus the session it picked, so a resume runs it the same way.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct AgentLaunch {
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub args: Vec<String>,
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub env: BTreeMap<String, String>,
+}
+
+impl AgentLaunch {
+    pub fn from_start(agent: crate::detect::Agent, args: &[String], env: &BTreeMap<String, String>) -> Self {
+        let set_on_every_start = [crate::integration::SESH_MUX_PANE_ID_ENV_VAR, crate::api::SOCKET_PATH_ENV_VAR];
+        Self {
+            args: args_without_session(agent, args),
+            env: env
+                .iter()
+                .filter(|(name, _)| !set_on_every_start.contains(&name.as_str()))
+                .map(|(name, value)| (name.clone(), value.clone()))
+                .collect(),
+        }
+    }
+}
+
+fn args_without_session(agent: crate::detect::Agent, args: &[String]) -> Vec<String> {
+    use crate::detect::Agent;
+    let flags: &[&str] = match agent {
+        Agent::Claude => &["--session-id", "--resume", "-r"],
+        Agent::Codex => &["resume"],
+        Agent::Pi => &["--session"],
+    };
+    let mut kept = Vec::new();
+    let mut args = args.iter().peekable();
+    while let Some(arg) = args.next() {
+        let flag = arg.split_once('=').map_or(arg.as_str(), |(flag, _)| flag);
+        if !flags.contains(&flag) {
+            kept.push(arg.clone());
+        } else if flag == arg && args.peek().is_some_and(|value| !value.starts_with('-')) {
+            args.next();
+        }
+    }
+    kept
+}
+
+pub fn launch_argv(executable: &str, env: &BTreeMap<String, String>, args: Vec<String>) -> Option<Vec<String>> {
+    let valid = |name: &String| !name.is_empty() && name.chars().all(|ch| ch.is_ascii_alphanumeric() || ch == '_');
+    if !env.iter().all(|(name, value)| valid(name) && !value.chars().any(char::is_control)) {
+        return None;
+    }
+    let assignments = env.iter().map(|(name, value)| format!("{name}={value}"));
+    let head = (!env.is_empty()).then(|| "/usr/bin/env".to_string());
+    Some(head.into_iter().chain(assignments).chain([executable.to_string()]).chain(args).collect())
 }
 
 impl AgentSessionRef {
@@ -175,31 +229,30 @@ pub fn session_ref_from_snapshot(
     })
 }
 
-pub fn plan(source: &str, agent: &str, session_ref: &AgentSessionRef) -> Option<AgentResumePlan> {
+pub fn plan(
+    source: &str,
+    agent: &str,
+    session_ref: &AgentSessionRef,
+    launch: Option<&AgentLaunch>,
+) -> Option<AgentResumePlan> {
     if !is_official_agent_source(source, agent) {
         return None;
     }
 
-    let argv = match (source, agent, session_ref.kind) {
-        ("sesh-mux:claude", "claude", AgentSessionRefKind::Id) => {
-            vec![
-                "claude".into(),
-                "--resume".into(),
-                session_ref.value.clone(),
-            ]
-        }
-        ("sesh-mux:codex", "codex", AgentSessionRefKind::Id) => {
-            vec!["codex".into(), "resume".into(), session_ref.value.clone()]
-        }
+    let resume_args = match (source, agent, session_ref.kind) {
+        ("sesh-mux:claude", "claude", AgentSessionRefKind::Id) => ["--resume", &session_ref.value],
+        ("sesh-mux:codex", "codex", AgentSessionRefKind::Id) => ["resume", &session_ref.value],
         ("sesh-mux:pi", "pi", AgentSessionRefKind::Path | AgentSessionRefKind::Id) => {
-            vec!["pi".into(), "--session".into(), session_ref.value.clone()]
+            ["--session", &session_ref.value]
         }
         _ => return None,
     };
+    let launch = launch.cloned().unwrap_or_default();
+    let args = launch.args.into_iter().chain(resume_args.map(str::to_string)).collect();
 
     Some(AgentResumePlan {
         agent: agent.to_string(),
-        argv,
+        argv: launch_argv(agent, &launch.env, args)?,
         dedupe_key: dedupe_key(source, agent, session_ref),
     })
 }
@@ -244,7 +297,7 @@ mod tests {
         .unwrap();
         assert_eq!(snapshot.source, "sesh-mux:pi");
         let session = AgentSessionRef::path("/tmp/s.jsonl").unwrap();
-        assert!(plan(&snapshot.source, "pi", &session).is_some());
+        assert!(plan(&snapshot.source, "pi", &session, None).is_some());
     }
 
     fn absolute_test_path(name: &str) -> String {
@@ -297,19 +350,72 @@ mod tests {
         assert!(persisted_session_from_launch_args(crate::detect::Agent::Claude, &["--resume".into(), "x".into()]).is_none());
     }
 
+    fn strings(values: &[&str]) -> Vec<String> {
+        values.iter().map(|value| value.to_string()).collect()
+    }
+
+    #[test]
+    fn launch_keeps_what_the_agent_was_started_with_except_its_session() {
+        use crate::detect::Agent;
+        let env = [
+            ("CLAUDE_CONFIG_DIR", "/c"),
+            (crate::integration::SESH_MUX_PANE_ID_ENV_VAR, "w1:p1"),
+            (crate::api::SOCKET_PATH_ENV_VAR, "/old.sock"),
+        ]
+        .map(|(name, value)| (name.to_string(), value.to_string()))
+        .into();
+        let claude = AgentLaunch::from_start(
+            Agent::Claude,
+            &strings(&["--remote-control", "x", "--session-id", "id", "--dangerously-skip-permissions"]),
+            &env,
+        );
+        assert_eq!(claude.args, strings(&["--remote-control", "x", "--dangerously-skip-permissions"]));
+        assert_eq!(claude.env, [("CLAUDE_CONFIG_DIR".to_string(), "/c".to_string())].into());
+        let none = BTreeMap::new();
+        let args = |agent, args: &[&str]| AgentLaunch::from_start(agent, &strings(args), &none).args;
+        assert_eq!(args(Agent::Claude, &["--resume=id", "-r", "--verbose"]), strings(&["--verbose"]));
+        assert_eq!(args(Agent::Codex, &["resume", "id", "--yolo"]), strings(&["--yolo"]));
+        assert_eq!(args(Agent::Codex, &["--remote", "ws://x", "resume", "id"]), strings(&["--remote", "ws://x"]));
+        assert_eq!(args(Agent::Pi, &["--session", "/s.jsonl", "--model", "m"]), strings(&["--model", "m"]));
+    }
+
+    #[test]
+    fn resume_runs_the_agent_with_its_launch_args_and_env() {
+        let launch = AgentLaunch {
+            args: strings(&["--dangerously-skip-permissions"]),
+            env: [("CLAUDE_CONFIG_DIR".to_string(), "/c".to_string())].into(),
+        };
+        let session = AgentSessionRef::id("id").unwrap();
+        assert_eq!(
+            plan("sesh-mux:claude", "claude", &session, Some(&launch)).unwrap().argv,
+            strings(&["/usr/bin/env", "CLAUDE_CONFIG_DIR=/c", "claude", "--dangerously-skip-permissions", "--resume", "id"])
+        );
+        let codex = AgentLaunch { args: strings(&["--yolo"]), env: BTreeMap::new() };
+        assert_eq!(
+            plan("sesh-mux:codex", "codex", &session, Some(&codex)).unwrap().argv,
+            strings(&["codex", "--yolo", "resume", "id"])
+        );
+        assert_eq!(
+            plan("sesh-mux:codex", "codex", &session, None).unwrap().argv,
+            strings(&["codex", "resume", "id"])
+        );
+    }
+
     #[test]
     fn planner_rejects_custom_and_unsupported_path_refs() {
         let claude_session = absolute_test_path("claude-session");
         assert!(plan(
             "custom:claude",
             "claude",
-            &AgentSessionRef::id("session").unwrap()
+            &AgentSessionRef::id("session").unwrap(),
+            None
         )
         .is_none());
         assert!(plan(
             "sesh-mux:claude",
             "claude",
-            &AgentSessionRef::path(&claude_session).unwrap()
+            &AgentSessionRef::path(&claude_session).unwrap(),
+            None
         )
         .is_none());
     }
@@ -328,7 +434,7 @@ mod tests {
         assert_eq!(reported.path.as_deref(), Some(transcript.as_str()));
         assert_eq!(reported, AgentSessionRef::id("claude-id").unwrap());
         assert_eq!(
-            plan("sesh-mux:claude", "claude", &reported).unwrap().argv,
+            plan("sesh-mux:claude", "claude", &reported, None).unwrap().argv,
             vec!["claude", "--resume", "claude-id"]
         );
 
