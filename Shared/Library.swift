@@ -130,7 +130,7 @@ final class Library: ObservableObject {
     /// The live pane while its machine has it; otherwise the Vault's copy of the last Transcript.
     func conversation(for session: Record) async -> Conversation {
         let pane = showsPane(session)
-        if let known = conversations[session.id], (known.pane != nil) == pane { return known }
+        if let known = conversations[session.id], known.pane == shownPane(of: session) { return known }
         conversations.removeValue(forKey: session.id)?.unfollow()
         let machine = TaskActions.machine(session.body.machine)
         let agent = session.body.agent.flatMap(Agent.init)
@@ -278,9 +278,12 @@ final class Library: ObservableObject {
             if until < .now { resuming[id] = nil }
         }
         for (id, conversation) in conversations {
-            if let session = vault(of: id)?.records[id], (conversation.pane != nil) != showsPane(session) { reload(id) }
+            if let session = vault(of: id)?.records[id], conversation.pane != shownPane(of: session) { reload(id) }
         }
     }
+
+    /// The pane a session's Chat follows; a restart in a new pane needs a new Chat.
+    private func shownPane(of session: Record) -> String? { showsPane(session) ? session.body.pane ?? "" : nil }
 
     // MARK: Marks
 
