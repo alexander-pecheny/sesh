@@ -187,6 +187,16 @@ final class TaskCommandTests: XCTestCase {
         XCTAssertEqual(Agent.claude.args("fix", resuming: "~/.claude/projects/-w/abc.jsonl", remote: false).suffix(2), ["--resume", "abc"])
     }
 
+    func testAnAgentAsksPermissionOnlyWhenTheSessionSaysSo() {
+        XCTAssertFalse(Agent.claude.args("fix", remote: false, bypass: false).contains("--dangerously-skip-permissions"))
+        XCTAssertEqual(Agent.codex.args("fix", bypass: false), [])
+        XCTAssertEqual(Agent.codex.args("fix"), ["--dangerously-bypass-approvals-and-sandbox"])
+        let task = make(.task, "Own")
+        let session = make(.session, "Claude", task: task.id, agent: .claude)
+        XCTAssertEqual(menu(.session(session.id)).permissions?.id, session.id)
+        XCTAssertNil(menu(.session(session.id), life: .resuming).permissions)
+    }
+
     func testANewWorktreesBranchTakesTheNextFreeNumber() {
         XCTAssertEqual(Start.nextBranch(after: "me/fix", taken: ["main", "me/fix"]), "me/fix-2")
         XCTAssertEqual(Start.nextBranch(after: "me/fix", taken: ["me/fix", "me/fix-2", "me/fix-3", "me/fix-5"]), "me/fix-4")

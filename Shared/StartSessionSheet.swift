@@ -15,7 +15,7 @@ struct StartSessionSheet: View {
     struct Draft {
         var alias: String?
         var choice, typed, config: String
-        var remote, parallel: Bool
+        var remote, bypass, parallel: Bool
         var newBranch: String
     }
 
@@ -30,6 +30,7 @@ struct StartSessionSheet: View {
     @State private var typed = ""
     @State private var config = ""
     @State private var remote = true
+    @State private var bypass = true
     @State private var parallel = false
     @State private var newBranch = ""
     /// What the new Worktree branches from, as the repository's branches say.
@@ -132,6 +133,7 @@ struct StartSessionSheet: View {
                     TextField("Claude config folder", text: $config, prompt: Text("~/.claude"))
                     Toggle("Remote control", isOn: $remote)
                 }
+                if agent.asks { Toggle("Skip permissions", isOn: $bypass) }
             } footer: {
                 if linked != nil, let machine {
                     Text("git clone runs on \(machine.title) with the credentials it has there.")
@@ -160,11 +162,12 @@ struct StartSessionSheet: View {
         .onAppear {
             if let draft = shown.draft {
                 (alias, choice, typed, config) = (draft.alias, draft.choice, draft.typed, draft.config)
-                (remote, parallel, newBranch) = (draft.remote, draft.parallel, draft.newBranch)
+                (remote, bypass, parallel, newBranch) = (draft.remote, draft.bypass, draft.parallel, draft.newBranch)
                 return
             }
             alias = TaskActions.lastMachine(for: vault.records[task.id] ?? task, in: vault, library: library)?.alias
             remote = vault.settings.body.remote ?? true
+            bypass = vault.settings.body.bypass ?? true
             choose()
         }
         .task(id: alias) {
@@ -258,8 +261,10 @@ struct StartSessionSheet: View {
     private func start() {
         guard ready, let machine else { return }
         if agent == .claude { TaskActions.setClaudeConfig(config.trimmingCharacters(in: .whitespaces), vault, on: machine) }
-        let draft = Draft(alias: alias, choice: choice, typed: typed, config: config, remote: remote, parallel: parallel, newBranch: newBranch)
-        library.start(agent, for: vault.records[task.id] ?? task, on: machine, repo: repo, branch: fresh, remote: remote) { [shown, failed] in
+        let draft = Draft(alias: alias, choice: choice, typed: typed, config: config, remote: remote, bypass: bypass,
+                          parallel: parallel, newBranch: newBranch)
+        library.start(agent, for: vault.records[task.id] ?? task, on: machine, repo: repo, branch: fresh, remote: remote,
+                      bypass: bypass) { [shown, failed] in
             failed(Shown(agent: shown.agent, draft: draft, problem: $0))
         }
         dismiss()

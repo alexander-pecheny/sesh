@@ -144,9 +144,9 @@ final class FollowerLink {
     /// prompt (ADR 0020). On failure the pane is closed, so no half-started Agent lingers, and the
     /// reason comes back.
     func start(_ agent: Agent, name: String, pane: String, resuming transcript: String? = nil,
-               config: String? = nil, remote: Bool = true) async -> String? {
+               config: String? = nil, remote: Bool = true, bypass: Bool = true) async -> String? {
         var request: [String: Any] = ["op": "start", "session": pane, "name": name, "agent": agent.rawValue,
-                                      "args": agent.args(name, resuming: transcript, remote: remote)]
+                                      "args": agent.args(name, resuming: transcript, remote: remote, bypass: bypass)]
         if let config, !config.isEmpty { request["config"] = config }
         let ran = await ask(request)
         return ran.ok ? nil : ran.problem

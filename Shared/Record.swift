@@ -43,6 +43,9 @@ struct Record: Codable, Identifiable, Equatable {
         /// Whether Claude starts with remote control, for the Claude app to reach: a Vault's
         /// default in its settings, or a Claude session's own choice; nil is yes.
         var remote: Bool?
+        /// Whether the Agent runs without asking permission: a Vault's default in its settings,
+        /// or an Agent session's own choice; nil is yes.
+        var bypass: Bool?
     }
 
     let id: String

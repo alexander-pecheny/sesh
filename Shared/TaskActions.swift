@@ -31,6 +31,11 @@ enum TaskActions {
         session.body.remote ?? vault.settings.body.remote ?? true
     }
 
+    /// Whether an Agent session runs without asking permission: its own choice, else its Vault's.
+    static func bypass(of session: Record, in vault: Vault) -> Bool {
+        session.body.bypass ?? vault.settings.body.bypass ?? true
+    }
+
     /// The branch a title suggests, under the user's name as sesh-mux's own branches are.
     static func branch(for title: String, user: String) -> String {
         let slug = Names.slug(title)
@@ -61,7 +66,7 @@ enum TaskActions {
     /// The session is made, and `made` told, once its pane is; an Agent that then fails to start
     /// takes its session with it.
     static func startSession(_ agent: Agent, for task: Record, on machine: Machine, repo given: String?, branch: String? = nil,
-                             remote: Bool? = nil, in vault: Vault, made: (Record) -> Void) async -> Result<Record, Mux.Failure> {
+                             remote: Bool? = nil, bypass: Bool? = nil, in vault: Vault, made: (Record) -> Void) async -> Result<Record, Mux.Failure> {
         if let problem = await machine.prepare() { return .failure(Mux.Failure(problem)) }
         var place = Start.Place(), repo = given
         if task.scratchpad {
@@ -91,10 +96,11 @@ enum TaskActions {
             }
         }
         let name = Names.free(Names.slug("\(current.body.title ?? "task")-\(agent.rawValue)"), taken: await Mux.agentNames(on: machine))
-        let session = Start.session(agent, for: task.id, on: machine.alias, at: place, repo: repo, remote: remote, name: name, in: vault)
+        let session = Start.session(agent, for: task.id, on: machine.alias, at: place, repo: repo, remote: remote, bypass: bypass,
+                                    name: name, in: vault)
         made(session)
         if let problem = await machine.follower.start(agent, name: name, pane: place.pane ?? "", config: claudeConfig(vault, on: machine),
-                                                      remote: Self.remote(of: session, in: vault)) {
+                                                      remote: Self.remote(of: session, in: vault), bypass: Self.bypass(of: session, in: vault)) {
             vault.delete(vault.records[session.id] ?? session)
             return .failure(Mux.Failure(problem))
         }
@@ -250,7 +256,7 @@ enum TaskActions {
         let config = agent == .claude ? claudeConfig(of: transcript) ?? claudeConfig(vault, on: machine) : nil
         if let problem = await machine.follower.start(
             agent, name: name, pane: pane, resuming: transcript, config: config,
-            remote: remote(of: session, in: vault)) { return problem }
+            remote: remote(of: session, in: vault), bypass: bypass(of: session, in: vault)) { return problem }
         var record = vault.records[session.id] ?? session
         (record.body.pane, record.body.name) = (pane, name)
         vault.write(record)

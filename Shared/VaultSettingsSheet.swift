@@ -7,6 +7,7 @@ struct VaultSettingsSheet: View {
     @ObservedObject var vault: Vault
     @State private var links: [LinkRule] = []
     @State private var remote = true
+    @State private var bypass = true
 
     private var kept: [LinkRule] { links.filter { !$0.pattern.isEmpty && !$0.url.isEmpty } }
     private var valid: Bool { kept.allSatisfy { (try? Regex($0.pattern)) != nil } }
@@ -32,6 +33,11 @@ struct VaultSettingsSheet: View {
             Toggle("Claude remote control", isOn: $remote)
         } footer: {
             Text("New Claude sessions can be reached from the Claude app. Each new session can still choose otherwise.")
+        }
+        Section {
+            Toggle("Skip permissions", isOn: $bypass)
+        } footer: {
+            Text("New Claude and Codex sessions act without asking. When off, the chat shows each request to approve. A session's Tab menu can change it later, which restarts its Agent.")
         }
         Section {
             ForEach($links) { $rule in
@@ -64,12 +70,14 @@ struct VaultSettingsSheet: View {
     private func load() {
         links = vault.settings.body.links ?? []
         remote = vault.settings.body.remote ?? true
+        bypass = vault.settings.body.bypass ?? true
     }
 
     private func save() {
         var settings = vault.settings
         settings.body.links = kept
         settings.body.remote = remote
+        settings.body.bypass = bypass
         vault.write(settings)
         dismiss()
     }

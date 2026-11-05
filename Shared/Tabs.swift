@@ -102,6 +102,8 @@ struct TabMenu {
     let resume: Record?
     /// A running Agent session, to close with its Tab.
     let end: Record?
+    /// A Claude or Codex session, settled enough to switch whether it asks permission.
+    let permissions: Record?
 
     init(_ tab: TabItem, in vault: some Records, life: (Record) -> Panes.Life) {
         record = tab.record.flatMap { vault.records[$0] }
@@ -114,6 +116,13 @@ struct TabMenu {
             switch life($0) {
             case .running, .starting: $0
             case .unknown, .resuming, .ended: nil
+            }
+        }
+        permissions = session.flatMap {
+            guard $0.body.agent.flatMap(Agent.init)?.asks == true else { return nil }
+            switch life($0) {
+            case .running, .ended: return $0
+            case .unknown, .starting, .resuming: return nil
             }
         }
     }

@@ -14,12 +14,13 @@ enum Start {
 
     /// The record of a new Agent session of the Task, carrying its own Worktree.
     static func session(_ agent: Agent, for task: String, on machine: String?, at place: Place, repo: String?, remote: Bool? = nil,
-                        name: String? = nil, in vault: some Records) -> Record {
+                        bypass: Bool? = nil, name: String? = nil, in vault: some Records) -> Record {
         let count = vault.children(.session, task: task).filter { $0.body.agent == agent.rawValue }.count
         return vault.create(.session, .init(
             title: count == 0 ? agent.title : "\(agent.title) \(count + 1)", task: task,
             position: Double(Date().timeIntervalSince1970), machine: machine, path: place.folder, branch: place.branch,
-            repo: repo, pane: place.pane, name: name, agent: agent.rawValue, remote: agent == .claude ? remote : nil))
+            repo: repo, pane: place.pane, name: name, agent: agent.rawValue, remote: agent == .claude ? remote : nil,
+            bypass: agent.asks ? bypass : nil))
     }
 
     /// A new Worktree of `repo` on `branch`, for one Agent session working beside the Task's own,

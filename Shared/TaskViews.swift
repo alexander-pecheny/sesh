@@ -77,6 +77,11 @@ struct TabMenuItems: View {
                 library.askToEnd(session)
             }
         }
+        if let session = menu.permissions {
+            Toggle(menu.end == nil ? "Skip Permissions" : "Skip Permissions (Restarts Agent)", isOn: Binding(
+                get: { TaskActions.bypass(of: session, in: vault) },
+                set: { bypass in Task { await library.setBypass(bypass, for: session) } }))
+        }
         if let record = menu.record {
             Divider()
             Menu("Move to Task") {

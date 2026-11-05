@@ -6,17 +6,19 @@ enum Agent: String, CaseIterable, Identifiable {
 
     var id: String { rawValue }
     var title: String { self == .pi ? "pi" : rawValue.capitalized }
+    /// pi never asks permission, so it has no mode to choose.
+    var asks: Bool { self != .pi }
 
-    /// Permissions are always bypassed: she cannot be at the terminal to approve them. With a
+    /// With `bypass` the Agent asks no permission; without it, the chat shows each question. With a
     /// Transcript, the Agent picks up the conversation it holds.
-    func args(_ name: String, resuming transcript: String? = nil, remote: Bool = true) -> [String] {
+    func args(_ name: String, resuming transcript: String? = nil, remote: Bool = true, bypass: Bool = true) -> [String] {
         let id = ((transcript ?? "") as NSString).lastPathComponent.replacingOccurrences(of: ".jsonl", with: "")
         switch self {
         // A new Claude gets its session id from Sesh, so sesh-mux knows its Transcript before any hook runs.
-        case .claude: return (remote ? ["--remote-control", name] : []) + ["--dangerously-skip-permissions"]
+        case .claude: return (remote ? ["--remote-control", name] : []) + (bypass ? ["--dangerously-skip-permissions"] : [])
             + (transcript == nil ? ["--session-id", UUID().uuidString.lowercased()] : ["--resume", id])
         // Codex names its files rollout-<time>-<uuid>.
-        case .codex: return (transcript == nil ? [] : ["resume", String(id.suffix(36))]) + ["--dangerously-bypass-approvals-and-sandbox"]
+        case .codex: return (transcript == nil ? [] : ["resume", String(id.suffix(36))]) + (bypass ? ["--dangerously-bypass-approvals-and-sandbox"] : [])
         case .pi: return transcript.map { ["--session", $0] } ?? []
         }
     }

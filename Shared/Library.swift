@@ -35,13 +35,14 @@ final class Library: ObservableObject {
     /// Opens the new session's Tab as soon as its pane exists; what the user writes before the
     /// Agent can take a prompt waits in its queue.
     func start(_ agent: Agent, for task: Record, on machine: Machine, repo: String? = nil, branch: String? = nil,
-               remote: Bool? = nil, problem: @escaping (String) -> Void) {
+               remote: Bool? = nil, bypass: Bool? = nil, problem: @escaping (String) -> Void) {
         guard let vault = vault(of: task.id) else { return }
         let pending = Starting(agent: agent, machine: machine.title)
         starting[task.id, default: []].append(pending)
         Task {
             var shown: Record?
-            let result = await TaskActions.startSession(agent, for: task, on: machine, repo: repo, branch: branch, remote: remote, in: vault) { session in
+            let result = await TaskActions.startSession(agent, for: task, on: machine, repo: repo, branch: branch, remote: remote,
+                                                              bypass: bypass, in: vault) { session in
                 shown = session
                 starting[task.id]?.removeAll { $0 == pending }
                 launching.insert(session.id)
@@ -533,6 +534,17 @@ final class Library: ObservableObject {
         }
         refused[session.id] = nil
         sync()
+    }
+
+    /// Records whether the session's Agent asks permission. A running Agent is started again on
+    /// its Transcript, because neither Claude nor Codex can change this while running.
+    func setBypass(_ bypass: Bool, for session: Record) async {
+        guard let vault = vault(of: session.id), var record = vault.records[session.id] else { return }
+        record.body.bypass = bypass
+        vault.write(record)
+        guard holdsPane(record) else { return }
+        await end(record)
+        await resume(vault.records[record.id] ?? record)
     }
 
     /// Every machine an Agent session can start on: the Mac, then each Vault's Host.

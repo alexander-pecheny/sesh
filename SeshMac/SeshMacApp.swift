@@ -138,7 +138,7 @@ private struct StartSheetWindow: View {
 
     var body: some View {
         let task = vault.all(.task).first ?? vault.create(.task, .init(title: "Check the sheet"))
-        let draft = StartSessionSheet.Draft(alias: nil, choice: "\u{0}other", typed: typed, config: "", remote: true, parallel: false, newBranch: "")
+        let draft = StartSessionSheet.Draft(alias: nil, choice: "\u{0}other", typed: typed, config: "", remote: true, bypass: true, parallel: false, newBranch: "")
         StartSessionSheet(vault: vault, task: task, shown: .init(agent: .claude, draft: draft)) { _ in }
     }
 }
