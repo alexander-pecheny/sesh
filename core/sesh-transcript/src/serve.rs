@@ -546,6 +546,7 @@ struct FollowedVault {
     vault: crate::vault::Vault,
     since: i64,
     version: Option<i64>,
+    moved: Option<Value>,
 }
 
 impl Client {
@@ -641,7 +642,7 @@ impl Client {
             "vault" => {
                 let dir = request["dir"].as_str().unwrap_or_default().to_string();
                 match crate::vault::Vault::open(expand(&dir), false) {
-                    Ok(vault) => drop(self.vaults.insert(dir, FollowedVault { vault, since: request["since"].as_i64().unwrap_or(0), version: None })),
+                    Ok(vault) => drop(self.vaults.insert(dir, FollowedVault { vault, since: request["since"].as_i64().unwrap_or(0), version: None, moved: None })),
                     Err(err) => self.send(&json!({"t": "vault_error", "vault": dir, "message": err.to_string()})),
                 }
             }
@@ -692,14 +693,17 @@ impl Client {
     fn push_vaults(&mut self) {
         let mut lines = Vec::new();
         for (dir, followed) in &mut self.vaults {
+            let moved = followed.vault.moved();
+            let marked = moved != followed.moved;
+            followed.moved = moved;
             let pulled = followed.vault.data_version().and_then(|now| {
                 if followed.version == Some(now) {
-                    return Ok(None);
+                    return Ok(marked.then_some((Vec::new(), followed.since)));
                 }
                 let (records, head) = followed.vault.pull(followed.since)?;
                 let first = followed.version.is_none();
                 followed.version = Some(now);
-                Ok((first || !records.is_empty()).then_some((records, head)))
+                Ok((first || marked || !records.is_empty()).then_some((records, head)))
             });
             match pulled {
                 Ok(Some((records, head))) => {
@@ -1033,11 +1037,18 @@ mod tests {
         written.push(None, vec![change("t3")]).unwrap();
         let after = heard(&mut client, &mut machine);
         let marked = client.vaults.is_empty();
+        client.request(&mut machine, &json!({"op": "vault", "dir": named, "since": 3})).unwrap();
+        heard(&mut client, &mut machine);
+        std::fs::write(folder.join(crate::vault::MOVED), r#"{"alias": "vps-2"}"#).unwrap();
+        let moved = heard(&mut client, &mut machine);
+        let once = heard(&mut client, &mut machine);
         std::fs::remove_dir_all(&dir).unwrap();
         assert_eq!(first, ["record:t1", "head:"]);
         assert!(quiet.is_empty(), "{quiet:?}");
         assert_eq!(later, ["record:t2", "head:"]);
         assert!(after.is_empty() && marked);
+        assert_eq!(moved, ["head:"], "a move is told at once, though no record changed");
+        assert!(once.is_empty(), "{once:?}");
     }
 
     #[test]

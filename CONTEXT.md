@@ -170,6 +170,13 @@ name and the Host from its own list that answers to the Mac's ssh alias for it; 
 cannot reach the Mac, so the Mac's own Terminals and files stay off its strip.
 _Avoid_: workspace, library, database
 
+**Move**:
+To give a Vault another Host, from the Mac. The Vault's database and Transcript copies go along,
+and so do its open Tasks' Worktrees, with their uncommitted work. Their Agent sessions come back
+ended on the new Host, ready to resume. The old Host keeps its files, marked as moved, so
+every device that still reaches it follows the Vault to the new one.
+_Avoid_: migrate, transfer
+
 **Unfiled**:
 The Agent sessions on a Vault's Hosts that no Task has adopted yet, usually because they
 were started outside Sesh. The Mac's own unadopted sessions form one more Unfiled list,

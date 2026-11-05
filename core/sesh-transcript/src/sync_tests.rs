@@ -247,3 +247,34 @@ fn two_devices_lose_and_double_no_record_through_lost_replies_reconnects_and_an_
 fn without_remembered_batches_a_lost_reply_makes_a_conflict_copy_of_a_devices_own_edit() {
     assert!((0..200).any(|seed| run(seed, false).is_err()));
 }
+
+#[test]
+fn a_moved_vault_names_its_new_host_and_takes_no_more_pushes_while_its_export_carries_on() {
+    let root = std::env::temp_dir().join(format!("sesh-vault-moved-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&root);
+    let mut old = Vault::open(root.join("old"), true).unwrap();
+    let task = |title: &str| Change { id: "t1".into(), kind: "task".into(), body: json!({"title": title}), base: 0, deleted: false };
+    old.push(Some("b1"), vec![task("Before")]).unwrap();
+    assert!(old.head_line(1).get("moved").is_none());
+
+    let marker = root.join("old").join(super::MOVED);
+    std::fs::write(&marker, "{\"alias\": \"vps-2\", \"hostname\": \"10.0.0").unwrap();
+    assert_eq!(old.head_line(1)["moved"], json!({}), "a marker half written still stops writers");
+    let moved = json!({"alias": "vps-2", "hostname": "10.0.0.2", "user": "ann", "done": true});
+    std::fs::write(&marker, moved.to_string()).unwrap();
+    let refused = old.push(Some("b2"), vec![task("After")]).unwrap_err();
+    assert!(refused.0.contains("vps-2"), "{refused}");
+    assert_eq!(old.head_line(old.head().unwrap())["moved"], moved);
+    assert_eq!(old.pull(0).unwrap().0[0].body["title"], "Before");
+
+    std::fs::create_dir_all(root.join("new")).unwrap();
+    old.export(&root.join("new/vault.db")).unwrap();
+    let mut new = Vault::open(root.join("new"), false).unwrap();
+    assert_eq!((new.id.as_str(), new.head().unwrap()), (old.id.as_str(), 1), "devices carry on with the same id and seq");
+    assert!(new.head_line(1).get("moved").is_none());
+    let (again, _) = new.push(Some("b1"), vec![task("Ignored")]).unwrap();
+    assert_eq!(again[0].body["title"], "Before", "remembered batches move too");
+    new.push(Some("b3"), vec![task("After")]).unwrap();
+    assert_eq!(new.pull(1).unwrap().0[0].body["title"], "After");
+    std::fs::remove_dir_all(&root).unwrap();
+}

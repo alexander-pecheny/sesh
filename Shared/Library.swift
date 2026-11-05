@@ -90,6 +90,10 @@ final class Library: ObservableObject {
 
     /// Shows the Tabs another device opened or closed; the one shown here stays unless it closed.
     private func follow(_ vault: Vault) {
+        following.append(vault.$moved.compactMap { $0 }.filter { $0.done == true }.removeDuplicates().sink { [weak self, weak vault] moved in
+            guard let self, let vault else { return }
+            Task { await self.relocate(vault, to: moved) }
+        })
         following.append(vault.$records.receive(on: DispatchQueue.main).sink { [weak self, weak vault] _ in
             guard let self, let vault else { return }
             let links = vault.settings.body.links ?? []
@@ -176,9 +180,7 @@ final class Library: ObservableObject {
     }
 
     init() {
-        let places = UserDefaults.standard.data(forKey: Self.key)
-            .flatMap { try? JSONDecoder().decode([Vault.Place].self, from: $0) } ?? []
-        vaults = places.map(Vault.init)
+        vaults = Self.places.map(Vault.init)
         vaults.forEach { $0.start(); follow($0) }
         watchUnfiled()
         if let kept = UserDefaults.standard.data(forKey: "tabs").flatMap({ try? JSONDecoder().decode(Kept.self, from: $0) }) {
@@ -192,16 +194,57 @@ final class Library: ObservableObject {
         vaults.append(vault)
         vault.start()
         follow(vault)
-        UserDefaults.standard.set(try? JSONEncoder().encode(vaults.map(\.place)), forKey: Self.key)
+        Self.store(vaults.map(\.place))
     }
 
     func remove(_ vault: Vault) {
         vault.forget()
         vaults.removeAll { $0 === vault }
-        UserDefaults.standard.set(try? JSONEncoder().encode(vaults.map(\.place)), forKey: Self.key)
+        Self.store(vaults.map(\.place))
     }
 
     func vault(of task: String) -> Vault? { vaults.first { $0.records[task] != nil } }
+
+    /// Follows a Vault to the Host its old one says it moved to, if this device reaches that Host.
+    private func relocate(_ vault: Vault, to moved: Moved) async {
+        guard let alias = moved.alias else { return }
+        #if os(macOS)
+        let here = Moved.resolved((await Machine.mac.run("ssh -G \(quote(alias))")).out, alias: alias)
+        guard moved.reached(by: here) else {
+            return vault.problem = "This Vault moved to \(moved.place), but \(alias) in this Mac's ssh config reaches another machine. "
+                + "Point \(alias) at that Host, and Sesh follows the Vault there."
+        }
+        repoint(vault, to: .init(name: vault.name, alias: alias))
+        #else
+        guard let host = moved.host(among: Store.shared.hosts, name: \.name, address: \.address, user: \.user) else {
+            return vault.problem = "This Vault moved to \(moved.place). Add that Host in Settings, and Sesh follows the Vault there."
+        }
+        repoint(vault, to: .init(name: vault.name, alias: alias, host: host.id))
+        #endif
+    }
+
+    /// The same Vault, its copy here kept, followed on another Host from now on.
+    func repoint(_ vault: Vault, to place: Vault.Place) {
+        guard let index = vaults.firstIndex(where: { $0 === vault }), vault.place != place else { return }
+        vault.stop()
+        vault.copier.stop()
+        if let config = TaskActions.claudeConfig(vault, on: vault.machine) {
+            TaskActions.setClaudeConfig(Move.portable(config), vault, on: .named(place.alias))
+        }
+        let moved = Vault(place)
+        vaults[index] = moved
+        moved.start()
+        follow(moved)
+        Self.store(vaults.map(\.place))
+    }
+
+    static func store(_ places: [Vault.Place]) {
+        UserDefaults.standard.set(try? JSONEncoder().encode(places), forKey: key)
+    }
+
+    static var places: [Vault.Place] {
+        UserDefaults.standard.data(forKey: key).flatMap { try? JSONDecoder().decode([Vault.Place].self, from: $0) } ?? []
+    }
 
     // MARK: Unfiled
 

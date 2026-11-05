@@ -582,6 +582,10 @@ record's last write. The helper reads only `body.title`, `body.text`, `body.task
   added `file` naming the copy. `task` is a session record's `body.task`.
 - `follow`, `history` and `entry` take `--file PATH --agent AGENT` in place of a pane, to
   show a Transcript copy when its Agent session's machine is off.
+- `vault export DIR FILE` writes a whole copy of `vault.db` to FILE, however other connections
+  are writing, for a Vault that moves to another Host (ADR 0024). Once `moved.json` sits beside
+  `vault.db`, every head line carries it as `"moved"`, a follow prints the head again when it
+  appears or changes, and `vault push` prints the head and fails without writing.
 
 Entry ids hash the Transcript's file name, not its whole path, so a copy and its source give
 the same ids and a Bookmark (`sesh://VAULT/SESSION/ITEM`) works on both.

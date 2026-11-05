@@ -97,3 +97,7 @@ site:
 # Archive and upload a build to TestFlight (see scripts/testflight.sh).
 testflight:
     ./scripts/testflight.sh
+
+# Move a Vault to the Host of that ssh alias with the installed Mac app (ADR 0024); SESH_APP names another build.
+vault-move vault host:
+    app="${SESH_APP:-/Applications/Sesh.app}"; "$app/Contents/MacOS/$(basename "$app" .app)" vault move {{vault}} --to {{host}}

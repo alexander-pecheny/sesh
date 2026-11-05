@@ -48,6 +48,8 @@ CREATE TABLE IF NOT EXISTS pushes (n INTEGER PRIMARY KEY, batch TEXT NOT NULL UN
 /// How many push batches a Vault remembers the answers to, so one sent again is not written twice.
 const BATCHES: i64 = 1000;
 const DEFAULT_LIMIT: usize = 20;
+/// The file beside vault.db that says the Vault moved to another Host, and which one (ADR 0024).
+pub const MOVED: &str = "moved.json";
 const SNIPPET_TOKENS: i32 = 12;
 
 #[derive(Debug)]
@@ -162,7 +164,24 @@ impl Vault {
     }
 
     pub fn head_line(&self, seq: i64) -> Value {
-        json!({"t": "head", "seq": seq, "vault_id": self.id})
+        let mut line = json!({"t": "head", "seq": seq, "vault_id": self.id});
+        if let Some(moved) = self.moved() {
+            line["moved"] = moved;
+        }
+        line
+    }
+
+    /// Where the Vault moved, or is moving, once a move has begun. A marker half written still
+    /// counts, as an empty object, so no device writes here meanwhile.
+    pub fn moved(&self) -> Option<Value> {
+        let text = std::fs::read_to_string(self.dir.join(MOVED)).ok()?;
+        Some(serde_json::from_str(&text).ok().filter(Value::is_object).unwrap_or_else(|| json!({})))
+    }
+
+    /// A copy of the database as it stands, at `to`, whatever other connections are writing.
+    pub fn export(&self, to: &Path) -> Result<()> {
+        self.db.execute("VACUUM INTO ?1", [to.to_string_lossy()])?;
+        Ok(())
     }
 
     pub fn head(&self) -> Result<i64> {
@@ -191,6 +210,11 @@ impl Vault {
     /// another's, and answers with what it wrote and the record each losing edit left standing.
     /// A `batch` pushed before is answered as it was then and not written again.
     pub fn push(&mut self, batch: Option<&str>, changes: Vec<Change>) -> Result<(Vec<Record>, i64)> {
+        if let Some(moved) = self.moved() {
+            let host = moved["alias"].as_str().unwrap_or("another Host");
+            let state = if moved["done"] == true { "has moved" } else { "is moving" };
+            return Err(Error(format!("This Vault {state} to {host}, so it takes no more changes here.")));
+        }
         let write = self
             .db
             .transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)?;

@@ -47,6 +47,7 @@ final class Vault: ObservableObject, Identifiable, Records {
         let deleted: Bool?
         let message: String?
         let vault_id: String?
+        let moved: Moved?
 
         var record: Record? {
             guard t == "record", let id, let kind, let seq else { return nil }
@@ -58,6 +59,8 @@ final class Vault: ObservableObject, Identifiable, Records {
     @Published private(set) var online = false
     @Published private(set) var pending = 0
     @Published var problem: String?
+    /// Where the Vault went, once its old Host says it moved; the Library follows it there.
+    @Published private(set) var moved: Moved?
 
     let place: Place
     let machine: Machine
@@ -178,6 +181,8 @@ final class Vault: ObservableObject, Identifiable, Records {
         problem = nil
         online = true
         if let head = try? JSONDecoder().decode(Line.self, from: Data(made.out.utf8)) {
+            notice(head.moved)
+            if head.moved != nil { return }
             if head.seq.map({ $0 < seq }) == true || (identity != nil && head.vault_id != identity) {
                 await restore(head.vault_id)
             } else if identity == nil {
@@ -207,7 +212,9 @@ final class Vault: ObservableObject, Identifiable, Records {
                 records[record.id] = record
             }
             save()
-        case "head": if let head = line.seq { seq = max(seq, head); save() }
+        case "head":
+            if let head = line.seq { seq = max(seq, head); save() }
+            notice(line.moved)
         case "vault_error": problem = line.message
         default: break
         }
@@ -251,6 +258,9 @@ final class Vault: ObservableObject, Identifiable, Records {
             let put = await machine.put(Data((lines.joined(separator: "\n") + "\n").utf8), to: name)
             guard put.ok else { return failed(put.problem) }
             let ran = await machine.run("\(Helper.path) vault push \(folder) \(name) --batch \(sending.id)")
+            if let moved = ran.out.split(separator: "\n").lazy.compactMap({ try? JSONDecoder().decode(Line.self, from: Data($0.utf8)) }).compactMap(\.moved).first {
+                return notice(moved)
+            }
             guard ran.ok else { return failed(ran.problem) }
             let answer = ran.out.split(separator: "\n").compactMap { try? JSONDecoder().decode(Line.self, from: Data($0.utf8)) }
             // The Host's Vault was made again since this copy connected. The next connection
@@ -270,6 +280,27 @@ final class Vault: ObservableObject, Identifiable, Records {
             pending = queue.count
             save()
         }
+    }
+
+    /// The old Host takes no more changes once a move begins; they stay queued for the new one. A
+    /// move that failed takes its marker away, and the Vault carries on here.
+    private func notice(_ moved: Moved?) {
+        guard moved != nil || self.moved != nil else { return }
+        self.moved = moved
+        problem = moved.map {
+            $0.done == true ? "This Vault moved to \($0.place)." : "This Vault is moving to \($0.place). Sesh follows it there once the move is done."
+        }
+    }
+
+    /// Waits until every change made here has reached the Host, or `limit` has passed.
+    func settle(within limit: Duration) async -> Bool {
+        let end = ContinuousClock.now + limit
+        while ContinuousClock.now < end {
+            if online, queue.isEmpty, batch == nil { return true }
+            await flush()
+            try? await Task.sleep(for: .milliseconds(300))
+        }
+        return false
     }
 
     private func failed(_ why: String) {

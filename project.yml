@@ -149,6 +149,7 @@ targets:
       - path: Shared/Panes.swift
       - path: Shared/Git.swift
       - path: Shared/Close.swift
+      - path: Shared/Move.swift
       - path: Shared/Tree.swift
       - path: Shared/Tabs.swift
       - path: Shared/Start.swift

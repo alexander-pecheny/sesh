@@ -21,9 +21,7 @@ extension TaskActions {
 
     /// The Claude config folder a Transcript lives in, which a resumed Claude must be started
     /// with: `~/.claude-personal` for `~/.claude-personal/projects/<project>/<id>.jsonl`.
-    static func claudeConfig(of transcript: String) -> String? {
-        transcript.range(of: "/projects/", options: .backwards).map { String(transcript[..<$0.lowerBound]) }
-    }
+    static func claudeConfig(of transcript: String) -> String? { Move.account(of: transcript) }
 
     /// Puts the Transcript at `path` on `source` where its Agent looks for it on `target`, in the
     /// same folder there or the same place under its home. A fork takes a new session id.

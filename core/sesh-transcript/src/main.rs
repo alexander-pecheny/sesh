@@ -28,7 +28,7 @@ const USAGE: &str = "usage: sesh-transcript --version | follow --protocol | foll
        | history <pane> --before ID [--last N] | entry <pane> ID | background <pane>...
        | vault init DIR | vault pull|follow DIR [--since SEQ] | vault push DIR FILE [--batch ID]
        | vault size DIR SESSION FILE | vault append DIR SESSION FILE --offset N BYTES_FILE
-       | vault copy DIR SESSION --from PATH | vault search DIR QUERY [--limit N]
+       | vault copy DIR SESSION --from PATH | vault search DIR QUERY [--limit N] | vault export DIR FILE
        | transcripts search QUERY [--limit N] | transcripts place FILE --agent AGENT [--config DIR] [--fork]
        | search WORDS... [--vault NAME] [--limit N]
 follow, history and entry take --file PATH --agent AGENT in place of <pane>.";
@@ -473,6 +473,10 @@ fn vault(args: &[String]) -> Exit {
             let vault = Vault::open(dir, false)?;
             vec![json!({"size": vault.copy(session, Path::new(from))?})]
         }
+        (&["export", dir, file], None, None) => {
+            Vault::open(dir, false)?.export(Path::new(file))?;
+            Vec::new()
+        }
         (&["search", dir, query], None, None) => {
             let vault = Vault::open(dir, false)?;
             vault.search(query, limit.map(|limit| limit as usize))?
@@ -524,7 +528,7 @@ fn print_lines(lines: &[Value]) -> Exit {
 
 fn vault_follow(dir: &str, mut since: i64, follow: bool) -> Exit {
     let vault = Vault::open(dir, false)?;
-    let mut version = None;
+    let (mut version, mut moved) = (None, None);
     let mut pinged = Instant::now();
     loop {
         if follow && pinged.elapsed() > PING {
@@ -540,6 +544,11 @@ fn vault_follow(dir: &str, mut since: i64, follow: bool) -> Exit {
                 print_lines(&lines)?;
             }
             (version, since) = (now, head);
+        }
+        let marker = vault.moved();
+        if marker != moved {
+            print_lines(&[vault.head_line(since)])?;
+            moved = marker;
         }
         if !follow {
             return Ok(0);
@@ -560,6 +569,10 @@ fn vault_push(dir: &str, file: &str, batch: Option<&str>) -> Result<Vec<Value>, 
         .collect::<Result<Vec<vault::Change>, _>>()
         .map_err(|err| format!("{file}: {err}"))?;
     let mut vault = Vault::open(dir, false)?;
+    // A device that knows of moves reads where to from stdout; an older one sees only the failure.
+    if vault.moved().is_some() {
+        print_lines(&[vault.head_line(vault.head()?)])?;
+    }
     let (records, head) = vault.push(batch, changes)?;
     std::fs::remove_file(file).map_err(|err| format!("{file}: {err}"))?;
     let mut lines: Vec<Value> = records.iter().map(vault::Record::line).collect();

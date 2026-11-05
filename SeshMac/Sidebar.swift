@@ -8,6 +8,7 @@ struct Sidebar: View {
     @State private var naming: Naming?
     @State private var closing: Closing?
     @State private var configuring: Vault?
+    @State private var moving: Vault?
     /// The order of the Tasks, kept while the pointer is over them.
     @State private var order: [String: Int] = [:]
     @State private var leaving: Task<Void, Never>?
@@ -38,7 +39,7 @@ struct Sidebar: View {
     var body: some View {
         List(selection: $library.selection) {
             ForEach(library.vaults) { vault in
-                VaultSection(vault: vault, naming: $naming, configuring: $configuring)
+                VaultSection(vault: vault, naming: $naming, configuring: $configuring, moving: $moving)
             }
             UnfiledSection(title: "On this Mac", items: library.unfiled[""] ?? [])
         }
@@ -76,6 +77,7 @@ struct Sidebar: View {
         }
         .sheet(item: $closing) { CloseTaskSheet(vault: $0.vault, task: $0.task) }
         .sheet(item: $configuring) { VaultSettingsSheet(vault: $0) }
+        .sheet(item: $moving) { MoveVaultSheet(vault: $0) }
         .environment(\.closeTask) { closing = Closing(vault: $0, task: $1) }
         .onDeleteCommand {
             guard let id = library.selection, let vault = library.vault(of: id), let task = vault.records[id],
@@ -97,12 +99,14 @@ private struct VaultSection: View {
     @ObservedObject var vault: Vault
     @Binding var naming: Sidebar.Naming?
     @Binding var configuring: Vault?
+    @Binding var moving: Vault?
     @AppStorage private var open: Bool
 
-    init(vault: Vault, naming: Binding<Sidebar.Naming?>, configuring: Binding<Vault?>) {
+    init(vault: Vault, naming: Binding<Sidebar.Naming?>, configuring: Binding<Vault?>, moving: Binding<Vault?>) {
         self.vault = vault
         _naming = naming
         _configuring = configuring
+        _moving = moving
         _open = AppStorage(wrappedValue: true, "open." + vault.name)
     }
 
@@ -142,6 +146,7 @@ private struct VaultSection: View {
                     Button("New Folder") { naming = .init(goal: .folder, vault: vault, parent: nil) }
                     Divider()
                     Button("Vault Settings…") { configuring = vault }
+                    if vault.place.alias != nil { Button("Move to Host…") { moving = vault } }
                 } label: { Image(systemName: "plus") }
                     .menuStyle(.borderlessButton)
                     .menuIndicator(.hidden)

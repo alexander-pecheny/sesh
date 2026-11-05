@@ -1,6 +1,5 @@
 import SwiftUI
 
-@main
 struct SeshMacApp: App {
     @StateObject private var library = Library()
 
