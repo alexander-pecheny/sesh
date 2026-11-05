@@ -3,6 +3,7 @@ use std::time::{Duration, Instant};
 use bytes::Bytes;
 
 use super::{terminal_targets::TerminalTargetError, App};
+use crate::agent_resume::launch_argv;
 use crate::api::schema::AgentStartParams;
 
 const DEFAULT_AGENT_START_TIMEOUT: Duration = Duration::from_secs(30);
@@ -11,17 +12,6 @@ pub(crate) const AGENT_START_SETTLE_DELAY: Duration = Duration::from_secs(3);
 const INVALID_AGENT_TIMEOUT_MESSAGE: &str =
     "agent start timeout must be greater than 3000ms and at most 300000ms";
 const INVALID_AGENT_NAME_MESSAGE: &str = "agent name must start with a lowercase letter and contain only lowercase letters, digits, '-' or '_' (1-32 characters)";
-
-/// The Agent's command line, under `env` when it takes variables of its own.
-fn launch_argv(executable: &str, env: &std::collections::BTreeMap<String, String>, args: Vec<String>) -> Option<Vec<String>> {
-    let valid = |name: &String| !name.is_empty() && name.chars().all(|ch| ch.is_ascii_alphanumeric() || ch == '_');
-    if !env.iter().all(|(name, value)| valid(name) && !value.chars().any(char::is_control)) {
-        return None;
-    }
-    let assignments = env.iter().map(|(name, value)| format!("{name}={value}"));
-    let head = (!env.is_empty()).then(|| "/usr/bin/env".to_string());
-    Some(head.into_iter().chain(assignments).chain([executable.to_string()]).chain(args).collect())
-}
 
 fn valid_agent_name(name: &str) -> bool {
     let mut chars = name.chars();
@@ -158,6 +148,7 @@ impl App {
         }
         let persisted_agent_session =
             crate::agent_resume::persisted_session_from_launch_args(kind, &params.args);
+        let launch = crate::agent_resume::AgentLaunch::from_start(kind, &params.args, &params.env);
         let conflicts = self.agent_name_conflicts(&name, "");
         if !conflicts.is_empty() {
             return Err(AgentStartError::DuplicateName {
@@ -219,6 +210,7 @@ impl App {
             terminal.clear_agent_name();
             return Err(AgentStartError::InputFailed(err.to_string()));
         }
+        terminal.managed_agent_launch = Some(launch);
         if let Some(session) = persisted_agent_session {
             terminal.set_managed_agent_launch_session(session);
         }

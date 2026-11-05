@@ -122,6 +122,8 @@ pub struct PaneAgentSessionSnapshot {
     pub value: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub path: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub launch: Option<crate::agent_resume::AgentLaunch>,
 }
 
 #[derive(Serialize, Deserialize)]
@@ -348,27 +350,29 @@ fn capture_tab(
         let launch_argv = terminal.and_then(|terminal| terminal.launch_argv.clone());
         let legacy_agent_pid = terminal.and_then(|terminal| terminal.legacy_agent_pid);
         let agent_session = terminal.and_then(|terminal| {
-            if let Some(authority) = terminal.hook_authority.as_ref() {
-                if let Some(session_ref) = authority.session_ref.as_ref() {
-                    return Some(PaneAgentSessionSnapshot {
-                        source: authority.source.clone(),
-                        agent: authority.agent_label.clone(),
-                        kind: session_ref.kind,
-                        value: session_ref.value.clone(),
-                        path: session_ref.path.clone(),
-                    });
-                }
-            }
-            terminal
-                .persisted_agent_session
+            let (source, agent, session_ref) = terminal
+                .hook_authority
                 .as_ref()
-                .map(|session| PaneAgentSessionSnapshot {
-                    source: session.source.clone(),
-                    agent: session.agent.clone(),
-                    kind: session.session_ref.kind,
-                    value: session.session_ref.value.clone(),
-                    path: session.session_ref.path.clone(),
+                .and_then(|authority| {
+                    Some((&authority.source, &authority.agent_label, authority.session_ref.as_ref()?))
                 })
+                .or_else(|| {
+                    terminal
+                        .persisted_agent_session
+                        .as_ref()
+                        .map(|session| (&session.source, &session.agent, &session.session_ref))
+                })?;
+            let launched_this_agent = terminal
+                .managed_agent_kind()
+                .is_some_and(|kind| crate::detect::agent_label(kind) == agent);
+            Some(PaneAgentSessionSnapshot {
+                source: source.clone(),
+                agent: agent.clone(),
+                kind: session_ref.kind,
+                value: session_ref.value.clone(),
+                path: session_ref.path.clone(),
+                launch: terminal.managed_agent_launch.clone().filter(|_| launched_this_agent),
+            })
         });
         panes.insert(
             id.raw(),
@@ -949,6 +953,38 @@ mod tests {
             crate::agent_resume::AgentSessionRefKind::Path
         );
         assert_eq!(agent_session.value, session_path);
+    }
+
+    #[test]
+    fn saved_session_keeps_the_managed_agent_launch_after_its_session_changes() {
+        let mut state = state_with_workspaces(&["one"]);
+        let root = state.workspaces[0].tabs[0].root_pane;
+        state.ensure_test_terminals();
+        let terminal_id = state.workspaces[0].tabs[0].panes[&root]
+            .attached_terminal_id
+            .clone();
+        let launch = crate::agent_resume::AgentLaunch {
+            args: vec!["--dangerously-skip-permissions".into()],
+            env: [("CLAUDE_CONFIG_DIR".to_string(), "/c".to_string())].into(),
+        };
+        let terminal = state.terminals.get_mut(&terminal_id).unwrap();
+        terminal.restore_managed_agent("worker".into(), crate::detect::Agent::Claude, Some(launch.clone()));
+        terminal.set_detected_state(Some(crate::detect::Agent::Claude), crate::detect::AgentState::Idle);
+        terminal.set_hook_authority_with_session_ref(
+            "sesh-mux:claude".into(),
+            "claude".into(),
+            crate::detect::AgentState::Working,
+            None,
+            crate::agent_resume::AgentSessionRef::id("after-clear"),
+            Some(1),
+        );
+
+        let snapshot = capture_from_state(&state);
+        let saved = serde_json::to_string(&snapshot.workspaces[0].tabs[0].panes[&root.raw()].agent_session).unwrap();
+        let session: PaneAgentSessionSnapshot = serde_json::from_str::<Option<_>>(&saved).unwrap().unwrap();
+
+        assert_eq!(session.value, "after-clear");
+        assert_eq!(session.launch, Some(launch));
     }
 
     #[test]
