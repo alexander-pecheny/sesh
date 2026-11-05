@@ -10,13 +10,13 @@ Claude's records of running sessions, the processes in `/proc` and the pane's fo
 failed somewhere, and `/proc` does not exist on a Mac.
 
 A new Claude now starts with `--session-id` and a UUID the app picks. sesh-mux reads the id from
-the launch arguments, as it already did for `codex resume`, so the pane names its session before
+the launch arguments, as it already did for `codex resume`, and reads `--resume` the same way, so the pane names its session before
 Claude writes a line. The hook still reports the id that `/clear` or a resume moves Claude to. A
 pane that names no session gets no Transcript; the guessing is gone.
 
 `agent.start` takes the Agent's variables and puts them on its command line under `env`. sesh-mux
 always adds the pane's id and its socket, which a shell another server started may lack, and the
-follower passes `CLAUDE_CONFIG_DIR` the same way. Nothing is typed into a shell before the Agent.
+follower passes `CLAUDE_CONFIG_DIR` the same way. Nothing is typed into a shell before the Agent. The follower installs the hooks in Claude's folder before each start, because on a new Host that folder may appear only when a Transcript is copied in.
 
 ## Considered options
 

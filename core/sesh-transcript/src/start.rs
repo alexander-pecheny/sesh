@@ -40,8 +40,12 @@ pub fn start(source: &mut dyn Source, pane: &str, request: &Value) -> Result<()>
     // ~/.claude, where there are none and it asks to log in again.
     let default = crate::serve::expand("~/.claude");
     let mut env = serde_json::Map::new();
-    if let Some(config) = request["config"].as_str().filter(|config| !config.is_empty() && agent == Agent::Claude && crate::serve::expand(config) != default) {
-        env.insert("CLAUDE_CONFIG_DIR".into(), configure(config).into());
+    if agent == Agent::Claude {
+        let config = request["config"].as_str().filter(|config| !config.is_empty()).map_or(default.clone(), crate::serve::expand);
+        install_hooks(&config);
+        if config != default {
+            env.insert("CLAUDE_CONFIG_DIR".into(), config.to_string_lossy().into_owned().into());
+        }
     }
     let started = launch(source, pane, name, agent, request["args"].clone(), env, TIMEOUT);
     let Err(problem) = started else { return Ok(()) };
@@ -52,15 +56,15 @@ pub fn start(source: &mut dyn Source, pane: &str, request: &Value) -> Result<()>
     Err([&[problem.as_str()][..], &lines[lines.len().saturating_sub(TAIL)..]].concat().join("\n"))
 }
 
-/// Another config folder for Claude, with sesh-mux's hooks installed in it.
-fn configure(config: &str) -> String {
-    let dir = crate::serve::expand(config);
-    if !dir.join("hooks/sesh-mux-agent-state.sh").exists() {
-        // The CLI installs hooks itself; sesh-mux's server knows only its own config folder.
-        let home = std::env::var("HOME").unwrap_or_default();
-        let _ = Command::new(format!("{home}/.sesh/bin/sesh-mux")).args(["integration", "install", "claude"]).env("CLAUDE_CONFIG_DIR", &dir).output();
+/// Installs sesh-mux's hooks in Claude's config folder, which on a new Host may not have existed
+/// when Sesh first looked, so sesh-mux learns which Transcript the pane's Claude writes.
+fn install_hooks(dir: &std::path::Path) {
+    if cfg!(test) || dir.join("hooks/sesh-mux-agent-state.sh").exists() {
+        return;
     }
-    dir.to_string_lossy().into_owned()
+    // The CLI installs hooks itself; sesh-mux's server knows only its own config folder.
+    let home = std::env::var("HOME").unwrap_or_default();
+    let _ = Command::new(format!("{home}/.sesh/bin/sesh-mux")).args(["integration", "install", "claude"]).env("CLAUDE_CONFIG_DIR", dir).output();
 }
 
 fn launch(source: &mut dyn Source, pane: &str, name: &str, agent: Agent, args: Value, env: serde_json::Map<String, Value>, timeout: Duration) -> Result<()> {
