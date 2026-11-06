@@ -227,7 +227,8 @@ pub struct View {
 }
 
 impl View {
-    /// None when the prompt box is not on the screen: a menu covers it, or a redraw is half done.
+    /// None when the screen does not show the conversation's end: a menu covers the prompt box,
+    /// a redraw is half done, or the viewport is scrolled up.
     pub fn read(ansi: &str) -> Option<View> {
         let rows = rows(ansi);
         let texts: Vec<String> = rows.iter().map(Row::text).collect();
@@ -238,6 +239,9 @@ impl View {
         // A permission or question menu takes the prompt box's place, under a rule of its own.
         let menu = || (texts.len().saturating_sub(MENU)..texts.len()).find(|&i| rule(&texts[i]));
         let top = prompt.or_else(menu)?;
+        if rows[..top].iter().any(jump_to_bottom) {
+            return None;
+        }
         let width = measure(texts[top].trim_end());
         // The status line sits above the prompt box, among notices, tips and the todo list.
         let mut end = top;
@@ -325,6 +329,16 @@ fn numbered(text: &str) -> Option<(String, String)> {
 fn rule(text: &str) -> bool {
     let text = text.trim();
     text.chars().filter(|&c| c == '─').count() >= 10 && text.starts_with('─') && text.ends_with('─')
+}
+
+/// The pill Claude draws over its viewport's last row while it is scrolled up, such as
+/// "Jump to bottom (ctrl+End) ↓" or "3 new messages ↓", on the user message background.
+fn jump_to_bottom(row: &Row) -> bool {
+    row.0.iter().any(|span| {
+        let text = span.text.trim();
+        let count = text.split_once(" new message").is_some_and(|(n, _)| !n.is_empty() && n.chars().all(|c| c.is_ascii_digit()));
+        span.style.bg != Colour::Default && text.contains('↓') && (text.starts_with("Jump to bottom") || count)
+    })
 }
 
 /// Text at the right edge, such as "✔ Update installed · Restart to update".

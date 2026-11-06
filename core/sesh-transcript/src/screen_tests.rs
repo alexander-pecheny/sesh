@@ -75,6 +75,15 @@ fn chrome_notices_and_the_footer_are_never_replies() {
 }
 
 #[test]
+fn a_screen_scrolled_up_shows_nothing_new() {
+    let pill = "\x1b[48;2;55;55;55m Jump to bottom (ctrl+End) ↓ \x1b[0m";
+    assert!(View::read(&screen("streaming").replace("I have not opened it yet", pill)).is_none());
+    let unread = "\x1b[48;2;55;55;55m 2 new messages ↓ \x1b[0m";
+    assert!(View::read(&screen("streaming").replace("I have not opened it yet", unread)).is_none());
+    assert!(View::read(&screen("streaming").replace("I have not opened it yet", "Jump to bottom ↓")).is_some());
+}
+
+#[test]
 fn a_running_command_reads_without_its_timer() {
     let running = view("running");
     let tool = running.blocks.iter().find(|block| block.kind == Kind::Tool).unwrap();
