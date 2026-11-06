@@ -19,6 +19,8 @@ struct MessageBox: View {
     @ObservedObject var outbox: Outbox
     let fresh: Bool
     let hidden: Bool
+    /// How tall the box may grow with its text: half the Chat, as in Telegram.
+    var tallest: CGFloat = 0
     @StateObject private var field = PlainField()
     @State private var picking = false
     @State private var composing = false
@@ -35,7 +37,7 @@ struct MessageBox: View {
                     .frame(width: Metric.control, height: Metric.control)
             }
             #endif
-            PlainText(field: field, text: $outbox.text, font: .systemFont(ofSize: Metric.title), lines: 6) { Task { await conversation.sendDraft() } }
+            PlainText(field: field, text: $outbox.text, font: .systemFont(ofSize: Metric.title), lines: 6, tallest: tallest) { Task { await conversation.sendDraft() } }
                 .overlay(alignment: .leading) {
                     if outbox.text.isEmpty {
                         Text("Message").font(.ui(Metric.title)).foregroundStyle(flavour(.overlay0)).allowsHitTesting(false)

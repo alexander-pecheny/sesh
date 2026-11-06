@@ -25,6 +25,7 @@ struct ConversationView: View {
     /// The rows keep their drawing until their version changes, so a time stamped today
     /// changes to a date only when the day is part of it.
     @State private var today = Calendar.current.startOfDay(for: .now)
+    @State private var height: CGFloat = 0
 
     private var working: Bool { conversation.state == "working" }
     private static let rowSpacing: CGFloat = 14
@@ -58,13 +59,14 @@ struct ConversationView: View {
                 // A Transcript read from a file, a copy or a subagent's, has no one to send to.
                 if conversation.pane != nil {
                     BackgroundLine(conversation: conversation)
-                    MessageBox(conversation: conversation, outbox: conversation.outbox, fresh: fresh, hidden: hidden)
+                    MessageBox(conversation: conversation, outbox: conversation.outbox, fresh: fresh, hidden: hidden, tallest: height / 2)
                 } else if let resume {
                     EndedBar(agent: conversation.agent?.title ?? "The Agent", note: ended, elsewhere: elsewhere, resume: resume, starting: resuming)
                 }
             }
         }
         // Not sideways: under macOS 26's floating sidebar the colour would tint its glass.
+        .onGeometryChange(for: CGFloat.self) { $0.size.height } action: { height = $0 }
         .background(flavour(.base), ignoresSafeAreaEdges: .vertical)
         #if os(macOS)
         .navigationTitle(title)

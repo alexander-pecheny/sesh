@@ -50,6 +50,8 @@ struct PlainText: UIViewRepresentable {
     var font = UIFont.preferredFont(forTextStyle: .body)
     /// Grows with its text up to this many lines; without it, fills what it is given.
     var lines: Int?
+    /// Lets it grow past `lines` up to this height.
+    var tallest: CGFloat = 0
 
     func makeUIView(context: Context) -> PlainField {
         field.font = font
@@ -77,7 +79,7 @@ struct PlainText: UIViewRepresentable {
     func sizeThatFits(_ proposal: ProposedViewSize, uiView field: PlainField, context: Context) -> CGSize? {
         guard let lines, let width = proposal.width else { return nil }
         let fit = field.sizeThatFits(CGSize(width: width, height: .greatestFiniteMagnitude)).height
-        let most = font.lineHeight * CGFloat(lines)
+        let most = max(font.lineHeight * CGFloat(lines), tallest)
         field.isScrollEnabled = fit > most
         return CGSize(width: width, height: min(fit, most))
     }
@@ -209,6 +211,8 @@ struct PlainText: NSViewRepresentable {
     var font = NSFont.systemFont(ofSize: NSFont.systemFontSize)
     /// Grows with its text up to this many lines; without it, fills what it is given.
     var lines: Int?
+    /// Lets it grow past `lines` up to this height.
+    var tallest: CGFloat = 0
     var submit: (() -> Void)?
 
     func makeNSView(context: Context) -> NSScrollView {
@@ -231,7 +235,7 @@ struct PlainText: NSViewRepresentable {
 
     func sizeThatFits(_ proposal: ProposedViewSize, nsView scroll: NSScrollView, context: Context) -> CGSize? {
         guard let lines, let width = proposal.width else { return nil }
-        return CGSize(width: width, height: min(field.fittingHeight(width: width), field.lineHeight * CGFloat(lines)))
+        return CGSize(width: width, height: min(field.fittingHeight(width: width), max(field.lineHeight * CGFloat(lines), tallest)))
     }
 
     func makeCoordinator() -> Coordinator { Coordinator(text: $text) }
