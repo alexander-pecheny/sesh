@@ -24,6 +24,7 @@ struct RootView: View {
         }
         .searchable(text: $search.query, placement: .toolbar, prompt: "Tasks, Journals, Documents, Conversations")
         .searchFocused($searching)
+        .toolbar { ToolbarItem(placement: .primaryAction) { DownloadsButton() } }
         .onSubmit(of: .search) { search.openFirst = true }
         .onReceive(NotificationCenter.default.publisher(for: .searchAll)) { _ in searching = true }
         // A Task picked in the sidebar is what the user wants to see, not the results.

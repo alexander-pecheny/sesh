@@ -12,11 +12,9 @@ struct FolderBrowser: View {
     @State private var folder: String?
     @State private var entries: [String] = []
     @State private var problem: String?
-    /// The file or folder being brought to the Mac's Downloads.
-    @State private var downloading: String?
-    @State private var received = 0
-    /// The file's size; a folder is packed as it travels, so its size is not known ahead.
-    @State private var expected: Int?
+    @ObservedObject private var downloads = Downloads.shared
+    /// The downloads started here, whose finished files the phone offers to share.
+    @State private var started: Set<UUID> = []
     #if os(iOS)
     /// A downloaded file waiting in the share sheet, to save to Files or send on.
     @State private var shared: URL?
@@ -47,9 +45,10 @@ struct FolderBrowser: View {
     var body: some View {
         Group {
             #if os(macOS)
-            HSplitView {
-                list.frame(minWidth: 160, idealWidth: listWidth, maxWidth: 720)
-                    .onGeometryChange(for: Double.self) { $0.size.width } action: { listWidth = $0 }
+            // HSplitView lays a rebuilt list out at its own width and the saved one is lost.
+            HStack(spacing: 0) {
+                list.frame(width: listWidth)
+                SplitHandle(width: $listWidth, range: 160...720)
                 detail.frame(maxWidth: .infinity, maxHeight: .infinity)
             }
             #else
@@ -72,11 +71,21 @@ struct FolderBrowser: View {
         .task { await open(folder ?? root) }
         .onDisappear { document.browsed = (folder ?? root, picked, files) }
         #if os(iOS)
+        .onChange(of: finished) { before, after in if let new = after.first(where: { !before.contains($0) }) { shared = new } }
         .sheet(isPresented: Binding(get: { shared != nil }, set: { if !$0 { shared = nil } })) {
             if let shared { ShareSheet(url: shared) }
         }
         #endif
     }
+
+    #if os(iOS)
+    private var finished: [URL] {
+        downloads.items.compactMap { item in
+            guard started.contains(item.id), case .done(let url) = item.state else { return nil }
+            return url
+        }
+    }
+    #endif
 
     private var list: some View {
         VStack(alignment: .leading, spacing: 0) {
@@ -91,15 +100,12 @@ struct FolderBrowser: View {
                     }
                     Button("Copy Path", systemImage: "doc.on.doc") { Pasteboard.copy(here) }
                 }
-            if let downloading {
-                VStack(alignment: .leading, spacing: Metric.gap) {
-                    Label("Downloading \(downloading)…", systemImage: "arrow.down.circle")
-                    if let expected, expected > 0 {
-                        ProgressView(value: Double(min(received, expected)), total: Double(expected))
-                    }
-                    Text(expected.map { "\(Self.size(received)) of \(Self.size($0))" } ?? "\(Self.size(received)) so far").monospacedDigit()
-                }
-                .font(.ui(Metric.small)).foregroundStyle(flavour(.subtext0)).padding(.horizontal, Metric.pad)
+            ForEach(downloads.items.filter { started.contains($0.id) }) { item in
+                #if os(iOS)
+                DownloadRow(item: item) { shared = $0 }.padding(.horizontal, Metric.pad)
+                #else
+                if item.running { DownloadRow(item: item).padding(.horizontal, Metric.pad) }
+                #endif
             }
             if let problem {
                 Text(problem).font(.ui(Metric.small)).foregroundStyle(flavour(.red)).padding(.horizontal, Metric.pad)
@@ -174,56 +180,7 @@ struct FolderBrowser: View {
     /// Saves a file, or a folder packed as .tar.gz, in the Mac's Downloads and shows it in
     /// Finder; the phone offers it in the share sheet instead.
     private func download(_ path: String) async {
-        let packed = path.hasSuffix("/")
-        let item = (packed ? String(path.dropLast()) : path) as NSString
-        let name = item.lastPathComponent + (packed ? ".tar.gz" : "")
-        downloading = name
-        received = 0
-        expected = nil
-        defer { downloading = nil }
-        let tar = "tar -czf - -C \(shellPath(item.deletingLastPathComponent)) \(quote("./" + item.lastPathComponent))"
-        // The size comes first, then the bytes as base64 in lines that each decode alone.
-        let send = packed ? "echo && \(tar)" : "wc -c < \(shellPath(path)) && cat \(shellPath(path))"
-        var data = Data()
-        var sized = false
-        var broken = false
-        // dash before 0.5.13 has no pipefail; there the size check alone catches a short file.
-        let ran = await machine.fetch("! (set -o pipefail) 2>/dev/null || set -o pipefail; \(send) | base64 | tr -d '\\n' | fold -w 65536") { line in
-            guard sized else {
-                sized = true
-                return expected = Int(line.trimmingCharacters(in: .whitespaces))
-            }
-            guard let chunk = Data(base64Encoded: line) else { return broken = true }
-            data.append(chunk)
-            received = data.count
-        }
-        guard ran.ok, !broken, packed ? !data.isEmpty : data.count == expected else {
-            return problem = "\(name) could not be read from \(machine.title)."
-        }
-        do {
-            #if os(macOS)
-            let downloads = FileManager.default.urls(for: .downloadsDirectory, in: .userDomainMask)[0]
-            var target = downloads.appending(path: name)
-            var copy = 1
-            while FileManager.default.fileExists(atPath: target.path) {
-                copy += 1
-                target = downloads.appending(path: "\(copy) \(name)")
-            }
-            try data.write(to: target)
-            NSWorkspace.shared.activateFileViewerSelecting([target])
-            #else
-            let folder = FileManager.default.temporaryDirectory.appending(path: UUID().uuidString)
-            try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
-            try data.write(to: folder.appending(path: name))
-            shared = folder.appending(path: name)
-            #endif
-        } catch {
-            problem = "\(name) could not be saved: \(error.localizedDescription)"
-        }
-    }
-
-    private static func size(_ bytes: Int) -> String {
-        Int64(bytes).formatted(.byteCount(style: .file))
+        started.insert(downloads.start(path, from: machine))
     }
 
     static func parent(of folder: String) -> String {
@@ -248,6 +205,31 @@ private struct TruncatedName: View {
             .help(whole > shown + 1 ? name : "")
     }
 }
+
+#if os(macOS)
+/// The line between a list and what it shows, dragged to set the list's width.
+private struct SplitHandle: View {
+    @Environment(\.flavour) private var flavour
+    @Binding var width: Double
+    let range: ClosedRange<Double>
+    @State private var start: Double?
+
+    var body: some View {
+        Rectangle().fill(flavour(.surface0)).frame(width: 1)
+            .padding(.horizontal, Metric.tiny)
+            .contentShape(.rect)
+            .onHover { inside in if inside { NSCursor.resizeLeftRight.push() } else { NSCursor.pop() } }
+            .gesture(DragGesture(minimumDistance: 1, coordinateSpace: .global)
+                .onChanged { drag in
+                    let from = start ?? width
+                    start = from
+                    width = min(max(from + drag.translation.width, range.lowerBound), range.upperBound)
+                }
+                .onEnded { _ in start = nil })
+            .padding(.horizontal, -Metric.tiny)
+    }
+}
+#endif
 
 #if os(iOS)
 private struct ShareSheet: UIViewControllerRepresentable {
