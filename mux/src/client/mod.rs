@@ -160,6 +160,9 @@ pub fn run_terminal_attach(terminal_id: String, takeover: bool) -> io::Result<()
         }
     });
 
+    let resized = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+    #[cfg(unix)]
+    signal_hook::flag::register(signal_hook::consts::SIGWINCH, resized.clone())?;
     let mut guard = TerminalGuard::enter()?;
     let mut escape = AttachEscapeState::default();
     let mut framer = crate::raw_input::RawInputByteFramer::default();
@@ -170,9 +173,9 @@ pub fn run_terminal_attach(terminal_id: String, takeover: bool) -> io::Result<()
             TICK
         };
         let received = rx.recv_timeout(wait);
-        // Not only when idle: a busy pane would hide a resize, and diffs would land on a cleared screen.
+        // Every resize repaints, even one undone within a tick: it may have cleared rows the diffs assume.
         let size = crossterm::terminal::size()?;
-        if size != (cols, rows) {
+        if resized.swap(false, std::sync::atomic::Ordering::Relaxed) || size != (cols, rows) {
             (cols, rows) = size;
             write_to_server(
                 &mut stream,
