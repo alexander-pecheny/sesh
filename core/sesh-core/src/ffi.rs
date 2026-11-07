@@ -462,6 +462,20 @@ pub unsafe extern "C" fn sesh_session_put(
     }
 }
 
+/// Copies `remote_path` on the Host, absolute or relative to its home directory, to the local
+/// file at `local_path`. Its `on_ran` reports status 0, or 1 with the reason on stderr.
+#[no_mangle]
+pub unsafe extern "C" fn sesh_session_get(
+    session: *mut sesh_session_t,
+    remote_path: *const c_char,
+    local_path: *const c_char,
+) -> u32 {
+    match (session.as_ref(), text(remote_path), text(local_path)) {
+        (Some(session), Some(remote), Some(local)) => session.session.get(remote, PathBuf::from(local)),
+        _ => 0,
+    }
+}
+
 /// Stops a command from `sesh_session_stream`: TERM, then the channel is closed.
 #[no_mangle]
 pub unsafe extern "C" fn sesh_session_cancel(session: *mut sesh_session_t, id: u32) {

@@ -53,6 +53,7 @@ pub enum Command {
     Stream(u32, String),
     Cancel(u32),
     Put(u32, PathBuf, String),
+    Get(u32, String, PathBuf),
     Pipe(crate::pipe::Start),
     /// Asks a Link for its connection, with `command` as its shell would run it.
     Lend(String, oneshot::Sender<crate::link::Lent>),
@@ -151,6 +152,12 @@ impl Session {
     pub fn put(&self, local: PathBuf, remote: String) -> u32 {
         let id = self.next_request.fetch_add(1, Ordering::Relaxed) + 1;
         let _ = self.commands.send(Command::Put(id, local, remote));
+        id
+    }
+
+    pub fn get(&self, remote: String, local: PathBuf) -> u32 {
+        let id = self.next_request.fetch_add(1, Ordering::Relaxed) + 1;
+        let _ = self.commands.send(Command::Get(id, remote, local));
         id
     }
 

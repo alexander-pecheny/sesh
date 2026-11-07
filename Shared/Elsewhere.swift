@@ -16,9 +16,6 @@ struct Placed: Decodable {
 }
 
 extension TaskActions {
-    /// Bytes read from a machine per command while a Transcript moves to another.
-    private static let chunk = 4 << 20
-
     /// The Claude config folder a Transcript lives in, which a resumed Claude must be started
     /// with: `~/.claude-personal` for `~/.claude-personal/projects/<project>/<id>.jsonl`.
     static func claudeConfig(of transcript: String) -> String? { Move.account(of: transcript) }
@@ -31,12 +28,10 @@ extension TaskActions {
         var file = shellPath(path)
         var inbox: String?
         if source != target {
-            var bytes = Data()
-            while true {
-                let read = await source.run("tail -c +\(bytes.count + 1) \(shellPath(path)) | head -c \(chunk) | base64 | tr -d '\\n'")
-                guard read.ok, let piece = Data(base64Encoded: read.out) else { return .failure(Mux.Failure(read.problem)) }
-                if piece.isEmpty { break }
-                bytes += piece
+            let bytes: Data
+            switch await source.get(path) {
+            case .success(let data): bytes = data
+            case .failure(let failure): return .failure(failure)
             }
             let folder = ".sesh/inbox/\(UUID().uuidString.lowercased())"
             let staged = "\(folder)/\((path as NSString).lastPathComponent)"

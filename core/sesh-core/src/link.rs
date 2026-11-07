@@ -104,6 +104,16 @@ async fn serve(dialed: dial::Dialed, mosh: Option<MoshFlags>, context: Context) 
                     events.ran(id, &Ran { status, stdout: String::new(), stderr });
                 });
             }
+            Some(Command::Get(id, remote, local)) => {
+                let (handle, events) = (handle.clone(), events.clone());
+                tokio::spawn(async move {
+                    let (status, stderr) = match upload::get(&handle, &remote, &local).await {
+                        Ok(()) => (0, String::new()),
+                        Err(error) => (1, error),
+                    };
+                    events.ran(id, &Ran { status, stdout: String::new(), stderr });
+                });
+            }
             Some(Command::Lend(command, reply)) => {
                 let command = shell.command(&command);
                 let _ = reply.send(Lent { handle: handle.clone(), direct, command, env: (*env).clone(), forward, mosh: mosh.clone() });

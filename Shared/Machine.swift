@@ -56,8 +56,13 @@ final class Machine: Runner, Identifiable, Hashable {
     }
 
     func put(_ data: Data, to path: String) async -> Ran {
-        guard let link else { return await here("mkdir -p \"$(dirname \(shellPath(path)))\" && cat > \(shellPath(path))", line: nil, input: data) }
+        guard let link else { return here(put: data, to: path) }
         return await link.put(data, to: path)
+    }
+
+    func get(_ path: String) async -> Result<Data, Mux.Failure> {
+        guard let link else { return here(get: path) }
+        return await link.get(path)
     }
 
     private var home: String?
@@ -97,6 +102,27 @@ final class Machine: Runner, Identifiable, Hashable {
     private func here(_ command: String, line: ((String) -> Void)?, input: Data? = nil,
                       opened: ((@escaping (String) -> Void) -> Void)? = nil) async -> Ran {
         await local.run(command, line: line, input: input, opened: opened)
+    }
+
+    /// A path as a Host's commands take it: one not absolute is under home.
+    private static func file(_ path: String) -> URL {
+        if path.hasPrefix("/") { return URL(filePath: path) }
+        return FileManager.default.homeDirectoryForCurrentUser.appending(path: path.hasPrefix("~/") ? String(path.dropFirst(2)) : path)
+    }
+
+    private func here(get path: String) -> Result<Data, Mux.Failure> {
+        Result { try Data(contentsOf: Self.file(path)) }.mapError { Mux.Failure($0.localizedDescription) }
+    }
+
+    private func here(put data: Data, to path: String) -> Ran {
+        let file = Self.file(path)
+        do {
+            try FileManager.default.createDirectory(at: file.deletingLastPathComponent(), withIntermediateDirectories: true)
+            try data.write(to: file)
+            return Ran(status: 0, out: "", err: "")
+        } catch {
+            return Ran(status: -1, out: "", err: error.localizedDescription)
+        }
     }
 
     /// A normal quit stops every command at once instead of leaving it to notice.
@@ -162,6 +188,10 @@ final class Machine: Runner, Identifiable, Hashable {
                       opened: ((@escaping (String) -> Void) -> Void)? = nil) async -> Ran {
         unreachable
     }
+
+    private func here(get path: String) -> Result<Data, Mux.Failure> { .failure(Mux.Failure(unreachable.err)) }
+
+    private func here(put data: Data, to path: String) -> Ran { unreachable }
 
     private var claudeLinks: [String: URL] = [:]
 

@@ -1,5 +1,6 @@
 //! Uploads: an image or video from the phone, written into `~/.sesh/uploads` over SFTP.
-//! Also `put`, which installs Sesh's transcript helper on a Host the same way.
+//! Also `put`, which installs Sesh's transcript helper on a Host the same way, and `get`, which
+//! copies a file from a Host, such as a Transcript resumed elsewhere.
 
 use std::path::Path;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -84,6 +85,21 @@ pub async fn put<H: client::Handler>(handle: &client::Handle<H>, local: &Path, r
     let result = install(&sftp, local, remote).await;
     let _ = sftp.close().await;
     result
+}
+
+/// Copies `remote`, absolute or relative to the home directory, to the local file `local`.
+pub async fn get<H: client::Handler>(handle: &client::Handle<H>, remote: &str, local: &Path) -> Result<(), String> {
+    let sftp = open(handle).await?;
+    let result = fetch(&sftp, remote, local).await;
+    let _ = sftp.close().await;
+    result
+}
+
+async fn fetch(sftp: &SftpSession, remote: &str, local: &Path) -> Result<(), String> {
+    let mut source = sftp.open(remote).await.map_err(|e| format!("opening {remote}: {e}"))?;
+    let mut target = fs::File::create(local).await.map_err(|e| format!("{}: {e}", local.display()))?;
+    tokio::io::copy(&mut source, &mut target).await.map_err(|e| format!("reading {remote}: {e}"))?;
+    target.flush().await.map_err(|e| format!("{}: {e}", local.display()))
 }
 
 async fn install(sftp: &SftpSession, local: &Path, remote: &str) -> Result<(), String> {
@@ -273,7 +289,7 @@ mod tests {
     use russh::keys::PrivateKey;
     use russh::server::{self, Auth, Msg, Session};
     use russh::{Channel, ChannelId, MethodKind};
-    use russh_sftp::protocol::{Attrs, FileAttributes, Handle, Name, OpenFlags, Status, StatusCode};
+    use russh_sftp::protocol::{Attrs, Data, FileAttributes, Handle, Name, OpenFlags, Status, StatusCode};
     use tokio::sync::Mutex as Shared;
 
     use super::*;
@@ -390,10 +406,12 @@ mod tests {
             &mut self,
             id: u32,
             filename: String,
-            _: OpenFlags,
+            flags: OpenFlags,
             _: FileAttributes,
         ) -> Result<Handle, Self::Error> {
-            let file = std::fs::File::create(self.at(&filename)).map_err(|_| StatusCode::Failure)?;
+            let path = self.at(&filename);
+            let file = if flags.contains(OpenFlags::CREATE) { std::fs::File::create(path) } else { std::fs::File::open(path) };
+            let file = file.map_err(|_| StatusCode::NoSuchFile)?;
             self.open.insert(filename.clone(), file);
             Ok(Handle { id, handle: filename })
         }
@@ -403,6 +421,18 @@ mod tests {
             let file = self.open.get_mut(&handle).ok_or(StatusCode::Failure)?;
             file.write_all(&data).map_err(|_| StatusCode::Failure)?;
             Ok(Self::ok(id))
+        }
+
+        async fn read(&mut self, id: u32, handle: String, offset: u64, len: u32) -> Result<Data, Self::Error> {
+            use std::os::unix::fs::FileExt;
+            let file = self.open.get(&handle).ok_or(StatusCode::Failure)?;
+            let mut data = vec![0; len as usize];
+            let read = file.read_at(&mut data, offset).map_err(|_| StatusCode::Failure)?;
+            if read == 0 {
+                return Err(StatusCode::Eof);
+            }
+            data.truncate(read);
+            Ok(Data { id, data })
         }
 
         async fn close(&mut self, id: u32, handle: String) -> Result<Status, Self::Error> {
@@ -560,6 +590,22 @@ mod tests {
 
         assert_eq!(error, "cancelled");
         assert!(landed(root.path()).is_empty(), "{:?}", landed(root.path()));
+    }
+
+    #[tokio::test]
+    async fn get_copies_a_file_whole_and_names_one_that_is_missing() {
+        let root = tempfile::tempdir().unwrap();
+        let here = tempfile::tempdir().unwrap();
+        let (_handle, sftp) = connect(root.path().to_path_buf(), None).await;
+        let bytes: Vec<u8> = (0..300_000u32).map(|n| n as u8).collect();
+        std::fs::write(root.path().join("session.jsonl"), &bytes).unwrap();
+        let copy = here.path().join("copy.jsonl");
+
+        fetch(&sftp, "/session.jsonl", &copy).await.unwrap();
+        let error = fetch(&sftp, "/gone.jsonl", &here.path().join("gone")).await.unwrap_err();
+
+        assert_eq!(std::fs::read(&copy).unwrap(), bytes);
+        assert!(error.contains("gone.jsonl"), "{error}");
     }
 
     #[tokio::test]

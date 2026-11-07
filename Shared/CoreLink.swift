@@ -104,6 +104,16 @@ class CoreLink: ObservableObject, Identifiable {
         return await run("mkdir -p \"$(dirname \(target))\" && cat ~/\(staged) > \(target); s=$?; rm -f ~/\(staged); exit $s")
     }
 
+    /// The file at `path` on the Host, read over SFTP.
+    func get(_ path: String) async -> Result<Data, Mux.Failure> {
+        let file = FileManager.default.temporaryDirectory.appending(path: UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: file) }
+        let remote = path.hasPrefix("~/") ? String(path.dropFirst(2)) : path
+        let ran = await call { sesh_session_get($0, remote, file.path) }
+        guard ran.ok else { return .failure(Mux.Failure(ran.problem)) }
+        return Result { try Data(contentsOf: file) }.mapError { Mux.Failure($0.localizedDescription) }
+    }
+
     /// As `stream`, but over a mosh pipe that `server` starts on the Host: once running it needs
     /// nothing of the Link, so it roams, outlives the Link's drop and picks up on waking. Behind
     /// a proxy the core runs it on the connection instead. `opened` is handed a way to write
