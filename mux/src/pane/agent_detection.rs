@@ -291,6 +291,7 @@ pub(super) fn detection_update_for_publish_with_osc(
     content: &str,
     osc_title: &str,
     osc_progress: &str,
+    osc_status: &str,
     process_exited: bool,
 ) -> Option<crate::detect::AgentDetection> {
     if process_exited {
@@ -303,7 +304,8 @@ pub(super) fn detection_update_for_publish_with_osc(
         });
     }
 
-    let detection = crate::detect::detect_agent_with_osc(agent, content, osc_title, osc_progress);
+    let detection =
+        crate::detect::detect_agent_with_osc(agent, content, osc_title, osc_progress, osc_status);
     (!detection.skip_state_update).then_some(detection)
 }
 

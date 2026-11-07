@@ -129,6 +129,7 @@ pub fn detect_agent_with_osc(
     screen_content: &str,
     osc_title: &str,
     osc_progress: &str,
+    osc_status: &str,
 ) -> AgentDetection {
     let Some(agent) = agent else {
         return AgentDetection {
@@ -145,6 +146,7 @@ pub fn detect_agent_with_osc(
             screen: screen_content,
             osc_title,
             osc_progress,
+            osc_status,
         },
     )
 }

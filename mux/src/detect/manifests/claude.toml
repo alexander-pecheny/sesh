@@ -1,8 +1,33 @@
 id = "claude"
-version = "2026.09.11.1"
+version = "2026.11.07.1"
 min_engine_version = 2
-updated_at = "2026-09-11T00:00:00Z"
+updated_at = "2026-11-07T00:00:00Z"
 aliases = ["claude-code"]
+
+# Claude 2.1.295 and later reports its own state over OSC 7501 once sesh-mux answers its probe.
+[[rules]]
+id = "program_status_blocked"
+state = "blocked"
+priority = 1200
+region = "osc_status"
+visible_blocker = true
+regex = ['^blocked$']
+
+[[rules]]
+id = "program_status_working"
+state = "working"
+priority = 1200
+region = "osc_status"
+visible_working = true
+regex = ['^working$']
+
+[[rules]]
+id = "program_status_idle"
+state = "idle"
+priority = 1200
+region = "osc_status"
+visible_idle = true
+regex = ['^(idle|done|error)$']
 
 [[rules]]
 id = "osc_title_working"

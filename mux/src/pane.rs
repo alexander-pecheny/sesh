@@ -909,11 +909,13 @@ fn spawn_basic_detection_task(
 
             let osc_title = terminal.agent_osc_title();
             let osc_progress = terminal.agent_osc_progress();
+            let osc_status = terminal.agent_osc_status();
             let Some(screen_detection) = detection_update_for_publish_with_osc(
                 agent,
                 &content,
                 &osc_title,
                 &osc_progress,
+                &osc_status,
                 process_exited,
             ) else {
                 pending_idle.clear();
@@ -2663,11 +2665,13 @@ impl PaneRuntime {
 
                     let osc_title = terminal.agent_osc_title();
                     let osc_progress = terminal.agent_osc_progress();
+                    let osc_status = terminal.agent_osc_status();
                     let Some(screen_detection) = detection_update_for_publish_with_osc(
                         agent,
                         &content,
                         &osc_title,
                         &osc_progress,
+                        &osc_status,
                         process_exited,
                     ) else {
                         pending_idle.clear();

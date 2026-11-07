@@ -25,7 +25,7 @@ use super::{
         current_transient_default_color_owner, parse_reported_cwd,
         restore_host_terminal_theme_if_needed, write_host_terminal_theme_selective,
         AgentOscStateTracker, DefaultColorEvent, DefaultColorEventTracker, DefaultColorOscTracker,
-        DefaultColorQuery, DefaultColorTrackedEvent, OscDebugTracker,
+        DefaultColorQuery, DefaultColorTrackedEvent, OscDebugTracker, PROGRAM_STATUS_REPLY,
     },
     xtgettcap::{C1XtgettcapQueryTracker, C1XtgettcapResponse},
 };
@@ -328,6 +328,10 @@ impl PaneTerminal {
         self.ghostty.agent_osc_progress()
     }
 
+    pub fn agent_osc_status(&self) -> String {
+        self.ghostty.agent_osc_status()
+    }
+
     /// Clears retained OSC title/progress evidence on foreground agent change.
     pub fn clear_agent_osc_state(&self) {
         self.ghostty.clear_agent_osc_state()
@@ -567,6 +571,13 @@ impl GhosttyPaneTerminal {
             .unwrap_or_default()
     }
 
+    pub fn agent_osc_status(&self) -> String {
+        self.core
+            .lock()
+            .map(|core| core.agent_osc_state.latest_status().to_owned())
+            .unwrap_or_default()
+    }
+
     /// Clears retained OSC title/progress evidence when the pane's foreground
     /// agent changes, so a new agent process starts from a blank OSC slate.
     pub fn clear_agent_osc_state(&self) {
@@ -621,6 +632,7 @@ impl GhosttyPaneTerminal {
             );
         }
         let terminal_title_changed = core.agent_osc_state.observe(bytes);
+        let status_probe_ends = core.agent_osc_state.drain_status_probe_ends();
 
         core.kitty_keyboard.observe(bytes);
         let mut terminal_responses = Vec::new();
@@ -636,6 +648,7 @@ impl GhosttyPaneTerminal {
             default_color_events,
             in_progress_default_color_event,
             c1_xtgettcap_responses,
+            status_probe_ends,
             &mut terminal_responses,
         );
         let terminal_bells = core.terminal.take_bell_count();
@@ -698,6 +711,7 @@ impl GhosttyPaneTerminal {
         default_color_events: Vec<DefaultColorTrackedEvent>,
         in_progress_default_color_event: Option<DefaultColorEvent>,
         c1_xtgettcap_responses: Vec<C1XtgettcapResponse>,
+        status_probe_ends: Vec<usize>,
         terminal_responses: &mut Vec<Bytes>,
     ) {
         // Only legacy C1 replies need merging; ordinary XTGETTCAP remains native.
@@ -708,6 +722,11 @@ impl GhosttyPaneTerminal {
                 c1_xtgettcap_responses
                     .into_iter()
                     .map(OrderedColorOrC1Event::C1),
+            )
+            .chain(
+                status_probe_ends
+                    .into_iter()
+                    .map(OrderedColorOrC1Event::ProgramStatusProbe),
             )
             .collect();
         events.sort_by_key(OrderedColorOrC1Event::end_offset);
@@ -751,6 +770,10 @@ impl GhosttyPaneTerminal {
                     if !response.suppress_native {
                         terminal_responses.push(response.bytes);
                     }
+                }
+                OrderedColorOrC1Event::ProgramStatusProbe(_) => {
+                    terminal_responses.extend(libghostty_responses);
+                    terminal_responses.push(Bytes::from_static(PROGRAM_STATUS_REPLY));
                 }
             }
         }
@@ -2108,6 +2131,7 @@ fn ghostty_cell_style(
 enum OrderedColorOrC1Event {
     Color(DefaultColorTrackedEvent),
     C1(C1XtgettcapResponse),
+    ProgramStatusProbe(usize),
 }
 
 impl OrderedColorOrC1Event {
@@ -2115,6 +2139,7 @@ impl OrderedColorOrC1Event {
         match self {
             Self::Color(event) => event.end_offset,
             Self::C1(response) => response.end_offset,
+            Self::ProgramStatusProbe(end_offset) => *end_offset,
         }
     }
 }
@@ -2920,6 +2945,22 @@ mod tests {
                 Bytes::from_static(b"\x1b[8;24;80t"),
             ]
         );
+    }
+
+    #[test]
+    fn program_status_reply_precedes_the_device_attributes_that_follow_its_query() {
+        let (tx, _rx) = mpsc::channel(4);
+        let terminal = crate::ghostty::Terminal::new(80, 24, 0).unwrap();
+        let pane = GhosttyPaneTerminal::new(terminal, tx.clone()).unwrap();
+
+        let result =
+            pane.process_pty_bytes(PaneId::from_raw(1), 0, b"\x1b]7501;?\x1b\\\x1b[c", &tx);
+
+        assert_eq!(
+            result.terminal_responses[0],
+            Bytes::from_static(PROGRAM_STATUS_REPLY)
+        );
+        assert!(result.terminal_responses[1].starts_with(b"\x1b[?"));
     }
 
     #[test]

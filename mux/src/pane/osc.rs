@@ -346,8 +346,9 @@ enum OscStreamState {
 impl OscStreamCollector {
     const MAX_BODY_BYTES: usize = 4096;
 
-    fn observe(&mut self, bytes: &[u8], mut receive: impl FnMut(&[u8])) {
-        for &byte in bytes {
+    fn observe(&mut self, bytes: &[u8], mut receive: impl FnMut(&[u8], usize)) {
+        for (index, &byte) in bytes.iter().enumerate() {
+            let end = index + 1;
             match self.state {
                 OscStreamState::Ground => {
                     if byte == 0x1b {
@@ -366,16 +367,16 @@ impl OscStreamCollector {
                     _ => self.state = OscStreamState::Ground,
                 },
                 OscStreamState::Body => match byte {
-                    0x07 => self.finish(&mut receive),
+                    0x07 => self.finish(&mut receive, end),
                     0x1b => self.state = OscStreamState::BodyEscape,
                     _ => self.push(byte),
                 },
                 OscStreamState::BodyEscape => match byte {
-                    b'\\' => self.finish(&mut receive),
+                    b'\\' => self.finish(&mut receive, end),
                     0x07 => {
                         self.push(0x1b);
                         if matches!(self.state, OscStreamState::Body) {
-                            self.finish(&mut receive);
+                            self.finish(&mut receive, end);
                         } else {
                             self.state = OscStreamState::Ground;
                         }
@@ -435,8 +436,8 @@ impl OscStreamCollector {
         }
     }
 
-    fn finish(&mut self, receive: &mut impl FnMut(&[u8])) {
-        receive(&self.body);
+    fn finish(&mut self, receive: &mut impl FnMut(&[u8], usize), end: usize) {
+        receive(&self.body, end);
         self.body.clear();
         self.state = OscStreamState::Ground;
     }
@@ -460,18 +461,22 @@ pub(super) struct AgentOscStateTracker {
     latest_title: Option<String>,
     terminal_title: Option<String>,
     latest_progress: Option<String>,
+    latest_status: Option<String>,
+    status_probe_ends: Vec<usize>,
 }
 
 impl AgentOscStateTracker {
     pub(super) fn observe(&mut self, bytes: &[u8]) -> bool {
-        let (collector, latest_title, terminal_title, latest_progress) = (
+        let (collector, latest_title, terminal_title, latest_progress, latest_status, probes) = (
             &mut self.collector,
             &mut self.latest_title,
             &mut self.terminal_title,
             &mut self.latest_progress,
+            &mut self.latest_status,
+            &mut self.status_probe_ends,
         );
         let mut terminal_title_changed = false;
-        collector.observe(bytes, |body| {
+        collector.observe(bytes, |body, end| {
             let Some((command, payload)) = parse_agent_osc_body(body) else {
                 return;
             };
@@ -486,6 +491,12 @@ impl AgentOscStateTracker {
                 b"9" => {
                     *latest_progress =
                         Some(sanitize_agent_osc_string(payload, AGENT_OSC_MAX_CHARS));
+                }
+                b"7501" if payload == b"?" => probes.push(end),
+                b"7501" => {
+                    if let Some(status) = parse_program_status(payload) {
+                        *latest_status = status;
+                    }
                 }
                 _ => {}
             }
@@ -512,6 +523,14 @@ impl AgentOscStateTracker {
         self.latest_progress.as_deref().unwrap_or("")
     }
 
+    pub(super) fn latest_status(&self) -> &str {
+        self.latest_status.as_deref().unwrap_or("")
+    }
+
+    pub(super) fn drain_status_probe_ends(&mut self) -> Vec<usize> {
+        std::mem::take(&mut self.status_probe_ends)
+    }
+
     /// Drops the retained title and progress so a new foreground agent cannot
     /// inherit OSC evidence emitted by a previous process. The in-flight parse
     /// state is kept: a sequence spanning the agent change finalizes normally
@@ -519,6 +538,27 @@ impl AgentOscStateTracker {
     pub(super) fn clear_retained(&mut self) {
         self.latest_title = None;
         self.latest_progress = None;
+        self.latest_status = None;
+    }
+}
+
+pub(super) const PROGRAM_STATUS_REPLY: &[u8] = b"\x1b]7501;?\x1b\\";
+
+/// `Some(None)` clears the root record; `None` ignores a child id or an unknown state.
+fn parse_program_status(payload: &[u8]) -> Option<Option<String>> {
+    let payload = std::str::from_utf8(payload).ok()?;
+    let mut state = None;
+    for (key, value) in payload.split(':').filter_map(|pair| pair.split_once('=')) {
+        match key.trim() {
+            "id" => return None,
+            "state" => state = Some(value.trim()),
+            _ => {}
+        }
+    }
+    match state? {
+        "clear" => Some(None),
+        state @ ("idle" | "working" | "done" | "blocked" | "error") => Some(Some(state.into())),
+        _ => None,
     }
 }
 
@@ -568,7 +608,7 @@ impl OscDebugTracker {
             return;
         }
         let (collector, pending) = (&mut self.collector, &mut self.pending);
-        collector.observe(bytes, |body| {
+        collector.observe(bytes, |body, _| {
             if let Some(event) = parse_osc_debug_event(body) {
                 pending.push(event);
             }
@@ -853,9 +893,11 @@ mod tests {
 
         collector.observe(
             b"\x1bPignored\x1b]0;not-osc\x07\x1b\\\x1b]9;a\x1b",
-            |body| bodies.push(body.to_vec()),
+            |body, _| bodies.push(body.to_vec()),
         );
-        collector.observe(b"\x1b\\\x1b]2;b\x1b\x07", |body| bodies.push(body.to_vec()));
+        collector.observe(b"\x1b\\\x1b]2;b\x1b\x07", |body, _| {
+            bodies.push(body.to_vec())
+        });
 
         assert_eq!(bodies, vec![b"9;a\x1b".to_vec(), b"2;b\x1b".to_vec()]);
     }
@@ -953,6 +995,31 @@ mod tests {
 
         assert_eq!(tracker.terminal_title(), Some("✳ restored title"));
         assert_eq!(tracker.latest_title(), "");
+    }
+
+    #[test]
+    fn program_status_keeps_the_root_record_and_ignores_children() {
+        let mut t = AgentOscStateTracker::default();
+        t.observe(b"\x1b]7501;state=working:app=claude-code\x1b\\");
+        assert_eq!(t.latest_status(), "working");
+        t.observe(b"\x1b]7501;state=blocked:app=claude-code:id=task1:kind=question\x1b\\");
+        assert_eq!(t.latest_status(), "working");
+        t.observe(b"\x1b]7501;state=blocked:app=claude-code:kind=permission:msg=QWxsb3c/\x07");
+        assert_eq!(t.latest_status(), "blocked");
+        t.observe(b"\x1b]7501;state=sleeping\x1b\\");
+        assert_eq!(t.latest_status(), "blocked");
+        t.observe(b"\x1b]7501;state=clear\x1b\\");
+        assert_eq!(t.latest_status(), "");
+    }
+
+    #[test]
+    fn program_status_query_is_located_for_its_reply() {
+        let mut t = AgentOscStateTracker::default();
+        let bytes = b"\x1b]7501;?\x1b\\\x1b[c";
+        t.observe(bytes);
+        assert_eq!(t.drain_status_probe_ends(), vec![bytes.len() - 3]);
+        assert!(t.drain_status_probe_ends().is_empty());
+        assert_eq!(t.latest_status(), "");
     }
 
     #[test]

@@ -22,6 +22,7 @@ pub struct DetectionInput<'a> {
     pub screen: &'a str,
     pub osc_title: &'a str,
     pub osc_progress: &'a str,
+    pub osc_status: &'a str,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -238,6 +239,7 @@ pub fn should_skip_state_update(agent: Agent, screen_content: &str) -> bool {
             screen: screen_content,
             osc_title: "",
             osc_progress: "",
+            osc_status: "",
         },
         loaded,
     )
@@ -669,7 +671,8 @@ fn validate_region_name(spec: &str) -> Result<(), String> {
         | "last_non_empty_above_prompt_box"
         | "after_last_horizontal_rule"
         | "osc_title"
-        | "osc_progress" => Ok(()),
+        | "osc_progress"
+        | "osc_status" => Ok(()),
         _ if region_count(trimmed, "bottom_lines").is_some()
             || region_count(trimmed, "bottom_non_empty_lines").is_some()
             || top_region_count(trimmed).is_some() =>
@@ -839,6 +842,7 @@ fn region<'a>(input: DetectionInput<'a>, spec: &str) -> &'a str {
     match trimmed {
         "osc_title" => return input.osc_title,
         "osc_progress" => return input.osc_progress,
+        "osc_status" => return input.osc_status,
         _ => {}
     }
     // All other regions operate on the screen content as before.
