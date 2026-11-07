@@ -25,13 +25,19 @@ final class Local {
         let process = Process()
         process.executableURL = URL(filePath: "/bin/sh")
         process.arguments = ["-c", exports + command]
+        // A Host's commands start at home, and some name paths under it, such as `.sesh/inbox`.
+        process.currentDirectoryURL = FileManager.default.homeDirectoryForCurrentUser
         process.standardInput = FileHandle.nullDevice
         let out = Pipe(), err = Pipe()
         process.standardOutput = out
         process.standardError = err
         // Data to write, or, for a stream, an input the app never writes and only closes.
         let feed = input != nil || line != nil ? Pipe() : nil
-        if let feed { process.standardInput = feed }
+        if let feed {
+            process.standardInput = feed
+            // A write after the command has gone fails rather than killing the app.
+            _ = fcntl(feed.fileHandleForWriting.fileDescriptor, F_SETNOSIGPIPE, 1)
+        }
         let lines = Lines(line)
         let collected = Collector()
         // Output is read only by its handlers, to its end, and taken once the process has also
@@ -77,8 +83,6 @@ final class Local {
                     }
                     if let feed, input == nil { tethers[ObjectIdentifier(process)] = feed }
                     if let feed, let opened {
-                        // A write after the command has gone fails rather than killing the app.
-                        _ = fcntl(feed.fileHandleForWriting.fileDescriptor, F_SETNOSIGPIPE, 1)
                         opened { text in try? feed.fileHandleForWriting.write(contentsOf: Data((text + "\n").utf8)) }
                     }
                 } catch {
