@@ -9,12 +9,14 @@ use serde_json::{json, Value};
 
 use crate::follower::{Input, Source};
 use crate::listen::refusal;
+use crate::screen::Login;
 use crate::Agent;
 
 /// Menus an Agent may open before its first prompt, and the keys that get past them. The user
-/// picked the folder and pressed Start, which answers the trust question; updates are skipped and
-/// new hooks left for the user to trust.
-const MENUS: [(&str, &[&str]); 4] = [
+/// picked the folder and pressed Start, which answers the trust question; a new Claude keeps its
+/// default theme, updates are skipped and new hooks left for the user to trust.
+const MENUS: [(&str, &[&str]); 5] = [
+    ("Choose the text style that looks best", &["enter"]),
     ("Yes, I trust this folder", &["down", "enter"]),
     ("Do you trust the contents of this directory", &["enter"]),
     ("Skip until next version", &["down", "enter"]),
@@ -82,6 +84,10 @@ fn launch(source: &mut dyn Source, pane: &str, name: &str, agent: Agent, args: V
         if Instant::now() > deadline {
             return Err("timed out waiting for agent startup".into());
         }
+        // Signing in is the user's to do, in the Conversation or simple mode's sheet.
+        if Login::read(&source.read(pane, false).unwrap_or_default()).is_some() {
+            return Ok(());
+        }
         if answers > 0 && answer(source, pane)? {
             answers -= 1;
             continue;
@@ -113,7 +119,7 @@ fn known(screen: &str) -> Option<&'static [&'static str]> {
 }
 
 /// Gets past the menu on screen, if Sesh knows it, and waits a moment for it to close.
-fn answer(source: &mut dyn Source, pane: &str) -> Result<bool> {
+pub(crate) fn answer(source: &mut dyn Source, pane: &str) -> Result<bool> {
     let screen = source.read(pane, false).unwrap_or_default();
     let Some(keys) = known(&screen) else { return Ok(false) };
     source.input(pane, &Input::Keys(keys.iter().map(|key| key.to_string()).collect()))?;

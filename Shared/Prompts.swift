@@ -1,7 +1,7 @@
 import SwiftUI
 
 /// A prominent button that keeps its colours in a background window, where macOS greys a tinted one.
-private struct FilledButton: ButtonStyle {
+struct FilledButton: ButtonStyle {
     @Environment(\.isEnabled) private var enabled
     let fill: Color
     let text: Color
@@ -137,6 +137,14 @@ struct PermissionCard: View {
     private var answering: Bool { conversation.answered.contains(permission.id) }
 
     var body: some View {
+        if permission.tool == "login", let url = permission.url.flatMap(URL.init(string:)) {
+            LoginCard(url: url) { await conversation.login($0, permission) }
+        } else {
+            prompt
+        }
+    }
+
+    private var prompt: some View {
         VStack(alignment: .leading, spacing: Metric.pad) {
             HStack(spacing: Metric.gap) {
                 Image.lucide("shield-alert", size: Metric.title).foregroundStyle(flavour(.peach))

@@ -24,7 +24,7 @@ const USAGE: &str = "usage: sesh-transcript --version | follow --protocol | foll
        | serve [--foreground] [--record DIR --pane PANE] | attach [--sessions] [--watch KEY[:SEQ]]...
        | page KEY --before ORD [--limit N] | replay FILE [--lines]
        | send KEY ID TEXT | unqueue KEY ID | hand KEY | ask REQUEST | ask --file FILE
-       | keys KEY NAME... | answer KEY --json ANSWERS | permit KEY allow|deny | stop KEY
+       | login <pane> [--code CODE] | keys KEY NAME... | answer KEY --json ANSWERS | permit KEY allow|deny | stop KEY
        | history <pane> --before ID [--last N] | entry <pane> ID | background <pane>...
        | vault init DIR | vault pull|follow DIR [--since SEQ] | vault push DIR FILE [--batch ID]
        | vault size DIR SESSION FILE | vault append DIR SESSION FILE --offset N BYTES_FILE
@@ -56,6 +56,7 @@ fn main() {
         Some("history") => history(rest),
         Some("background") => background(rest),
         Some("entry") => entry(rest),
+        Some("login") => login(rest),
         Some(op) if act::OPS.contains(&op) => match rest.split_first().and_then(|(session, args)| act::request(op, session, args)) {
             Some(request) => serve::ask(&request),
             None => usage(),
@@ -126,6 +127,19 @@ fn ask(args: &[String]) -> Exit {
     };
     let request: Value = serde_json::from_str(&text).map_err(|err| format!("not a request: {err}"))?;
     serve::ask(&request)
+}
+
+/// The link Claude in `pane` asks to be signed in at; with `--code`, signs it in with the code
+/// that link's page showed.
+fn login(args: &[String]) -> Exit {
+    match args {
+        [pane] => act::login_link(&mut Mux, pane).map(|url| {
+            println!("{url}");
+            0
+        }),
+        [pane, flag, code] if flag == "--code" => act::login(&mut Mux, pane, code).map(|()| 0),
+        _ => usage(),
+    }
 }
 
 fn usage() -> Exit {

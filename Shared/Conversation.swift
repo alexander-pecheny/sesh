@@ -467,6 +467,10 @@ final class Conversation: ObservableObject {
         return await once(question) { await follower?.answer(String(decoding: data, as: UTF8.self), in: $0) }
     }
 
+    func login(_ code: String, _ permission: SessionLog.Permission) async -> String? {
+        await once(permission.id) { await follower?.login(code, in: $0) }
+    }
+
     func permit(_ allow: Bool, _ permission: SessionLog.Permission) async {
         guard !answered.contains(permission.id) else { return }
         problem = await once(permission.id) { await follower?.permit(allow, in: $0) }

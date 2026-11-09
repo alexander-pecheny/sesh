@@ -91,7 +91,7 @@ struct ConversationView: View {
         }
         #if os(macOS)
         .background {
-            if !hidden, let permission = conversation.permissions.first {
+            if !hidden, let permission = conversation.permissions.first, permission.tool != "login" {
                 PermissionKeys(permission: permission, conversation: conversation).id(permission.id)
             }
         }

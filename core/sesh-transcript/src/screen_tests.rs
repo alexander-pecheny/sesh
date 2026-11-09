@@ -162,3 +162,23 @@ fn a_menu_with_no_numbers_is_picked_by_moving_the_pointer() {
     let moved = screen.replace(" ❯ No, exit\n   Yes", "   No, exit\n ❯ Yes");
     assert_eq!(Menu::read(&moved).unwrap().options[0].0, "up enter");
 }
+
+/// Captured from Claude Code 2.1.319 on Linux with no login, 80 columns wide.
+const LOGIN_LINK: &str = " Browser didn't open? Use the url below to sign in (c to copy)\nhttps://claude.com/cai/oauth/authorize?code=true&client_id=9d1c250a-e61b-44d9-88\ned-5944d1962f5e&response_type=code&state=-MVgqzzuS1OktRmSVDcP19sbpTY6-olGjZo\n\n Paste code here if prompted >\n";
+
+#[test]
+fn a_sign_in_link_is_joined_back_from_the_rows_claude_broke_it_into() {
+    let link = "https://claude.com/cai/oauth/authorize?code=true&client_id=9d1c250a-e61b-44d9-88ed-5944d1962f5e&response_type=code&state=-MVgqzzuS1OktRmSVDcP19sbpTY6-olGjZo";
+    assert_eq!(Login::read(LOGIN_LINK), Some(Login::Link(link.into())));
+    assert_eq!(Login::read(&LOGIN_LINK.replace("\n\n", "\n")), Some(Login::Link(link.into())));
+}
+
+#[test]
+fn the_login_method_menu_is_read_without_a_rule_above_it() {
+    let screen = ".......█ █   █ █......\n Claude Code can be used with your Claude subscription or billed based on API\n usage through your Console account.\n\n Select login method:\n\n ❯ 1. Claude account with subscription · Individual, Team, or Enterprise\n\n   2. Anthropic Console account · API usage billing\n\n   3. 3rd-party platform · Amazon Bedrock, Microsoft Foundry, Google Vertex AI\n";
+    let Some(Login::Method(menu)) = Login::read(screen) else { panic!("no menu") };
+    assert_eq!(menu.title, "Select login method");
+    assert_eq!(menu.options[0], ("1".into(), "Claude account with subscription · Individual, Team, or Enterprise".into()));
+    assert_eq!(menu.options.len(), 3);
+    assert_eq!(Login::read("────────────────\n❯ \n────────────────\n"), None);
+}
