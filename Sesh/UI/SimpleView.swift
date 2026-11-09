@@ -13,8 +13,17 @@ struct SimpleView: View {
     @State private var opening: UUID?
     @State private var lost: SimpleSession?
     @State private var problem: String?
+    @State private var signing: Signing?
 
     enum Status { case running, ended, gone }
+
+    /// A session whose Claude asks to be signed in before it can print its link.
+    struct Signing: Identifiable {
+        let session: SimpleSession
+        let machine: Machine
+        let url: URL
+        var id: UUID { session.id }
+    }
 
     static func label(_ folder: String) -> String { folder == "~" ? "Home" : folder }
 
@@ -67,6 +76,26 @@ struct SimpleView: View {
                 await refresh()
                 try? await Task.sleep(for: .seconds(5))
             }
+        }
+        .sheet(item: $signing) { signing in
+            NavigationStack {
+                ScrollView {
+                    LoginCard(url: signing.url) { code in
+                        let problem = await signing.machine.follower.login(code, in: signing.session.pane)
+                        if problem == nil {
+                            self.signing = nil
+                            Task { await open(signing.session, fresh: true) }
+                        }
+                        return problem
+                    }
+                    .padding(Metric.wide)
+                }
+                .background(flavour(.base))
+                .navigationTitle(signing.session.name)
+                .navigationBarTitleDisplayMode(.inline)
+                .toolbar { ToolbarItem(placement: .cancellationAction) { Button("Cancel") { self.signing = nil } } }
+            }
+            .presentationDetents([.medium, .large])
         }
         .alert("Open it in the Claude app", isPresented: Binding(get: { lost != nil }, set: { if !$0 { lost = nil } })) {
             Button("OK") {}
@@ -169,6 +198,7 @@ struct SimpleView: View {
         let machine = Machine.of(host)
         for _ in 0..<(fresh ? 20 : 1) {
             if let url = await Mux.claudeLink(for: session.pane, on: machine) { return openURL(url) }
+            if let url = await machine.follower.loginLink(session.pane) { return signing = Signing(session: session, machine: machine, url: url) }
             try? await Task.sleep(for: .seconds(1))
         }
         lost = session

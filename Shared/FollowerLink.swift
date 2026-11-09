@@ -137,6 +137,14 @@ final class FollowerLink {
     /// One answer per question, as JSON: the labels picked, and any text typed instead.
     func answer(_ answers: String, in session: String) async -> String? { await ask("answer", session, ["--json", answers]) }
     func permit(_ allow: Bool, in session: String) async -> String? { await ask("permit", session, [allow ? "allow" : "deny"]) }
+    /// The link Claude in `pane` asks to be signed in at, after picking a Claude plan if it asks which way.
+    func loginLink(_ pane: String) async -> URL? {
+        guard await machine.prepare() == nil else { return nil }
+        let ran = await machine.run("\(Helper.path) login \(quote(pane))")
+        return ran.ok ? URL(string: ran.out.trimmingCharacters(in: .whitespacesAndNewlines)) : nil
+    }
+    /// Signs Claude in with the code its sign-in page showed.
+    func login(_ code: String, in pane: String) async -> String? { await ask("login", pane, ["--code", code]) }
     /// Interrupts the Agent and closes its pane.
     func stop(_ session: String) async -> String? { await ask("stop", session, []) }
 

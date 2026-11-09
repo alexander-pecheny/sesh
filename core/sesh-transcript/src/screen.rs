@@ -301,6 +301,30 @@ impl Menu {
     }
 }
 
+/// Claude asking to be signed in: first which way, then for the code its sign-in page shows.
+#[derive(Clone, Debug, PartialEq)]
+pub enum Login {
+    Method(Menu),
+    Link(String),
+}
+
+pub const LOGIN_METHOD: &str = "Select login method:";
+pub const LOGIN_CODE: &str = "Paste code here if prompted";
+
+impl Login {
+    pub fn read(screen: &str) -> Option<Login> {
+        let texts: Vec<&str> = screen.lines().map(str::trim).collect();
+        if let Some(prompt) = texts.iter().rposition(|text| text.starts_with(LOGIN_CODE)) {
+            // Claude breaks the link at its width itself, so the rows are joined back.
+            let first = texts[..prompt].iter().rposition(|text| text.starts_with("https://"))?;
+            return Some(Login::Link(texts[first..prompt].concat()));
+        }
+        let title = texts.iter().rposition(|text| *text == LOGIN_METHOD)?;
+        let options: Vec<_> = texts[title + 1..].iter().filter(|text| !text.is_empty()).map_while(|text| numbered(text)).collect();
+        (options.len() >= 2).then(|| Login::Method(Menu { title: LOGIN_METHOD.trim_end_matches(':').into(), options }))
+    }
+}
+
 /// A menu with no numbers, such as "❯ No, exit" over "Yes, I trust this folder": the lines
 /// around the pointer, each picked by moving the pointer to it.
 fn pointed<'a>(texts: &[&'a str]) -> Option<(Vec<&'a str>, Vec<(String, String)>)> {

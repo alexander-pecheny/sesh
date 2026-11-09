@@ -181,6 +181,7 @@ private struct SessionScreen: View {
                 PaneTab(key: "session:" + id, pane: pane, machine: TaskActions.machine(session.body.machine)) {
                     library.terminalFace.remove(id)
                 }
+                .safeAreaInset(edge: .bottom, spacing: 0) { if let conversation { LoginBar(conversation: conversation) } }
             } else if let conversation, let session = vault.records[id] {
                 ConversationView(conversation: conversation, title: session.body.title ?? "Agent session", fresh: false,
                                  resume: conversation.pane == nil && library.resumable(session) ? { await library.resume(session, as: $0) } : nil,

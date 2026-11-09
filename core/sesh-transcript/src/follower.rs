@@ -3,17 +3,19 @@
 
 use std::hash::{Hash as _, Hasher as _};
 use std::path::PathBuf;
-use std::time::Instant;
+use std::time::{Duration, Instant};
 
 use serde_json::{json, Value};
 
 use crate::reconcile::{Reconciler, Shown};
-use crate::screen::{Menu, View};
+use crate::screen::{Login, Menu, View};
 use crate::agent::{transcript_path, Agent};
 use crate::{Entry, Transcript, PROTOCOL};
 
 /// While a session's Transcript cannot be found, look again every this many polls.
 const RETRY: u32 = 8;
+/// How often an idle Agent's screen is read for a menu its status does not report.
+const IDLE_LOOK: Duration = Duration::from_secs(1);
 /// How many entries a follower keeps parsed, for questions and matching.
 const KEEP: usize = 500;
 
@@ -161,6 +163,8 @@ pub struct Follower {
     source: Box<dyn Source>,
     /// The id of the menu shown that no hook reported.
     menu: Option<String>,
+    /// When an idle screen was last read for a menu.
+    looked: Option<Instant>,
 }
 
 impl Follower {
@@ -182,6 +186,7 @@ impl Follower {
             live: Reconciler::default(),
             sent: None,
             menu: None,
+            looked: None,
         }
     }
 
@@ -275,15 +280,28 @@ impl Follower {
     }
 
     /// An Agent blocked with no hook to say why shows a menu of its own; it is read off the screen.
+    /// Claude calls itself idle while it asks how to sign in, so an idle screen is read too, though
+    /// less often.
     fn update_menu(&mut self, pane: &Value) -> Result<(), String> {
-        let unexplained = self.agent.reads_screen() && self.reported.as_deref() == Some("blocked") && self.permission.is_none();
-        let menu = match (unexplained, pane["pane_id"].as_str()) {
-            (true, Some(pane_id)) => self.source.read(pane_id, false).ok().and_then(|screen| Menu::read(&screen)),
+        let idle = self.reported.as_deref() == Some("idle");
+        if idle && self.looked.is_some_and(|looked| self.now < looked + IDLE_LOOK) {
+            return Ok(());
+        }
+        self.looked = idle.then_some(self.now);
+        let unexplained = self.agent.reads_screen() && (idle || self.reported.as_deref() == Some("blocked")) && self.permission.is_none();
+        let screen = match (unexplained, pane["pane_id"].as_str()) {
+            (true, Some(pane_id)) => self.source.read(pane_id, false).ok(),
             _ => None,
         };
+        let menu = screen.and_then(|screen| match Login::read(&screen) {
+            Some(Login::Link(url)) => Some(json!({"tool": "login", "summary": "Sign in to Claude", "url": url})),
+            Some(Login::Method(menu)) => Some(menu_line(menu)),
+            None if idle => None,
+            None => Menu::read(&screen).map(menu_line),
+        });
         let id = menu.as_ref().map(|menu| {
             let mut hasher = std::collections::hash_map::DefaultHasher::new();
-            format!("{menu:?}").hash(&mut hasher);
+            menu.to_string().hash(&mut hasher);
             format!("menu.{:016x}", hasher.finish())
         });
         if id == self.menu {
@@ -292,11 +310,11 @@ impl Follower {
         if let Some(done) = self.menu.take() {
             self.emit(Event::PermissionDone(done))?;
         }
-        let (Some(id), Some(menu)) = (id, menu) else {
+        let (Some(id), Some(mut menu)) = (id, menu) else {
             return Ok(());
         };
-        let options: Vec<Value> = menu.options.iter().map(|(key, label)| json!({"key": key, "label": label})).collect();
-        self.emit(Event::Permission(json!({"t": "permission", "id": id, "tool": "menu", "summary": menu.title, "options": options})))?;
+        (menu["t"], menu["id"]) = ("permission".into(), id.clone().into());
+        self.emit(Event::Permission(menu))?;
         self.menu = Some(id);
         Ok(())
     }
@@ -566,4 +584,9 @@ mod tests {
         std::fs::remove_dir_all(&dir).unwrap();
         assert_eq!(follower.live.shown(now).items, []);
     }
+}
+
+fn menu_line(menu: Menu) -> Value {
+    let options: Vec<Value> = menu.options.iter().map(|(key, label)| json!({"key": key, "label": label})).collect();
+    json!({"tool": "menu", "summary": menu.title, "options": options})
 }

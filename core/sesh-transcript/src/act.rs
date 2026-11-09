@@ -8,10 +8,14 @@ use serde_json::{json, Value};
 
 use crate::agent::{transcript_path, Agent};
 use crate::follower::{Input, Source};
+use crate::screen::Login;
 use crate::Transcript;
 
 const KEY_PAUSE: Duration = Duration::from_millis(200);
 const MENU_TIMEOUT: Duration = Duration::from_secs(3);
+/// How long Claude gets to show its sign-in link, and to trade a code for a login.
+const LOGIN_TIMEOUT: Duration = Duration::from_secs(30);
+const CONTINUE: &str = "Press Enter to continue";
 /// How long an Agent gets to quit on ctrl+c before its pane is closed.
 const STOP_PAUSE: Duration = Duration::from_secs(1);
 
@@ -139,6 +143,60 @@ fn permit(source: &mut dyn Source, session: &str, (_, agent): (&Value, Agent), a
     play(source, session, vec![key(name)], |screen| screen.contains(open), |_| None)
 }
 
+/// The link Claude asks to be signed in at, after picking a Claude plan if it asks which way.
+pub fn login_link(source: &mut dyn Source, pane: &str) -> Result<String> {
+    let deadline = Instant::now() + LOGIN_TIMEOUT;
+    let mut picked = false;
+    loop {
+        match Login::read(&source.read(pane, false)?) {
+            Some(Login::Link(url)) => return Ok(url),
+            Some(Login::Method(_)) if !picked => {
+                source.input(pane, &key("1"))?;
+                picked = true;
+            }
+            _ if !picked || Instant::now() > deadline => return Err(format!("Claude in pane {pane} is not asking to sign in")),
+            _ => {}
+        }
+        std::thread::sleep(KEY_PAUSE);
+    }
+}
+
+/// Types the code Claude's sign-in page showed, then gets past the screens a first login
+/// shows, and the trust question a start would have answered.
+pub fn login(source: &mut dyn Source, pane: &str, code: &str) -> Result<()> {
+    if !matches!(Login::read(&source.read(pane, false)?), Some(Login::Link(_))) {
+        return Err(format!("Claude in pane {pane} is not asking for a sign-in code"));
+    }
+    source.input(pane, &Input::Text(code.trim().into()))?;
+    std::thread::sleep(KEY_PAUSE);
+    source.input(pane, &key("enter"))?;
+    let deadline = Instant::now() + LOGIN_TIMEOUT;
+    let mut signed = false;
+    loop {
+        std::thread::sleep(KEY_PAUSE);
+        let screen = source.read(pane, false)?;
+        if let Some(error) = screen.lines().map(str::trim).find(|line| line.starts_with("OAuth error")) {
+            // Enter brings the code prompt back for another try.
+            source.input(pane, &key("enter"))?;
+            return Err(error.to_string());
+        }
+        signed |= screen.contains("Login successful");
+        if signed && screen.contains(CONTINUE) {
+            source.input(pane, &key("enter"))?;
+            let closing = Instant::now() + MENU_TIMEOUT;
+            while Instant::now() < closing && source.read(pane, false)? == screen {
+                std::thread::sleep(KEY_PAUSE);
+            }
+        } else if signed && !crate::start::answer(source, pane)? {
+            return Ok(());
+        }
+        if Instant::now() > deadline {
+            let tail: Vec<&str> = screen.lines().filter(|line| !line.trim().is_empty()).collect();
+            return Err(format!("Claude did not finish signing in:\n{}", tail[tail.len().saturating_sub(6)..].join("\n")));
+        }
+    }
+}
+
 /// Plays `inputs` into a menu that `open` sees on screen, then waits for it to
 /// close, answering any follow-up screen `confirm` recognises.
 fn play(
@@ -203,6 +261,49 @@ mod tests {
         let mut source = Played { menu, inputs: Vec::new() };
         let result = act(&mut source, "w1:p1", pane, &request);
         (result, source.inputs)
+    }
+
+    /// A screen that changes as inputs arrive: the first screen until one does, and so on.
+    struct Screens(Vec<&'static str>, Vec<Input>);
+
+    impl Source for Screens {
+        fn panes(&mut self) -> Result<Vec<Value>> {
+            Ok(Vec::new())
+        }
+
+        fn read(&mut self, _: &str, _: bool) -> Result<String> {
+            Ok(self.0[self.1.len().min(self.0.len() - 1)].into())
+        }
+
+        fn input(&mut self, _: &str, input: &Input) -> Result<()> {
+            self.1.push(input.clone());
+            Ok(())
+        }
+    }
+
+    const LINK: &str = "https://claude.com/cai/oauth/authorize?code=true\n Paste code here if prompted >";
+
+    #[test]
+    fn a_sign_in_code_is_typed_and_the_screens_after_a_login_are_passed() {
+        let mut source = Screens(vec![LINK, LINK, "Login successful. Press Enter to continue", "Security notes: Press Enter to continue", "❯ "], Vec::new());
+        assert_eq!(login(&mut source, "w1:p1", " abc#def \n"), Ok(()));
+        assert_eq!(keys(&source.1), ["Text(\"abc#def\")", "enter", "enter", "enter"]);
+    }
+
+    #[test]
+    fn a_wrong_sign_in_code_says_why_and_asks_again() {
+        let mut source = Screens(vec![LINK, LINK, "OAuth error: Invalid code. Please make sure the full code was copied\n Press Enter to retry."], Vec::new());
+        assert_eq!(login(&mut source, "w1:p1", "x"), Err("OAuth error: Invalid code. Please make sure the full code was copied".into()));
+        assert_eq!(keys(&source.1).last().unwrap(), "enter");
+        assert!(login(&mut Screens(vec!["❯ "], Vec::new()), "w1:p1", "x").is_err());
+    }
+
+    #[test]
+    fn the_sign_in_link_comes_after_picking_a_claude_plan() {
+        let mut source = Screens(vec![" Select login method:\n ❯ 1. Claude account\n   2. Console", LINK], Vec::new());
+        assert_eq!(login_link(&mut source, "w1:p1"), Ok("https://claude.com/cai/oauth/authorize?code=true".into()));
+        assert_eq!(keys(&source.1), ["1"]);
+        assert!(login_link(&mut Screens(vec!["❯ "], Vec::new()), "w1:p1").is_err());
     }
 
     fn answers(json: &str) -> Vec<Answer> {
