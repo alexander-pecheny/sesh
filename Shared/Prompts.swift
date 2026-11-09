@@ -1,5 +1,22 @@
 import SwiftUI
 
+/// A prominent button that keeps its colours in a background window, where macOS greys a tinted one.
+private struct FilledButton: ButtonStyle {
+    @Environment(\.isEnabled) private var enabled
+    let fill: Color
+    let text: Color
+
+    func makeBody(configuration: Configuration) -> some View {
+        configuration.label
+            .foregroundStyle(text)
+            .padding(.vertical, Metric.gap)
+            .padding(.horizontal, Metric.pad)
+            .background(fill.opacity(configuration.isPressed ? 0.8 : 1), in: .rect(cornerRadius: Metric.corner))
+            .opacity(enabled ? 1 : 0.4)
+            .contentShape(.rect)
+    }
+}
+
 struct QuestionCard: View {
     @Environment(\.flavour) private var flavour
     let entry: SessionLog.Entry
@@ -48,8 +65,7 @@ struct QuestionCard: View {
                 Button { Task { await send() } } label: {
                     Text(sent ? "Sending…" : "Send").frame(maxWidth: .infinity)
                 }
-                .buttonStyle(.borderedProminent)
-                .tint(flavour(.mauve))
+                .buttonStyle(FilledButton(fill: flavour(.mauve), text: flavour(.base)))
                 .disabled(sent || !complete)
             }
         }
@@ -161,8 +177,7 @@ struct PermissionCard: View {
                     Button { Task { await conversation.permit(true, permission) } } label: {
                         HStack { Text("Allow"); hint("⌘↩") }.frame(maxWidth: .infinity)
                     }
-                    .buttonStyle(.borderedProminent)
-                    .tint(flavour(.mauve))
+                    .buttonStyle(FilledButton(fill: flavour(.mauve), text: flavour(.base)))
                 }
                 .disabled(answering)
             }
