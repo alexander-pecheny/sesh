@@ -302,17 +302,24 @@ impl Menu {
 }
 
 /// Claude asking to be signed in: first which way, then for the code its sign-in page shows.
+/// A session whose sign-in expired asks for neither until `/login` is typed.
 #[derive(Clone, Debug, PartialEq)]
 pub enum Login {
+    Expired,
     Method(Menu),
     Link(String),
 }
 
 pub const LOGIN_METHOD: &str = "Select login method:";
 pub const LOGIN_CODE: &str = "Paste code here if prompted";
+pub const LOGGED_OUT: &str = "Not logged in · Run /login";
 
 impl Login {
     pub fn read(screen: &str) -> Option<Login> {
+        Self::asked(screen).or_else(|| screen.contains(LOGGED_OUT).then_some(Login::Expired))
+    }
+
+    fn asked(screen: &str) -> Option<Login> {
         let texts: Vec<&str> = screen.lines().map(str::trim).collect();
         if let Some(prompt) = texts.iter().rposition(|text| text.starts_with(LOGIN_CODE)) {
             // Claude breaks the link at its width itself, so the rows are joined back.
