@@ -143,10 +143,11 @@ fn permit(source: &mut dyn Source, session: &str, (_, agent): (&Value, Agent), a
     play(source, session, vec![key(name)], |screen| screen.contains(open), |_| None)
 }
 
-/// The link Claude asks to be signed in at, after picking a Claude plan if it asks which way.
+/// The link Claude asks to be signed in at, after typing `/login` if its sign-in expired and
+/// picking a Claude plan if it asks which way.
 pub fn login_link(source: &mut dyn Source, pane: &str) -> Result<String> {
     let deadline = Instant::now() + LOGIN_TIMEOUT;
-    let mut picked = false;
+    let (mut typed, mut picked) = (false, false);
     loop {
         match Login::read(&source.read(pane, false)?) {
             Some(Login::Link(url)) => return Ok(url),
@@ -154,7 +155,13 @@ pub fn login_link(source: &mut dyn Source, pane: &str) -> Result<String> {
                 source.input(pane, &key("1"))?;
                 picked = true;
             }
-            _ if !picked || Instant::now() > deadline => return Err(format!("Claude in pane {pane} is not asking to sign in")),
+            Some(Login::Expired) if !typed => {
+                source.input(pane, &Input::Text("/login".into()))?;
+                std::thread::sleep(KEY_PAUSE);
+                source.input(pane, &key("enter"))?;
+                typed = true;
+            }
+            _ if !(typed || picked) || Instant::now() > deadline => return Err(format!("Claude in pane {pane} is not asking to sign in")),
             _ => {}
         }
         std::thread::sleep(KEY_PAUSE);
@@ -304,6 +311,14 @@ mod tests {
         assert_eq!(login_link(&mut source, "w1:p1"), Ok("https://claude.com/cai/oauth/authorize?code=true".into()));
         assert_eq!(keys(&source.1), ["1"]);
         assert!(login_link(&mut Screens(vec!["❯ "], Vec::new()), "w1:p1").is_err());
+    }
+
+    #[test]
+    fn an_expired_sign_in_is_started_with_slash_login() {
+        let expired = "❯ Hello\n● Login expired · Please run /login\n          Not logged in · Run /login\n───\n❯ ";
+        let mut source = Screens(vec![expired, expired, " Select login method:\n ❯ 1. Claude account\n   2. Console", LINK], Vec::new());
+        assert_eq!(login_link(&mut source, "w1:p1"), Ok("https://claude.com/cai/oauth/authorize?code=true".into()));
+        assert_eq!(keys(&source.1), ["Text(\"/login\")", "enter", "1"]);
     }
 
     fn answers(json: &str) -> Vec<Answer> {

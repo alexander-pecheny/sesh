@@ -467,6 +467,11 @@ final class Conversation: ObservableObject {
         return await once(question) { await follower?.answer(String(decoding: data, as: UTF8.self), in: $0) }
     }
 
+    func loginLink() async -> URL? {
+        guard let pane else { return nil }
+        return await follower?.loginLink(pane)
+    }
+
     func login(_ code: String, _ permission: SessionLog.Permission) async -> String? {
         await once(permission.id) { await follower?.login(code, in: $0) }
     }

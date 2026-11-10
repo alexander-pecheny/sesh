@@ -295,6 +295,7 @@ impl Follower {
         };
         let menu = screen.and_then(|screen| match Login::read(&screen) {
             Some(Login::Link(url)) => Some(json!({"tool": "login", "summary": "Sign in to Claude", "url": url})),
+            Some(Login::Expired) => Some(json!({"tool": "login", "summary": "Sign in to Claude"})),
             Some(Login::Method(menu)) => Some(menu_line(menu)),
             None if idle => None,
             None => Menu::read(&screen).map(menu_line),

@@ -137,8 +137,8 @@ struct PermissionCard: View {
     private var answering: Bool { conversation.answered.contains(permission.id) }
 
     var body: some View {
-        if permission.tool == "login", let url = permission.url.flatMap(URL.init(string:)) {
-            LoginCard(url: url) { await conversation.login($0, permission) }
+        if permission.tool == "login" {
+            LoginCard(url: permission.url.flatMap(URL.init(string:)), link: conversation.loginLink) { await conversation.login($0, permission) }
         } else {
             prompt
         }

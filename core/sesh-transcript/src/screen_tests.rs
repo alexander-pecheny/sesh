@@ -198,3 +198,10 @@ fn a_login_method_that_wraps_stays_one_option() {
 fn a_bracket_after_cyrillic_text_is_escaped_without_panicking() {
     assert_eq!(escape("«Привет» [ссылка](x) и [нет"), "«Привет» \\[ссылка](x) и [нет");
 }
+
+#[test]
+fn a_session_whose_sign_in_expired_asks_to_sign_in() {
+    let screen = " ▐▛███▛█   Claude Code v2.1.321\n❯ Приветик\n● Login expired · Please run /login\n✻ Brewed for 0s · done 6:55 PM\n❯ /login\n  ⎿  Login interrupted\n                    Not logged in · Run /login · ✔ Update installed · Restart to update\n────\n❯ \n────\n  ⏵⏵ bypass permissions on (shift+tab to cycle)\n";
+    assert_eq!(Login::read(screen), Some(Login::Expired));
+    assert_eq!(Login::read(" Not logged in · Run /login\n Select login method:\n ❯ 1. Claude account\n   2. Console\n").map(|login| matches!(login, Login::Method(_))), Some(true), "the menu /login opens wins");
+}

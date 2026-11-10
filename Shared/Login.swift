@@ -1,11 +1,12 @@
 import SwiftUI
 
 /// Claude asking to be signed in: its sign-in page opens from here, and the code that page shows
-/// goes back to Claude.
+/// goes back to Claude. A session whose sign-in expired has no page yet; `link` asks Claude for one.
 struct LoginCard: View {
     @Environment(\.flavour) private var flavour
     @Environment(\.openURL) private var openURL
-    let url: URL
+    let url: URL?
+    var link: () async -> URL? = { nil }
     /// Signs Claude in with the code, or says why it could not.
     let send: (String) async -> String?
     @State private var code = ""
@@ -21,7 +22,7 @@ struct LoginCard: View {
             Text("Open the sign-in page and approve, then paste the code it shows.")
                 .font(.ui(Metric.note))
                 .foregroundStyle(flavour(.subtext0))
-            Button { openURL(url) } label: { Text("Open sign-in page").frame(maxWidth: .infinity) }
+            Button { Task { await open() } } label: { Text("Open sign-in page").frame(maxWidth: .infinity) }
                 .buttonStyle(FilledButton(fill: flavour(.mauve), text: flavour(.base)))
             HStack(spacing: Metric.gap) {
                 TextField("Code", text: $code)
@@ -54,6 +55,14 @@ struct LoginCard: View {
         .padding(Metric.pad)
         .background(flavour(.mantle), in: .rect(cornerRadius: Metric.corner))
         .overlay(RoundedRectangle(cornerRadius: Metric.corner).stroke(flavour(.mauve).opacity(0.5)))
+    }
+
+    private func open() async {
+        var page = url
+        if page == nil { page = await link() }
+        guard let page else { return problem = "Claude did not give a sign-in page." }
+        problem = nil
+        openURL(page)
     }
 
     private func submit(_ text: String) {
