@@ -317,7 +317,8 @@ impl Login {
         if let Some(prompt) = texts.iter().rposition(|text| text.starts_with(LOGIN_CODE)) {
             // Claude breaks the link at its width itself, so the rows are joined back.
             let first = texts[..prompt].iter().rposition(|text| text.starts_with("https://"))?;
-            return Some(Login::Link(texts[first..prompt].concat()));
+            let rows = texts[first..prompt].iter().take_while(|text| !text.is_empty() && !text.contains(' '));
+            return Some(Login::Link(rows.copied().collect()));
         }
         let title = texts.iter().rposition(|text| *text == LOGIN_METHOD)?;
         let mut options: Vec<(String, String)> = Vec::new();
