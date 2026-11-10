@@ -72,8 +72,8 @@ struct LoginBar: View {
     @ObservedObject var conversation: Conversation
 
     var body: some View {
-        if let permission = conversation.permissions.first(where: { $0.tool == "login" }), let url = permission.url.flatMap(URL.init(string:)) {
-            LoginCard(url: url) { await conversation.login($0, permission) }
+        if let permission = conversation.permissions.first(where: { $0.tool == "login" || $0.summary == "Select login method" }) {
+            PermissionCard(permission: permission, conversation: conversation)
                 .id(permission.id)
                 .padding(Metric.pad)
         }

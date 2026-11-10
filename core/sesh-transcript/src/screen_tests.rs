@@ -171,6 +171,8 @@ fn a_sign_in_link_is_joined_back_from_the_rows_claude_broke_it_into() {
     let link = "https://claude.com/cai/oauth/authorize?code=true&client_id=9d1c250a-e61b-44d9-88ed-5944d1962f5e&response_type=code&state=-MVgqzzuS1OktRmSVDcP19sbpTY6-olGjZo";
     assert_eq!(Login::read(LOGIN_LINK), Some(Login::Link(link.into())));
     assert_eq!(Login::read(&LOGIN_LINK.replace("\n\n", "\n")), Some(Login::Link(link.into())));
+    let hinted = LOGIN_LINK.replace("\n\n", "\n\n Hold Shift (Option in iTerm2, Fn in Terminal.app) while selecting to use your terminal's native copy\n\n");
+    assert_eq!(Login::read(&hinted), Some(Login::Link(link.into())), "a wide screen's hint below the link stays out of it");
 }
 
 #[test]
