@@ -182,3 +182,12 @@ fn the_login_method_menu_is_read_without_a_rule_above_it() {
     assert_eq!(menu.options.len(), 3);
     assert_eq!(Login::read("────────────────\n❯ \n────────────────\n"), None);
 }
+
+/// Claude Code 2.1.322 on a phone-width pane drops the blank rows and wraps long options.
+#[test]
+fn a_login_method_that_wraps_stays_one_option() {
+    let screen = " Welcome to Claude Code v2.1.322\n\n Select login method:\n\n ❯ 1. Claude account with subscription · Individual,\n      Team, or Enterprise\n   2. Anthropic Console account · API usage billing\n   3. 3rd-party platform · Amazon Bedrock, Microsoft\n      Foundry, Google Vertex AI\n\n";
+    let Some(Login::Method(menu)) = Login::read(screen) else { panic!("no menu") };
+    assert_eq!(menu.options[0].1, "Claude account with subscription · Individual, Team, or Enterprise");
+    assert_eq!(menu.options[2].1, "3rd-party platform · Amazon Bedrock, Microsoft Foundry, Google Vertex AI");
+}
