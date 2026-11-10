@@ -232,7 +232,6 @@ private struct SessionTab: View {
                 PaneView(key: "session:" + id, pane: pane, machine: TaskActions.machine(session.body.machine)) {
                     library.terminalFace.remove(id)
                 }
-                .overlay(alignment: .bottom) { if let conversation { LoginBar(conversation: conversation) } }
             }
         }
         .frame(minWidth: 420, maxWidth: .infinity, minHeight: 300, maxHeight: .infinity)

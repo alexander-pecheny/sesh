@@ -66,17 +66,3 @@ struct LoginCard: View {
         }
     }
 }
-
-/// The sign-in a Conversation shows, over the Agent's own terminal. It floats over it, because a
-/// terminal it shrank would make Claude redraw without the menu, and the card would go with it.
-struct LoginBar: View {
-    @ObservedObject var conversation: Conversation
-
-    var body: some View {
-        if let permission = conversation.permissions.first(where: { $0.tool == "login" || $0.summary == "Select login method" }) {
-            PermissionCard(permission: permission, conversation: conversation)
-                .id(permission.id)
-                .padding(Metric.pad)
-        }
-    }
-}
