@@ -320,7 +320,23 @@ impl Login {
             return Some(Login::Link(texts[first..prompt].concat()));
         }
         let title = texts.iter().rposition(|text| *text == LOGIN_METHOD)?;
-        let options: Vec<_> = texts[title + 1..].iter().filter(|text| !text.is_empty()).map_while(|text| numbered(text)).collect();
+        let mut options: Vec<(String, String)> = Vec::new();
+        let mut blank = false;
+        for text in &texts[title + 1..] {
+            if let Some(option) = numbered(text) {
+                options.push(option);
+            } else if text.is_empty() {
+                blank = true;
+                continue;
+            } else if let Some((_, label)) = options.last_mut().filter(|_| !blank) {
+                // A long option wraps onto the row below it.
+                label.push(' ');
+                label.push_str(text);
+            } else if !options.is_empty() {
+                break;
+            }
+            blank = false;
+        }
         (options.len() >= 2).then(|| Login::Method(Menu { title: LOGIN_METHOD.trim_end_matches(':').into(), options }))
     }
 }
