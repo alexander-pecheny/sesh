@@ -895,7 +895,7 @@ fn escape(text: &str) -> String {
         let special = match c {
             '\\' | '`' | '*' | '<' | '~' => true,
             '_' => !(word(-1) && word(1)),
-            '[' => text[at..].contains("]("),
+            '[' => chars[at..].windows(2).any(|pair| pair == [']', '(']),
             _ => false,
         };
         if special {

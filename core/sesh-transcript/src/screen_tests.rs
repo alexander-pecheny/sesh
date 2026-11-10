@@ -193,3 +193,8 @@ fn a_login_method_that_wraps_stays_one_option() {
     assert_eq!(menu.options[0].1, "Claude account with subscription · Individual, Team, or Enterprise");
     assert_eq!(menu.options[2].1, "3rd-party platform · Amazon Bedrock, Microsoft Foundry, Google Vertex AI");
 }
+
+#[test]
+fn a_bracket_after_cyrillic_text_is_escaped_without_panicking() {
+    assert_eq!(escape("«Привет» [ссылка](x) и [нет"), "«Привет» \\[ссылка](x) и [нет");
+}
