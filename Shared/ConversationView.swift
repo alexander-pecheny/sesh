@@ -721,6 +721,12 @@ private struct MyMessages: View {
     let flavour: Catppuccin.Flavour
     private static let side = Metric.control * 0.8
     private static let glass = 0.9
+    #if os(macOS)
+    /// The Mac's scroll bar takes room at the side, where the buttons would cover it.
+    private static var scroller: CGFloat { NSScroller.scrollerWidth(for: .regular, scrollerStyle: NSScroller.preferredScrollerStyle) }
+    #else
+    private static let scroller: CGFloat = 0
+    #endif
 
     private var marks: Set<String> {
         Set(rows.compactMap { row in
@@ -740,7 +746,7 @@ private struct MyMessages: View {
             }
             .background(flavour(.surface1).opacity(Self.glass), in: .capsule)
             .shadow(radius: ConversationView.shadow)
-            .padding(.trailing, Metric.pad)
+            .padding(.trailing, Metric.pad + Self.scroller)
             // Above "Move to bottom", which spans most of a phone's width.
             .padding(.bottom, scroll.atBottom ? Metric.pad : Metric.control + Metric.pad)
         }
