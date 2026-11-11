@@ -666,6 +666,24 @@ fn a_monitor_runs_in_the_background_until_its_stream_ends_or_it_expires() {
 }
 
 #[test]
+fn background_work_claude_code_refused_is_not_listed() {
+    let at = "2026-11-09T00:18:29.939Z";
+    let watch = json!({"type":"assistant","timestamp":at,"message":{"content":[{"type":"tool_use","id":"toolu_m","name":"Monitor",
+        "input":{"description":"wait for prod snapshot copy","until":"! pgrep scp","timeout":"600"}}]}});
+    let refused = json!({"type":"user","timestamp":at,"message":{"role":"user","content":[{"type":"tool_result","tool_use_id":"toolu_m",
+        "is_error":true,"content":"<tool_use_error>InputValidationError: exactly one of command or ws</tool_use_error>"}]},
+        "toolUseResult":"InputValidationError: exactly one of command or ws"});
+    assert!(parse(Agent::Claude, &[watch.clone(), refused.clone()]).background().is_empty());
+    let dir = std::env::temp_dir().join(format!("sesh-refused-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    std::fs::write(dir.join("t.jsonl"), format!("{watch}\n{refused}\n")).unwrap();
+    let mut scanned = Transcript::new(Agent::Claude, dir.join("t.jsonl"));
+    scanned.scan_background().unwrap();
+    std::fs::remove_dir_all(&dir).unwrap();
+    assert!(scanned.background().is_empty(), "a scan sees the refusal too");
+}
+
+#[test]
 fn claude_turn_is_over_after_end_turn_until_the_user_speaks() {
     let at = "2026-10-05T14:54:42.186Z";
     let reply = |reason: &str| json!({"type":"assistant","timestamp":at,"message":{"stop_reason":reason,"content":[{"type":"text","text":"ok"}]}});

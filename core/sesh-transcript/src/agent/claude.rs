@@ -91,7 +91,7 @@ impl super::Parse for Parser {
         let mut line = Vec::new();
         while reader.read_until(b'\n', &mut line)? > 0 {
             let text = std::str::from_utf8(&line).unwrap_or_default();
-            if ["run_in_background", "task-notification", "async_launched", "backgroundTaskId", "\"taskId\"", "TaskStop", "Monitor", "\"name\":\"Bash\""].iter().any(|word| text.contains(word)) {
+            if ["run_in_background", "task-notification", "async_launched", "backgroundTaskId", "\"taskId\"", "TaskStop", "Monitor", "\"name\":\"Bash\"", "\"is_error\":true"].iter().any(|word| text.contains(word)) {
                 if let Ok(value) = serde_json::from_str::<Value>(text) {
                     scan.read(&value, &mut ids, &mut out);
                     out.clear();
@@ -342,6 +342,10 @@ impl Parser {
             return;
         };
         let result = &line["toolUseResult"];
+        // Work Claude Code refused, such as a Monitor with bad input, never started.
+        if block["is_error"] == true {
+            self.background.retain(|work| work.call != call);
+        }
         // A command moved to the background after it started says so only in its result.
         let command = self.commands.remove(call);
         if let Some(label) = command.filter(|_| result["backgroundTaskId"].is_string()) {
