@@ -52,6 +52,7 @@ struct ConversationView: View {
             }
         }
         .overlay(alignment: .bottom) { MoveToBottom(scroll: conversation.scroll, flavour: flavour) }
+        .overlay(alignment: .bottomTrailing) { MyMessages(scroll: conversation.scroll, rows: conversation.rows, flavour: flavour) }
         .scrollDismissesKeyboard(.interactively)
         .safeAreaInset(edge: .bottom, spacing: 0) {
             VStack(spacing: 0) {
@@ -709,6 +710,51 @@ private struct MoveToBottom: View {
             .buttonStyle(.plain)
             .padding(Metric.pad)
         }
+    }
+}
+
+/// Steps to the message the user sent before or after the top of the view, for finding their
+/// way back through a long run of the Agent's work.
+private struct MyMessages: View {
+    @ObservedObject var scroll: ChatScroll
+    let rows: [SessionLog.Row]
+    let flavour: Catppuccin.Flavour
+    private static let side = Metric.control * 0.8
+    private static let glass = 0.9
+
+    private var marks: Set<String> {
+        Set(rows.compactMap { row in
+            guard case .entry(let entry) = row.content, entry.kind == "user" else { return nil }
+            return row.id
+        })
+    }
+
+    var body: some View {
+        let marks = marks
+        if !marks.isEmpty {
+            VStack(spacing: 0) {
+                button("chevron-up", "Previous message you sent") { scroll.step(back: true, among: marks) }
+                Divider().frame(width: Metric.pad)
+                button("chevron-down", "Next message you sent") { scroll.step(back: false, among: marks) }
+                    .disabled(scroll.atBottom)
+            }
+            .background(flavour(.surface1).opacity(Self.glass), in: .capsule)
+            .shadow(radius: ConversationView.shadow)
+            .padding(.trailing, Metric.pad)
+            // Above "Move to bottom", which spans most of a phone's width.
+            .padding(.bottom, scroll.atBottom ? Metric.pad : Metric.control + Metric.pad)
+        }
+    }
+
+    private func button(_ icon: String, _ label: String, action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            Image.lucide(icon, size: Metric.title)
+                .foregroundStyle(flavour(.text))
+                .frame(width: Self.side, height: Self.side)
+                .contentShape(.rect)
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel(label)
     }
 }
 

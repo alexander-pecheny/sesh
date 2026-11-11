@@ -182,6 +182,20 @@ final class ChatScroll: ObservableObject {
         report()
     }
 
+    /// Brings the nearest of `marks` above or below the top of the view to the top. With none
+    /// above, it goes to the top, where the page before loads; with none below, to the end.
+    func step(back: Bool, among marks: Set<String>) {
+        guard let surface, phase != .opening else { return }
+        let now = surface.offset
+        let rows = ids.indices.filter { marks.contains(ids[$0]) }
+        let row = back ? rows.last { surface.top(of: $0) < now - 1 } : rows.first { surface.top(of: $0) > now + 1 }
+        guard let row else { return back ? go(surface.start) : jump() }
+        revealing = nil
+        phase = .anchored
+        place((ids[row], 0))
+        report()
+    }
+
     /// The reader opened or closed a card: the next rows keep the view still, even at the end,
     /// so the card opens under the pointer rather than scrolling away.
     func hold() { holding = true }
