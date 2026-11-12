@@ -52,7 +52,7 @@ struct ConversationView: View {
             }
         }
         .overlay(alignment: .bottom) { MoveToBottom(scroll: conversation.scroll, flavour: flavour) }
-        .overlay(alignment: .bottomTrailing) { MyMessages(scroll: conversation.scroll, rows: conversation.rows, flavour: flavour) }
+        .overlay(alignment: .bottomTrailing) { MyMessages(scroll: conversation.scroll, conversation: conversation, flavour: flavour) }
         .scrollDismissesKeyboard(.interactively)
         .safeAreaInset(edge: .bottom, spacing: 0) {
             VStack(spacing: 0) {
@@ -720,7 +720,7 @@ private struct MoveToBottom: View {
 /// way back through a long run of the Agent's work.
 private struct MyMessages: View {
     @ObservedObject var scroll: ChatScroll
-    let rows: [SessionLog.Row]
+    @ObservedObject var conversation: Conversation
     let flavour: Catppuccin.Flavour
     private static let side = Metric.control * 0.8
     private static let glass = 0.9
@@ -731,7 +731,8 @@ private struct MyMessages: View {
     private static let scroller: CGFloat = 0
     #endif
 
-    private var marks: Set<String> {
+    /// The user's messages among the rows loaded now; earlier pages bring more.
+    private static func marks(_ rows: [SessionLog.Row]) -> Set<String> {
         Set(rows.compactMap { row in
             guard case .entry(let entry) = row.content, entry.kind == "user" else { return nil }
             return row.id
@@ -739,8 +740,9 @@ private struct MyMessages: View {
     }
 
     var body: some View {
-        let marks = marks
-        if !marks.isEmpty {
+        // Long runs of the Agent's own work can hide every message of the user's in earlier pages.
+        if !conversation.rows.isEmpty {
+            let marks = { [conversation] in Self.marks(conversation.rows) }
             VStack(spacing: 0) {
                 button("chevron-up", "Previous message you sent") { scroll.step(back: true, among: marks) }
                 Divider().frame(width: Metric.pad)
