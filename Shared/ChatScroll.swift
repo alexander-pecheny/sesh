@@ -107,6 +107,8 @@ final class ChatScroll: ObservableObject {
     private var nearTop = false
     private var holding = false
     private var revealing: String?
+    /// The reader's messages, while "previous" waits for an earlier page to find one in.
+    private var seeking: (() -> Set<String>)?
 
     var following: Bool { phase != .anchored }
     private var measurable: Bool { (surface?.size.width ?? 0) >= Self.narrowest }
@@ -144,6 +146,7 @@ final class ChatScroll: ObservableObject {
         }
         report(paging: true)
         settle()
+        if let seeking, changed { step(back: true, among: seeking) }
     }
 
     /// The list took a new size; `relayout` measures its rows anew when the width changed.
@@ -158,12 +161,14 @@ final class ChatScroll: ObservableObject {
 
     /// The list moved. Rows measured late also move it, so only the reader leaves the end.
     func scrolled(byReader reader: Bool) {
+        if reader { seeking = nil }
         if following, !reader { return toEnd(smoothly: shown) }
         report()
     }
 
     /// "Move to bottom", or a send: the end, wherever the reader had scrolled.
     func jump() {
+        seeking = nil
         spot = nil
         revealing = nil
         guard phase != .opening else { return }
@@ -184,12 +189,20 @@ final class ChatScroll: ObservableObject {
 
     /// Brings the nearest of `marks` above or below the top of the view to the top. With none
     /// above, it goes to the top, where the page before loads; with none below, to the end.
-    func step(back: Bool, among marks: Set<String>) {
+    func step(back: Bool, among marks: @escaping () -> Set<String>) {
+        seeking = nil
         guard let surface, phase != .opening else { return }
         let now = surface.offset
-        let rows = ids.indices.filter { marks.contains(ids[$0]) }
+        let found = marks()
+        let rows = ids.indices.filter { found.contains(ids[$0]) }
         let row = back ? rows.last { surface.top(of: $0) < now - 1 } : rows.first { surface.top(of: $0) > now + 1 }
-        guard let row else { return back ? go(surface.start) : jump() }
+        guard let row else {
+            guard back else { return jump() }
+            seeking = marks
+            phase = .anchored
+            go(surface.start)
+            return report(paging: true)
+        }
         revealing = nil
         phase = .anchored
         place((ids[row], 0))
