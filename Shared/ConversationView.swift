@@ -79,6 +79,9 @@ struct ConversationView: View {
         #endif
         .toolbar {
             if conversation.agent == .claude, resume == nil {
+                if conversation.pane != nil {
+                    ToolbarItem(placement: .primaryAction) { ModelButton(conversation: conversation) }
+                }
                 ToolbarItem(placement: .primaryAction) {
                     Button { Task { await openInClaude() } } label: { Label("Open in Claude", image: "external-link") }
                 }

@@ -467,6 +467,26 @@ final class Conversation: ObservableObject {
         return await once(question) { await follower?.answer(String(decoding: data, as: UTF8.self), in: $0) }
     }
 
+    func models() async -> Result<[AgentModel], FollowerLink.Problem> {
+        // A fixture has no Host to ask, so it shows what Claude's menu offers.
+        guard runner != nil else { return .success(Self.sampleModels) }
+        guard let pane, let follower else { return .failure(.init("This chat has no Agent to ask.")) }
+        return await follower.models(pane)
+    }
+
+    private static let sampleModels = [
+        AgentModel(label: "Default (recommended)", note: "Fable 5.2", current: true),
+        AgentModel(label: "Opus 5.5", note: "For complex work and everyday tasks", current: false),
+        AgentModel(label: "Sonnet 5.5", note: "Most efficient for simpler tasks", current: false),
+        AgentModel(label: "Haiku 5.5", note: "Fastest for quick answers", current: false),
+    ]
+
+    func pick(model: AgentModel) async -> String? {
+        guard runner != nil else { return nil }
+        guard let pane else { return "This chat has no Agent to switch." }
+        return await follower?.pick(model: model.label, in: pane)
+    }
+
     func loginLink() async -> URL? {
         guard let pane else { return nil }
         return await follower?.loginLink(pane)
