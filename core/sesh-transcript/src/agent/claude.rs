@@ -289,7 +289,8 @@ impl Parser {
             let end = text[start..].find(&format!("</{name}>"))? + start;
             Some(text[start..end].trim().to_string())
         };
-        let call = tag("tool-use-id").or_else(|| self.started.get(&tag("task-id")?).cloned());
+        let task = tag("task-id");
+        let call = tag("tool-use-id").or_else(|| self.started.get(task.as_deref()?).cloned());
         // A Monitor that expires says so only in its event.
         let expired = tag("event").is_some_and(|event| event.starts_with("[Monitor expired"));
         let (Some(call), Some(status)) = (call, tag("status").or(expired.then(|| "expired".into()))) else {
@@ -299,6 +300,15 @@ impl Parser {
         let interim = text.contains("background work of its own still running");
         if status != "running" && !interim {
             self.background.retain(|work| work.call != call);
+        }
+        // An Agent another subagent started is first heard of here, still working.
+        if interim && !self.background.iter().any(|work| work.call == call) {
+            let summary = tag("summary").unwrap_or_default();
+            let label = summary.split('"').nth(1).unwrap_or("Agent").to_string();
+            if let Some(task) = task {
+                self.started.insert(task, call.clone());
+            }
+            self.background.push(Background { call, label, agent: true });
         }
     }
 
