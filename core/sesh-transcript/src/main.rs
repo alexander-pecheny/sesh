@@ -24,7 +24,7 @@ const USAGE: &str = "usage: sesh-transcript --version | follow --protocol | foll
        | serve [--foreground] [--record DIR --pane PANE] | attach [--sessions] [--watch KEY[:SEQ]]...
        | page KEY --before ORD [--limit N] | replay FILE [--lines]
        | send KEY ID TEXT | unqueue KEY ID | hand KEY | ask REQUEST | ask --file FILE
-       | login <pane> [--code CODE] | keys KEY NAME... | answer KEY --json ANSWERS | permit KEY allow|deny | stop KEY
+       | login <pane> [--code CODE] | model <pane> [--pick LABEL] | keys KEY NAME... | answer KEY --json ANSWERS | permit KEY allow|deny | stop KEY
        | history <pane> --before ID [--last N] | entry <pane> ID | background <pane>...
        | vault init DIR | vault pull|follow DIR [--since SEQ] | vault push DIR FILE [--batch ID]
        | vault size DIR SESSION FILE | vault append DIR SESSION FILE --offset N BYTES_FILE
@@ -57,6 +57,7 @@ fn main() {
         Some("background") => background(rest),
         Some("entry") => entry(rest),
         Some("login") => login(rest),
+        Some("model") => model(rest),
         Some(op) if act::OPS.contains(&op) => match rest.split_first().and_then(|(session, args)| act::request(op, session, args)) {
             Some(request) => serve::ask(&request),
             None => usage(),
@@ -138,6 +139,19 @@ fn login(args: &[String]) -> Exit {
             0
         }),
         [pane, flag, code] if flag == "--code" => act::login(&mut Mux, pane, code).map(|()| 0),
+        _ => usage(),
+    }
+}
+
+/// The models Claude in `pane` offers, as JSON; with `--pick`, switches it to one for this
+/// session only.
+fn model(args: &[String]) -> Exit {
+    match args {
+        [pane] => act::models(&mut Mux, pane).map(|models| {
+            println!("{}", serde_json::to_string(&models).unwrap_or_default());
+            0
+        }),
+        [pane, flag, label] if flag == "--pick" => act::pick_model(&mut Mux, pane, label).map(|()| 0),
         _ => usage(),
     }
 }

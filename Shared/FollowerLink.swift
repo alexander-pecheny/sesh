@@ -143,6 +143,18 @@ final class FollowerLink {
         let ran = await machine.run("\(Helper.path) login \(quote(pane))")
         return ran.ok ? URL(string: ran.out.trimmingCharacters(in: .whitespacesAndNewlines)) : nil
     }
+    /// The models Claude in `pane` can switch to, read off its `/model` menu.
+    func models(_ pane: String) async -> Result<[AgentModel], Problem> {
+        if let problem = await machine.prepare() { return .failure(Problem(problem)) }
+        let ran = await machine.run("\(Helper.path) model \(quote(pane))")
+        guard ran.ok else { return .failure(Problem(ran.problem)) }
+        guard let models = try? JSONDecoder().decode([AgentModel].self, from: Data(ran.out.utf8)) else {
+            return .failure(Problem("Claude's models did not read as a list."))
+        }
+        return .success(models)
+    }
+    /// Switches Claude in `pane` to a model for this session only; its default stays.
+    func pick(model label: String, in pane: String) async -> String? { await ask("model", pane, ["--pick", label]) }
     /// Signs Claude in with the code its sign-in page showed.
     func login(_ code: String, in pane: String) async -> String? { await ask("login", pane, ["--code", code]) }
     /// Interrupts the Agent and closes its pane.
@@ -177,6 +189,11 @@ final class FollowerLink {
         if let problem = await machine.prepare() { return problem }
         let ran = await machine.run(([Helper.path, op] + ([session] + args).map(quote)).joined(separator: " "))
         return ran.ok ? nil : ran.problem
+    }
+
+    struct Problem: Error {
+        let text: String
+        init(_ text: String) { self.text = text }
     }
 
     private struct Said: Decodable {
