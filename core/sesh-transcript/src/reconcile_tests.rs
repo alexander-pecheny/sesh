@@ -320,3 +320,16 @@ fn a_transcript_found_after_the_hello_reaches_the_session_summary() {
     std::fs::remove_dir_all(&dir).unwrap();
     assert_eq!(summary["transcript"], "/p/s.jsonl");
 }
+
+#[test]
+fn a_message_claude_holds_stays_handed_on_a_screen_missing_its_send_now_line() {
+    let now = Instant::now();
+    let mut live = Reconciler::default();
+    live.message("sent.1", "also tell me the word plum when you can", HANDED, now);
+    let rule = "─".repeat(100);
+    let screen = |below: &str| View::read(&format!("⏺ Counting to forty.\n\n❯ also tell me the word plum when you can\n{below}\n✢ Incubating… (8s)\n\n{rule}\n❯ \n{rule}\n")).unwrap();
+    live.see(screen(""), now);
+    assert_eq!(live.messages[0].state, HANDED, "nothing below it yet");
+    live.see(screen("\n⏺ plum"), now);
+    assert_eq!(live.messages[0].state, SHOWN, "Claude answered below it");
+}

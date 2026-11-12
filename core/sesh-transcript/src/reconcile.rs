@@ -257,19 +257,20 @@ impl Reconciler {
             _ => view.status.clone(),
         };
         let held = view.blocks.iter().rposition(|block| self.corpus.holds(block, view.width));
-        let fresh: Vec<&Block> = view
+        let fresh: Vec<(usize, &Block)> = view
             .blocks
             .iter()
             .enumerate()
             .filter(|(index, block)| held.is_none_or(|held| *index > held) && !self.corpus.holds(block, view.width))
-            .map(|(_, block)| block)
             .collect();
+        // Messages Claude still holds sit below everything else it shows.
+        let last_words = view.blocks.iter().rposition(|block| block.kind != Kind::User).map_or(0, |at| at + 1);
         let mut from = 0;
-        for block in fresh {
+        for (index, block) in fresh {
             match block.kind {
                 Kind::Reply => self.reply(block, view.width, now, &mut from),
                 Kind::Tool => self.tool(block, view.width, now, &mut from),
-                Kind::User => self.said(block, now),
+                Kind::User => self.said(block, index < last_words, now),
                 Kind::Other => {}
             }
         }
@@ -328,14 +329,17 @@ impl Reconciler {
         }
     }
 
-    /// A message Claude shows as read; one it holds still says it can be sent now.
-    fn said(&mut self, block: &Block, now: Instant) {
+    /// A message Claude shows as read; one it holds still says it can be sent now. A message
+    /// handed to Claude mid-turn counts only once Claude shows something below it: a screen read
+    /// mid-redraw can lack the line that says it waits.
+    fn said(&mut self, block: &Block, answered: bool, now: Instant) {
         if block.rows.iter().any(|row| row.text().trim_end().ends_with("to send now")) {
             return;
         }
         let text: Vec<String> = block.rows.iter().map(|row| row.skip(2).text()).collect();
         let text = text.join("\n");
-        if let Some(message) = self.messages.iter_mut().find(|message| matches!(message.state, SENT | HANDED) && shows(&text, block.cut, message)) {
+        let read = |message: &Message| message.state == SENT || message.state == HANDED && answered;
+        if let Some(message) = self.messages.iter_mut().find(|message| read(message) && shows(&text, block.cut, message)) {
             (message.state, message.at) = (SHOWN, now);
         }
     }
