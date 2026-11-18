@@ -56,6 +56,23 @@ struct AddMenu<Label: View>: View {
     }
 }
 
+extension TabItem {
+    /// A Scratchpad's Tab names its machine, since no Worktree in the header does.
+    @MainActor
+    func title(in vault: Vault) -> String {
+        switch self {
+        case .journal: return "Journal"
+        case .session(let id), .terminal(let id):
+            guard let record = vault.records[id] else { return "Untitled" }
+            let title = record.kind == .session ? record.body.title ?? "Untitled" : "Terminal"
+            guard let task = record.body.task, vault.records[task]?.scratchpad == true else { return title }
+            return "\(title) on \(TaskActions.machine(record.body.machine).title)"
+        case .document(let id): return vault.records[id]?.body.title ?? "Untitled"
+        case .subagent(_, _, let title), .found(_, _, _, let title): return title
+        }
+    }
+}
+
 /// A Tab's context menu.
 struct TabMenuItems: View {
     @EnvironmentObject private var library: Library
