@@ -149,6 +149,24 @@ enum Mux {
     /// The command that shows a pane's terminal, taken over from any other device showing it.
     static func attach(_ terminal: String) -> String { "\(command) terminal attach \(quote(terminal)) --takeover" }
 
+    /// Whether a pane's shell runs nothing in its foreground, so closing it loses nothing.
+    static func bare(_ pane: String, on runner: Runner) async -> Bool {
+        struct Got: Decodable {
+            struct Result: Decodable {
+                struct Info: Decodable {
+                    let shell_pid: Int?
+                    let foreground_process_group_id: Int?
+                }
+                let process_info: Info
+            }
+            let result: Result
+        }
+        let ran = await runner.run("\(command) pane process-info --pane \(quote(pane))")
+        guard let info = try? JSONDecoder().decode(Got.self, from: Data(ran.out.utf8)).result.process_info,
+              let shell = info.shell_pid else { return false }
+        return info.foreground_process_group_id == shell
+    }
+
     /// Ends a Terminal's shell.
     static func close(_ pane: String, on runner: Runner) async {
         _ = await runner.run("\(command) pane close \(quote(pane))")

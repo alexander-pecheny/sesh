@@ -78,13 +78,18 @@ enum TabItem: Hashable, Identifiable, Codable {
         return branch.map { Worktree(branch: $0, machine: own.machine, path: path) }
     }
 
+    /// A Scratchpad's Tab names its machine, since no Worktree in the header does.
     @MainActor
     func title(in vault: some Records) -> String {
         switch self {
-        case .journal: "Journal"
-        case .session(let id), .document(let id): vault.records[id]?.body.title ?? "Untitled"
-        case .terminal: "Terminal"
-        case .subagent(_, _, let title), .found(_, _, _, let title): title
+        case .journal: return "Journal"
+        case .session(let id), .terminal(let id):
+            guard let record = vault.records[id] else { return "Untitled" }
+            let title = record.kind == .session ? record.body.title ?? "Untitled" : "Terminal"
+            guard let task = record.body.task, vault.records[task]?.scratchpad == true else { return title }
+            return "\(title) on \(TaskActions.machine(record.body.machine).title)"
+        case .document(let id): return vault.records[id]?.body.title ?? "Untitled"
+        case .subagent(_, _, let title), .found(_, _, _, let title): return title
         }
     }
 }

@@ -772,8 +772,15 @@ final class Library: ObservableObject {
 
     @Published var closing: Closing?
 
-    /// Closes a Tab; one holding unsaved edits or a shell asks first, unless `confirmed`.
+    /// Closes a Tab; one holding unsaved edits or a shell running a program asks first, unless `confirmed`.
     func close(_ tab: TabItem, in task: String, confirmed: Bool = false) {
+        if !confirmed, case .terminal(let id) = tab, let record = vault(of: id)?.records[id], let pane = record.body.pane {
+            Task {
+                if await Mux.bare(pane, on: TaskActions.machine(record.body.machine)) { close(tab, in: task, confirmed: true) }
+                else if let loss = loss(closing: tab) { closing = Closing(tab: tab, task: task, loss: loss) }
+            }
+            return
+        }
         if !confirmed, let loss = loss(closing: tab) { return closing = Closing(tab: tab, task: task, loss: loss) }
         switch tab {
         case .terminal(let id): closeTerminal(id)
@@ -785,7 +792,7 @@ final class Library: ObservableObject {
 
     private func loss(closing tab: TabItem) -> String? {
         switch tab {
-        case .terminal: "The shell in this Terminal stops, and anything running in it."
+        case .terminal: "The program running in this Terminal stops with its shell."
         case .document(let id) where documents[id]?.dirty == true:
             "Your edits to \(vault(of: id)?.records[id]?.body.title ?? "this Document") are not saved."
         default: nil
