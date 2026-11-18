@@ -1,13 +1,5 @@
 import SwiftUI
 
-/// A model Claude's `/model` menu offers, as the helper read it.
-struct AgentModel: Decodable, Identifiable, Hashable {
-    let label: String
-    let note: String
-    let current: Bool
-    var id: String { label }
-}
-
 /// The toolbar's switch of Claude's model for this session, which leaves its default alone.
 struct ModelButton: View {
     @ObservedObject var conversation: Conversation

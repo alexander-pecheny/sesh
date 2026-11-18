@@ -319,3 +319,11 @@ enum Reachability {
 
     static func online() -> Bool { monitor.currentPath.status == .satisfied }
 }
+
+/// A model Claude's `/model` menu offers, as the helper read it.
+struct AgentModel: Decodable, Identifiable, Hashable {
+    let label: String
+    let note: String
+    let current: Bool
+    var id: String { label }
+}
