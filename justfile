@@ -9,8 +9,12 @@ ghosttykit:
 ghosttykit-prebuilt:
     ./scripts/fetch-ghosttykit.sh
 
-gen: ghosttykit core licenses
+gen: ghosttykit core licenses hooks
     xcodegen generate --quiet
+
+# The pre-commit hook checks that the test target still compiles on its own.
+hooks:
+    git config core.hooksPath .githooks
 
 # Collects every linked crate's licence text into Resources/licenses.json.
 licenses:
