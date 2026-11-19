@@ -453,20 +453,24 @@ pub(crate) fn question(tag: &str, at: &Value, input: &Value) -> Entry {
         .into_iter()
         .flatten()
         .map(|question| {
-            serde_json::json!({
+            let options = question["options"].as_array().map(Vec::as_slice).unwrap_or_default();
+            let mut parsed = serde_json::json!({
                 "question": question["question"],
                 "header": question["header"],
                 "multi": question["multiSelect"] == true,
-                "options": question["options"]
-                    .as_array()
-                    .into_iter()
-                    .flatten()
+                "options": options
+                    .iter()
                     .map(|option| serde_json::json!({
                         "label": option["label"],
                         "description": option["description"],
                     }))
                     .collect::<Vec<_>>(),
-            })
+            });
+            // Claude lays out a question with previews differently, and an absent key keeps older ids.
+            if options.iter().any(|option| option["preview"].is_string()) {
+                parsed["previews"] = true.into();
+            }
+            parsed
         })
         .collect();
     let summary = crate::first_line(

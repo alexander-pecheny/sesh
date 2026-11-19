@@ -34,7 +34,7 @@ struct QuestionCard: View {
                         ForEach(question.options, id: \.label) { option in
                             choice(option, multi: question.multi == true, in: index)
                         }
-                        TextField("Something else", text: Binding(get: { typed[index, default: ""] }, set: { type($0, multi: question.multi == true, in: index) }))
+                        TextField(question.previews == true ? "Note" : "Something else", text: Binding(get: { typed[index, default: ""] }, set: { type($0, multi: question.multi == true || question.previews == true, in: index) }))
                             .font(.ui(Metric.label))
                             .padding(Metric.pad)
                             .background(flavour(.base), in: .rect(cornerRadius: Metric.corner))
@@ -67,8 +67,11 @@ struct QuestionCard: View {
             .foregroundStyle(flavour(.subtext0))
     }
 
+    /// Beside previews Claude takes text only as a note on an option.
     private var complete: Bool {
-        questions.indices.allSatisfy { !picked[$0, default: []].isEmpty || !typed[$0, default: ""].isEmpty }
+        questions.indices.allSatisfy {
+            !picked[$0, default: []].isEmpty || (questions[$0].previews != true && !typed[$0, default: ""].isEmpty)
+        }
     }
 
     /// A single-choice question takes an option or text, so typing clears the option.
@@ -83,7 +86,7 @@ struct QuestionCard: View {
             var set = multi ? picked[index, default: []] : []
             if on { set.remove(option.label) } else { set.insert(option.label) }
             picked[index] = set
-            if !multi && !on { typed[index] = nil }
+            if !multi && !on && questions[index].previews != true { typed[index] = nil }
         } label: {
             HStack(alignment: .top, spacing: Metric.pad) {
                 Image.lucide(on ? (multi ? "circle-check" : "circle-dot") : "circle", size: 16)

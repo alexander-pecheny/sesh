@@ -95,7 +95,8 @@ fn key(name: &str) -> Input {
 
 /// Claude's question menu: a digit picks an option (and moves on when only one
 /// may be picked), the row after the options takes free text, and in a
-/// multi-select the row after that moves on.
+/// multi-select the row after that moves on. Beside previews a digit only moves
+/// the cursor, `n` writes a note on that option, and enter picks it.
 fn question_inputs(questions: &Value, answers: &[Answer]) -> Result<Vec<Input>> {
     let questions = questions.as_array().map(Vec::as_slice).unwrap_or_default();
     if questions.len() != answers.len() {
@@ -118,7 +119,14 @@ fn question_inputs(questions: &Value, answers: &[Answer]) -> Result<Vec<Input>> 
             .collect::<Result<Vec<_>>>()?;
         let text = answer.text.clone().filter(|text| !text.is_empty());
         let free_row = (labels.len() + 1).to_string();
-        if question["multi"] == true {
+        if question["previews"] == true {
+            let digit = digits.first().ok_or("a question with previews needs an option")?;
+            inputs.push(key(digit));
+            if let Some(text) = text {
+                inputs.extend([key("n"), Input::Text(text)]);
+            }
+            inputs.push(key("enter"));
+        } else if question["multi"] == true {
             inputs.extend(digits.iter().map(|digit| key(digit)));
             inputs.extend((0..labels.len()).map(|_| key("down")));
             inputs.extend(text.map(Input::Text));
@@ -274,6 +282,17 @@ mod tests {
             keys(&inputs),
             ["2", "1", "3", "down", "down", "down", "Text(\"hamster\")", "down", "enter", "3", "Text(\"water\")", "enter"]
         );
+    }
+
+    #[test]
+    fn question_inputs_pick_beside_previews_with_enter_and_write_text_as_a_note() {
+        let questions = json!([
+            {"multi": false, "previews": true, "options": [{"label": "A"}, {"label": "B"}]},
+            {"multi": false, "previews": true, "options": [{"label": "A"}, {"label": "B"}]},
+        ]);
+        let inputs = question_inputs(&questions, &answers(r#"[{"options":["B"]},{"options":["A"],"text":"wider"}]"#)).unwrap();
+        assert_eq!(keys(&inputs), ["2", "enter", "1", "n", "Text(\"wider\")", "enter"]);
+        assert!(question_inputs(&json!([questions[0]]), &answers(r#"[{"text":"wider"}]"#)).is_err());
     }
 
     #[test]

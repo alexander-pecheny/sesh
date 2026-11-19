@@ -54,6 +54,7 @@ struct SessionLog {
         let question: String
         let header: String?
         let multi: Bool?
+        let previews: Bool?
         let options: [Option]
     }
 

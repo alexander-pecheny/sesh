@@ -199,3 +199,11 @@ fn a_message_sent_during_compact_follows_the_command_claude_writes_again_under_i
     let texts: Vec<_> = transcript.entries.iter().map(|entry| entry.text.clone().unwrap_or_default()).collect();
     assert_eq!(texts, ["/compact", "why does the check fail?"]);
 }
+
+#[test]
+fn a_claude_question_with_previews_says_so() {
+    let options = |preview: Value| json!({"questions": [{"question": "Layout?", "options": [{"label": "A", "preview": preview}]}]});
+    let previews = |input: Value| claude::question("t", &Value::Null, &input).questions.unwrap()[0]["previews"].clone();
+    assert_eq!(previews(options(json!("+--+"))), true);
+    assert_eq!(previews(options(Value::Null)), Value::Null);
+}
