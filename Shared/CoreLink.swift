@@ -149,7 +149,7 @@ class CoreLink: ObservableObject, Identifiable {
     nonisolated static let gone = "the connection to the Host is gone"
 
     /// Why the Link is not up, after dialling it if need be; nil once it is.
-    private func up() async -> String? {
+    func up() async -> String? {
         guard !paused else { return "not connected" }
         if !linked {
             if handle == nil { connect() }
