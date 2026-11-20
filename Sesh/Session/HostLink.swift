@@ -68,13 +68,19 @@ final class HostLink: CoreLink {
 
     // MARK: Uploads
 
-    var canUpload: Bool { linked && uploading == nil }
+    /// Not tied to `linked`: the Link lets go on the way to the background and dials again on use.
+    var canUpload: Bool { uploading == nil }
 
     /// As in a Terminal Tab, but over the Link: the paths reach `insert` once all have landed.
     func upload(_ results: [PHPickerResult], insert: @escaping (String) -> Void) {
         guard canUpload, !results.isEmpty else { return }
         uploading = Progress(id: 0, done: 0, total: 1)
         Task {
+            if let problem = await up() {
+                uploading = nil
+                uploadError = problem
+                return
+            }
             let files: [PreparedUpload]
             do {
                 files = try await Uploads.prepare(results, compress: store.compressUploads)
