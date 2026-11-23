@@ -70,17 +70,17 @@ final class Machine: Runner, Identifiable, Hashable {
     private(set) lazy var follower = FollowerLink(self)
 
     /// Each image by its hash, so pasting it again reuses the first copy, even mid-upload.
-    private var uploads: [SHA256.Digest: Task<String?, Never>] = [:]
+    private var pasted: [SHA256.Digest: Task<String?, Never>] = [:]
 
     /// Pasted images land in `~/.sesh/uploads` under the moment they were pasted, as the
     /// phone's Uploads do, so the Agent can be told where to look.
     func upload(_ data: Data, ext: String) async -> String? {
         let digest = SHA256.hash(data: data)
-        if let known = uploads[digest], let path = await known.value { return path }
+        if let known = pasted[digest], let path = await known.value { return path }
         let task = Task { await store(data, ext: ext) }
-        uploads[digest] = task
+        pasted[digest] = task
         let path = await task.value
-        if path == nil, uploads[digest] == task { uploads[digest] = nil }
+        if path == nil, pasted[digest] == task { pasted[digest] = nil }
         return path
     }
 
