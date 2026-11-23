@@ -26,11 +26,10 @@ struct TaskView: View {
                     .help("Starting \(pending.agent.title) on \(pending.machine)")
                 }
                 if let task = vault.records[id] {
-                    AddMenu(vault: vault, task: task) { opening in
+                    NewTabButton(vault: vault, task: task) { opening in
                         if opening { ProgressView().controlSize(.small) } else { Image(systemName: "plus") }
                     }
-                    .menuStyle(.borderlessButton)
-                    .menuIndicator(.hidden)
+                    .buttonStyle(.borderless)
                     .fixedSize()
                     .padding(.horizontal, Metric.gap)
                     .help("New Tab")

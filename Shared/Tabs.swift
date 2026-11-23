@@ -121,44 +121,55 @@ struct TabMenu {
     var endOnlyTitle: String { "End \(end?.body.agent.flatMap(Agent.init)?.title ?? "Agent") Session" }
 }
 
-/// A Task's Add menu: new Tabs first, then every Agent session and Document it has had, to reopen.
+/// What the New Tab sheet opens.
+enum NewTab: String, CaseIterable, Identifiable {
+    case session, terminal, document
+
+    var id: Self { self }
+
+    var title: String {
+        switch self {
+        case .session: "Agent session"
+        case .terminal: "Terminal"
+        case .document: "Document"
+        }
+    }
+
+    /// What a new Tab of `task` offers first, after its nearest Agent session or Terminal: the
+    /// Task's own latest, else its folder's, else its Vault's.
+    @MainActor
+    static func last(of task: Record, among actions: [Record], in vault: some Records) -> (tab: NewTab, agent: Agent) {
+        let nearest = Tree.nearest(actions, to: task, in: vault)
+        let agent = nearest.lazy.compactMap { $0.body.agent.flatMap(Agent.init) }.first ?? .claude
+        return (nearest.first?.kind == .tab ? .terminal : .session, agent)
+    }
+}
+
+/// Every Agent session and Document a Task has had, to reopen.
 @MainActor
-struct NewTabMenu {
-    enum Action: Hashable {
-        case agent(Agent)
-        /// A Terminal on the machine at this place in the Task's machines.
-        case terminal(Int)
-        case document
-        case open(TabItem)
+struct ReopenMenu {
+    struct Section: Hashable {
+        let title: String
+        let items: [Item]
     }
 
     struct Item: Hashable {
         let title: String
-        let action: Action
-    }
-
-    struct Section: Hashable {
-        let title: String?
-        let items: [Item]
+        let tab: TabItem
     }
 
     let sections: [Section]
 
-    init(task: String, machines: [String], in vault: some Records, ended: (Record) -> Bool, reachable: (Record) -> Bool = { _ in true }) {
-        // A Scratchpad session starts at once, so its item opens no sheet.
-        let asks = vault.records[task]?.scratchpad != true
-        let new = Agent.allCases.map { Item(title: "New \($0.title) session\(asks ? "…" : "")", action: .agent($0)) }
-            + machines.enumerated().map { Item(title: machines.count > 1 ? "New Terminal on \($1)" : "New Terminal", action: .terminal($0)) }
+    init(task: String, in vault: some Records, ended: (Record) -> Bool, reachable: (Record) -> Bool = { _ in true }) {
         let sessions = vault.children(.session, task: task).sorted { ($0.body.position ?? 0) < ($1.body.position ?? 0) }
         let reopen = { (title: String, records: [Record]) in
             Section(title: title, items: records.map { record in
                 Item(title: record.body.title ?? (record.kind == .session ? "Agent session" : "Untitled"),
-                     action: .open(record.kind == .session ? .session(record.id) : .document(record.id)))
+                     tab: record.kind == .session ? .session(record.id) : .document(record.id))
             })
         }
         let documents = vault.children(.document, task: task).sorted { ($0.body.title ?? "") < ($1.body.title ?? "") }
-        sections = [Section(title: nil, items: new), Section(title: nil, items: [Item(title: "New Document", action: .document)]),
-                    reopen("Running Agent sessions", sessions.filter { !ended($0) && reachable($0) }),
+        sections = [reopen("Running Agent sessions", sessions.filter { !ended($0) && reachable($0) }),
                     reopen("Ended Agent sessions", sessions.filter(ended)),
                     reopen("On machines Sesh cannot reach", sessions.filter { !ended($0) && !reachable($0) }),
                     reopen("Documents", documents)]

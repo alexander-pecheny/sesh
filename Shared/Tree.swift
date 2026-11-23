@@ -60,10 +60,11 @@ enum Tree {
     }
 
     /// Agent sessions ordered for a new one of `task` to take after: its own, then those of the
-    /// Tasks in its folder or the folders inside it, then the rest, each newest first.
+    /// Tasks in its folder or the folders inside it, then the rest of its Vault, then other Vaults,
+    /// each newest first.
     static func nearest(_ sessions: [Record], to task: Record, in vault: some Records) -> [Record] {
         func rank(_ session: Record) -> Int {
-            guard let id = session.body.task, let other = vault.records[id], other.kind == .task else { return 2 }
+            guard let id = session.body.task, let other = vault.records[id], other.kind == .task else { return 3 }
             if id == task.id { return 0 }
             guard let folder = task.body.parent else { return 1 }
             return contains(folder, other.body.parent, in: vault) ? 1 : 2
