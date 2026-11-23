@@ -85,6 +85,27 @@ enum Metric {
     }()
 }
 
+/// A prominent button with dark text on mauve, which white text on mauve is too faint for,
+/// and which keeps its colours in a background window, where macOS greys a tinted one.
+struct FilledButton: ButtonStyle {
+    @Environment(\.isEnabled) private var enabled
+    @Environment(\.flavour) private var flavour
+
+    func makeBody(configuration: Configuration) -> some View {
+        configuration.label
+            .foregroundStyle(flavour(.base))
+            .padding(.vertical, Metric.gap)
+            .padding(.horizontal, Metric.pad)
+            .background(flavour(.mauve).opacity(configuration.isPressed ? 0.8 : 1), in: .rect(cornerRadius: Metric.corner))
+            .opacity(enabled ? 1 : 0.4)
+            .contentShape(.rect)
+    }
+}
+
+extension ButtonStyle where Self == FilledButton {
+    static var filled: FilledButton { FilledButton() }
+}
+
 /// A file's path that copies itself when clicked, and says so for a moment.
 struct CopyablePath: View {
     let path: String

@@ -63,7 +63,7 @@ struct TasksView: View {
                 .font(.ui(Metric.label)).foregroundStyle(flavour(.subtext0)).multilineTextAlignment(.center)
             Button("Add a Vault") { sheet = .vault }
                 .font(.ui(Metric.body))
-                .buttonStyle(.borderedProminent)
+                .buttonStyle(.filled)
         }
         .padding(Metric.wide)
         .frame(maxWidth: .infinity, maxHeight: .infinity)

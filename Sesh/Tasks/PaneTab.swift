@@ -26,7 +26,7 @@ struct PaneTab: View {
                         self.problem = nil
                         attempt += 1
                     }
-                    .buttonStyle(.borderedProminent)
+                    .buttonStyle(.filled)
                     Button("Close Tab", action: gone)
                 }
                 .padding(Metric.wide)

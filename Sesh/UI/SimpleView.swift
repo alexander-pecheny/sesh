@@ -98,7 +98,7 @@ struct SimpleView: View {
                         .font(.ui(Metric.label)).foregroundStyle(flavour(.subtext0)).multilineTextAlignment(.center)
                     Button("New Claude session") { starting = true }
                         .font(.ui(Metric.body))
-                        .buttonStyle(.borderedProminent)
+                        .buttonStyle(.filled)
                 }
                 .frame(maxWidth: .infinity)
                 .padding(.vertical, Metric.wide)
@@ -142,7 +142,7 @@ struct SimpleView: View {
                 .font(.ui(Metric.label)).foregroundStyle(flavour(.subtext0)).multilineTextAlignment(.center)
             Button("Open Settings") { settings = true }
                 .font(.ui(Metric.body))
-                .buttonStyle(.borderedProminent)
+                .buttonStyle(.filled)
         }
         .padding(Metric.wide)
         .frame(maxWidth: .infinity, maxHeight: .infinity)
