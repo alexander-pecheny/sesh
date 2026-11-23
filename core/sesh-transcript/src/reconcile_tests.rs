@@ -320,3 +320,13 @@ fn a_transcript_found_after_the_hello_reaches_the_session_summary() {
     std::fs::remove_dir_all(&dir).unwrap();
     assert_eq!(summary["transcript"], "/p/s.jsonl");
 }
+
+#[test]
+fn a_message_claude_holds_while_a_hook_runs_is_not_read() {
+    let now = Instant::now();
+    let mut live = Reconciler::default();
+    live.message("sent.1", "hmm why do you even use databricks for that? we have trajectories in both snowflake and clickhouse", HANDED, now);
+    live.see(view("queued-while-a-hook-runs"), now);
+    live.see(view("running"), now);
+    assert_eq!(live.messages[0].state, HANDED);
+}

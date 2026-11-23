@@ -209,6 +209,15 @@ pub(crate) struct Block {
     pub(crate) cut: bool,
 }
 
+impl Block {
+    /// A message Claude holds rather than has read: it draws the text in its marker's grey,
+    /// and adds a "send now" hint once it can be sent early.
+    pub(crate) fn held(&self) -> bool {
+        let grey = self.rows.first().and_then(|row| row.skip(2).first_style()).is_some_and(|style| style.fg.grey());
+        grey || self.rows.iter().any(|row| row.text().trim_end().ends_with("to send now"))
+    }
+}
+
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub(crate) enum Kind {
     Reply,

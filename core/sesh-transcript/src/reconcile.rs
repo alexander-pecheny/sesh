@@ -328,9 +328,9 @@ impl Reconciler {
         }
     }
 
-    /// A message Claude shows as read; one it holds still says it can be sent now.
+    /// A message Claude shows as read, not one it holds.
     fn said(&mut self, block: &Block, now: Instant) {
-        if block.rows.iter().any(|row| row.text().trim_end().ends_with("to send now")) {
+        if block.held() {
             return;
         }
         let text: Vec<String> = block.rows.iter().map(|row| row.skip(2).text()).collect();
