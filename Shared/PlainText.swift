@@ -117,7 +117,9 @@ final class PlainField: NSTextView, ObservableObject {
     override func paste(_ sender: Any?) {
         guard let pasteImage, let (data, ext) = PastedImage.read(.general) else { return super.paste(sender) }
         Task { @MainActor in
-            if let path = await pasteImage(data, ext) { insertPaths(quote(path)) }
+            if let path = await PastedImage.uploading(over: enclosingScrollView ?? self, { await pasteImage(data, ext) }) {
+                insertPaths(quote(path))
+            }
         }
     }
 
@@ -270,6 +272,36 @@ enum PastedImage {
             return (png, "png")
         }
         return nil
+    }
+
+    /// Shows a capsule over `host` while `upload` runs, since a large image takes seconds to arrive.
+    @MainActor
+    static func uploading(over host: NSView, _ upload: () async -> String?) async -> String? {
+        let badge = NSHostingView(rootView: UploadingBadge())
+        badge.translatesAutoresizingMaskIntoConstraints = false
+        host.addSubview(badge)
+        NSLayoutConstraint.activate([
+            badge.centerXAnchor.constraint(equalTo: host.centerXAnchor),
+            badge.centerYAnchor.constraint(equalTo: host.centerYAnchor),
+        ])
+        defer { badge.removeFromSuperview() }
+        return await upload()
+    }
+}
+
+private struct UploadingBadge: View {
+    @Environment(\.flavour) private var flavour
+
+    var body: some View {
+        HStack(spacing: Metric.gap) {
+            ProgressView().controlSize(.small)
+            Text("Uploading image").font(.ui(Metric.note).weight(.medium))
+        }
+        .foregroundStyle(flavour(.text))
+        .padding(.horizontal, Metric.pad)
+        .padding(.vertical, Metric.tiny)
+        .background(flavour(.surface1), in: .capsule)
+        .shadow(radius: ConversationView.shadow)
     }
 }
 #endif

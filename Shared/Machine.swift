@@ -1,3 +1,4 @@
+import CryptoKit
 import Foundation
 
 /// A machine a Vault names: a Host, reached through the core's one Link per Host, or the Mac
@@ -68,9 +69,22 @@ final class Machine: Runner, Identifiable, Hashable {
     private var home: String?
     private(set) lazy var follower = FollowerLink(self)
 
+    /// Each image by its hash, so pasting it again reuses the first copy, even mid-upload.
+    private var uploads: [SHA256.Digest: Task<String?, Never>] = [:]
+
     /// Pasted images land in `~/.sesh/uploads` under the moment they were pasted, as the
     /// phone's Uploads do, so the Agent can be told where to look.
     func upload(_ data: Data, ext: String) async -> String? {
+        let digest = SHA256.hash(data: data)
+        if let known = uploads[digest], let path = await known.value { return path }
+        let task = Task { await store(data, ext: ext) }
+        uploads[digest] = task
+        let path = await task.value
+        if path == nil, uploads[digest] == task { uploads[digest] = nil }
+        return path
+    }
+
+    private func store(_ data: Data, ext: String) async -> String? {
         if home == nil {
             let ran = await run("printf %s \"$HOME\"")
             if ran.ok, !ran.out.isEmpty { home = ran.out }
