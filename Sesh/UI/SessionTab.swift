@@ -51,8 +51,7 @@ struct SessionTab: View {
                     .foregroundStyle(flavour(.text))
                 Button("Reconnect") { session.reconnect() }
                     .font(.ui(14))
-                    .buttonStyle(.borderedProminent)
-                    .tint(flavour(.mauve))
+                    .buttonStyle(.filled)
             }
             .padding(20)
             .background(flavour(.mantle), in: .rect(cornerRadius: 12))

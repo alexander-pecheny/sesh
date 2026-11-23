@@ -98,7 +98,7 @@ private struct EntryRow: View {
                 HStack {
                     Button("Cancel") { stop() }
                     Spacer()
-                    Button("Save", action: save).buttonStyle(.borderedProminent)
+                    Button("Save", action: save).buttonStyle(.filled)
                 }
                 .font(.ui(Metric.label))
             } else {

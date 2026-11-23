@@ -48,8 +48,7 @@ struct QuestionCard: View {
                 Button { Task { await send() } } label: {
                     Text(sent ? "Sending…" : "Send").frame(maxWidth: .infinity)
                 }
-                .buttonStyle(.borderedProminent)
-                .tint(flavour(.mauve))
+                .buttonStyle(.filled)
                 .disabled(sent || !complete)
             }
         }
@@ -161,8 +160,7 @@ struct PermissionCard: View {
                     Button { Task { await conversation.permit(true, permission) } } label: {
                         HStack { Text("Allow"); hint("⌘↩") }.frame(maxWidth: .infinity)
                     }
-                    .buttonStyle(.borderedProminent)
-                    .tint(flavour(.mauve))
+                    .buttonStyle(.filled)
                 }
                 .disabled(answering)
             }
