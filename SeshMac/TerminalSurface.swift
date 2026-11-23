@@ -266,7 +266,7 @@ extension Ghostty {
             guard window?.firstResponder === self, event.modifierFlags.contains(.command) else { return false }
             if event.charactersIgnoringModifiers == "v", let pasteImage, let (data, ext) = PastedImage.read(.general) {
                 Task { @MainActor in
-                    if let path = await pasteImage(data, ext) { self.type(quote(path)) }
+                    if let path = await PastedImage.uploading(over: self, { await pasteImage(data, ext) }) { self.type(quote(path)) }
                 }
                 return true
             }
