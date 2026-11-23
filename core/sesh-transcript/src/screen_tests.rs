@@ -162,3 +162,9 @@ fn a_menu_with_no_numbers_is_picked_by_moving_the_pointer() {
     let moved = screen.replace(" ❯ No, exit\n   Yes", "   No, exit\n ❯ Yes");
     assert_eq!(Menu::read(&moved).unwrap().options[0].0, "up enter");
 }
+
+#[test]
+fn a_bracket_after_non_ascii_text_is_escaped_without_a_panic() {
+    assert_eq!(escape("«цитата» [ссылка](x)"), "«цитата» \\[ссылка](x)");
+    assert_eq!(escape("«цитата» [нет]"), "«цитата» [нет]");
+}
