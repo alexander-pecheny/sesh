@@ -79,3 +79,12 @@ fn claude_program_status_outranks_the_screen() {
         );
     }
 }
+
+#[test]
+fn an_added_agents_screen_rules_come_from_its_file() {
+    let file = "name = \"walrus\"\ncommand = [\"walrus\"]\n[detect]\nid = \"walrus\"\nversion = \"1\"\nmin_engine_version = 1\nupdated_at = \"2026-11-24T00:00:00Z\"\n[[detect.rules]]\nid = \"ready\"\nstate = \"idle\"\npriority = 90\nregion = \"bottom_non_empty_lines(4)\"\nline_regex = ['^ready']\n";
+    let spec: crate::detect::agents::Spec = toml::from_str(file).unwrap();
+    let manifest = parse_manifest(spec.detect.as_deref().unwrap()).unwrap();
+    assert_eq!(manifest.id, "walrus");
+    assert_eq!(compile_manifest(&manifest).unwrap().len(), 1);
+}
