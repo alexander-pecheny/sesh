@@ -59,8 +59,12 @@ impl Agent {
 
     /// The Transcript of session `id`, found in the Agent's folders.
     pub fn locate(self, id: &str) -> Option<PathBuf> {
+        self.locate_under(&PathBuf::from(std::env::var_os("HOME")?), id)
+    }
+
+    fn locate_under(self, home: &Path, id: &str) -> Option<PathBuf> {
         let files = &self.spec().transcript;
-        files.folders().iter().find_map(|folder| find_file(folder, files.depth, &|file| files.names(file, id)))
+        files.folders_under(home).iter().find_map(|folder| find_file(folder, files.depth, &|file| files.names(file, id)))
     }
 
     /// Whether Sesh reads the Agent's screen for what its Transcript does not hold yet: only
@@ -136,19 +140,25 @@ fn reported_path(pane: &Value) -> Option<&str> {
 }
 
 /// The Transcript of the session in `pane`. Claude and Codex may report only their session id,
-/// so the file is found by it.
+/// so the file is found by it, as it is when the file reported is gone: Claude moves its
+/// Transcript to another project folder when it enters a worktree, and sesh-mux keeps the first
+/// path it was told for a session.
 pub fn transcript_path(pane: &Value) -> Option<String> {
-    if let Some(path) = reported_path(pane) {
+    transcript_under(pane, &PathBuf::from(std::env::var_os("HOME")?))
+}
+
+fn transcript_under(pane: &Value, home: &Path) -> Option<String> {
+    let reported = reported_path(pane);
+    if let Some(path) = reported.filter(|path| Path::new(path).exists()) {
         return Some(path.to_string());
     }
     let session = &pane["agent_session"];
     // A sesh-mux that names no session gets no guess: the newest Transcript in the pane's
     // folder is as often an older session's as the one running.
-    if session["kind"] != "id" {
-        return None;
-    }
-    let agent = Agent::named(session["agent"].as_str()?)?;
-    Some(agent.locate(session["value"].as_str()?)?.to_string_lossy().into_owned())
+    let found = (session["kind"] == "id")
+        .then(|| Agent::named(session["agent"].as_str()?)?.locate_under(home, session["value"].as_str()?))
+        .flatten();
+    found.map(|path| path.to_string_lossy().into_owned()).or(reported.map(str::to_string))
 }
 
 fn find_file(dir: &Path, depth: usize, matches: &dyn Fn(&str) -> bool) -> Option<PathBuf> {

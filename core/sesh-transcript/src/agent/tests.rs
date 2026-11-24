@@ -68,16 +68,22 @@ fn a_session_id_finds_claudes_and_codexs_transcripts_but_never_pis() {
     let id = "0199a213-81c0-7800-8aa1-bbab2a035a53";
     let claude = scratch.write(&format!(".claude/projects/-home-u-walrus/{id}.jsonl"), &[]);
     let codex = scratch.write(&format!(".codex/sessions/2026/10/05/rollout-2026-10-05T10-00-00-{id}.jsonl"), &[]);
-    let find = |agent: Agent, id: &str| {
-        let files = &agent.spec().transcript;
-        let folders = files.folders_under(&scratch.0);
-        folders.iter().find_map(|folder| find_file(folder, files.depth, &|file| files.names(file, id)))
-    };
+    let find = |agent: Agent, id: &str| agent.locate_under(&scratch.0, id);
     assert_eq!(find(Agent::Claude, id), Some(claude));
     assert_eq!(find(Agent::Codex, id), Some(codex));
     assert_eq!(find(Agent::Codex, "xyz"), None);
     let reported = json!({"agent_session": {"agent": "pi", "kind": "path", "value": "/home/u/.pi/s.jsonl"}});
     assert_eq!(transcript_path(&reported).as_deref(), Some("/home/u/.pi/s.jsonl"));
+}
+
+#[test]
+fn a_transcript_claude_moved_to_another_project_is_found_by_its_id() {
+    let scratch = Scratch::new("moved");
+    let moved = scratch.write(".claude/projects/-home-u-zoo--claude-worktrees-fix/s1.jsonl", &[]);
+    let pane = json!({"agent_session": {"agent": "claude", "kind": "id", "value": "s1", "path": "/home/u/.claude/projects/-home-u-zoo/s1.jsonl"}});
+    assert_eq!(transcript_under(&pane, &scratch.0), Some(moved.to_string_lossy().into_owned()));
+    let gone = json!({"agent_session": {"agent": "claude", "kind": "id", "value": "s2", "path": "/home/u/s2.jsonl"}});
+    assert_eq!(transcript_under(&gone, &scratch.0).as_deref(), Some("/home/u/s2.jsonl"), "with nothing found, the path reported stands");
 }
 
 #[test]
