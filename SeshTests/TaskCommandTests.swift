@@ -76,14 +76,12 @@ final class TaskCommandTests: XCTestCase {
         XCTAssertEqual(Tree.archived(in: vault).map(\.body.title), ["y", "z"])
     }
 
-    func testTheScratchpadStaysOutOfTheTreeAndStartsSessionsWithoutASheet() {
+    func testTheScratchpadStaysOutOfTheTree() {
         _ = make(.task, "a")
         let scratchpad = Record(id: "scratchpad-test", kind: .task, body: .init(title: "Scratchpad", kind: "scratchpad"))
         vault.write(scratchpad)
         XCTAssertEqual(Tree.open(in: vault).map(\.body.title), ["a"])
         XCTAssertEqual(Tree.children(of: nil, in: vault).map(\.body.title), ["a"])
-        let menu = NewTabMenu(task: scratchpad.id, machines: ["vps"], in: vault) { _ in false }
-        XCTAssertEqual(menu.sections[0].items.first?.title, "New Claude session")
     }
 
     func testATabMovesToEveryOpenTaskButItsOwn() {
@@ -142,17 +140,7 @@ final class TaskCommandTests: XCTestCase {
         XCTAssertTrue(terminal.targets.isEmpty)
     }
 
-    func testTheAddMenuNamesMachinesOnlyWhenThereAreSeveral() {
-        let task = make(.task, "Own")
-        let one = NewTabMenu(task: task.id, machines: ["Mac"], in: vault) { _ in false }
-        XCTAssertEqual(one.sections.map(\.title), [nil, nil])
-        XCTAssertEqual(one.sections[0].items.last, .init(title: "New Terminal", action: .terminal(0)))
-        let two = NewTabMenu(task: task.id, machines: ["vps", "Mac"], in: vault) { _ in false }
-        XCTAssertEqual(two.sections[0].items.suffix(2).map(\.title), ["New Terminal on vps", "New Terminal on Mac"])
-        XCTAssertEqual(two.sections[0].items.prefix(Agent.allCases.count).map(\.action), Agent.allCases.map { .agent($0) })
-    }
-
-    func testTheAddMenuReopensSessionsByStateAndDocumentsByTitle() {
+    func testTheReopenMenuListsSessionsByStateAndDocumentsByTitle() {
         let task = make(.task, "Own")
         let late = make(.session, "Late", task: task.id, position: 2)
         let early = make(.session, "Early", task: task.id, position: 1)
@@ -160,18 +148,18 @@ final class TaskCommandTests: XCTestCase {
         let b = make(.document, "b", task: task.id)
         let a = make(.document, "a", task: task.id)
         _ = make(.document, "Elsewhere", task: "other")
-        let menu = NewTabMenu(task: task.id, machines: ["Mac"], in: vault) { $0.id == gone.id }
-        XCTAssertEqual(menu.sections.map(\.title), [nil, nil, "Running Agent sessions", "Ended Agent sessions", "Documents"])
-        XCTAssertEqual(menu.sections[2].items.map(\.action), [.open(.session(early.id)), .open(.session(late.id))])
-        XCTAssertEqual(menu.sections[3].items.map(\.action), [.open(.session(gone.id))])
-        XCTAssertEqual(menu.sections[4].items.map(\.action), [.open(.document(a.id)), .open(.document(b.id))])
+        let menu = ReopenMenu(task: task.id, in: vault) { $0.id == gone.id }
+        XCTAssertEqual(menu.sections.map(\.title), ["Running Agent sessions", "Ended Agent sessions", "Documents"])
+        XCTAssertEqual(menu.sections[0].items.map(\.tab), [.session(early.id), .session(late.id)])
+        XCTAssertEqual(menu.sections[1].items.map(\.tab), [.session(gone.id)])
+        XCTAssertEqual(menu.sections[2].items.map(\.tab), [.document(a.id), .document(b.id)])
     }
 
     func testASessionOnAMachineSeshCannotReachIsNeitherRunningNorEnded() {
         let task = make(.task, "Own")
         let away = make(.session, "Away", task: task.id)
-        let menu = NewTabMenu(task: task.id, machines: ["Mac"], in: vault, ended: { _ in false }, reachable: { $0.id != away.id })
-        XCTAssertEqual(menu.sections.map(\.title), [nil, nil, "On machines Sesh cannot reach"])
+        let menu = ReopenMenu(task: task.id, in: vault, ended: { _ in false }, reachable: { $0.id != away.id })
+        XCTAssertEqual(menu.sections.map(\.title), ["On machines Sesh cannot reach"])
         XCTAssertNil(TabMenu(.session(away.id), in: vault, life: { _ in .unknown }).end)
     }
 
@@ -233,6 +221,19 @@ final class TaskCommandTests: XCTestCase {
         let order = Tree.nearest([newest, folder, own], to: task, in: vault).map(\.id)
         XCTAssertEqual(order, [own.id, folder.id, newest.id])
         XCTAssertEqual(Tree.nearest([newest, folder], to: sibling, in: vault).map(\.id), [folder.id, newest.id])
+        let otherVault = vault.create(.session, .init(title: "other vault", task: "elsewhere-entirely", position: 40))
+        XCTAssertEqual(Tree.nearest([otherVault, newest], to: task, in: vault).map(\.id), [newest.id, otherVault.id])
+    }
+
+    func testANewTabTakesAfterTheNearestSessionOrTerminal() {
+        let task = make(.task, "New")
+        let other = make(.task, "Other")
+        XCTAssertTrue(NewTab.last(of: task, among: [], in: vault) == (.session, .claude))
+        let codex = make(.session, "Codex", task: other.id, position: 30, agent: .codex)
+        let terminal = vault.create(.tab, .init(title: "Terminal", task: task.id, position: 10, kind: "terminal"))
+        XCTAssertTrue(NewTab.last(of: task, among: [codex, terminal], in: vault) == (.terminal, .codex))
+        let pi = make(.session, "pi", task: task.id, position: 20, agent: .pi)
+        XCTAssertTrue(NewTab.last(of: task, among: [codex, terminal, pi], in: vault) == (.session, .pi))
     }
 
     func testTheStripKeepsTheTabsEveryDeviceShowsAndOnlyChanges() {

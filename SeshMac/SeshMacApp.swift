@@ -129,16 +129,18 @@ private struct DocumentWindow: View {
     }
 }
 
-/// `-picker FOLDER` shows the folder picker on the Mac, and `-startsheet TEXT` the New session
-/// sheet with TEXT typed as its repository, in a Vault kept apart, to check them with `-snapshot`.
+/// `-picker FOLDER` shows the folder picker on the Mac, and `-startsheet TEXT` the New Tab
+/// sheet with TEXT typed as its repository, or as it opens when TEXT is blank, in a Vault kept
+/// apart, to check them with `-snapshot`.
 private struct StartSheetWindow: View {
     let typed: String
     @StateObject private var vault = Vault(.init(name: "sheet-check", alias: nil))
 
     var body: some View {
-        let task = vault.all(.task).first ?? vault.create(.task, .init(title: "Check the sheet"))
-        let draft = StartSessionSheet.Draft(alias: nil, choice: "\u{0}other", typed: typed, config: "", remote: true, bypass: true, parallel: false, newBranch: "")
-        StartSessionSheet(vault: vault, task: task, shown: .init(agent: .claude, draft: draft)) { _ in }
+        let task = vault.all(.task).first { !$0.scratchpad } ?? vault.create(.task, .init(title: "Check the sheet"))
+        let draft = NewTabSheet.Draft(tab: .session, agent: .claude, alias: nil, choice: "\u{0}other", typed: typed, config: "", remote: true,
+                                      bypass: true, parallel: false, newBranch: "")
+        NewTabSheet(vault: vault, task: task, shown: typed.trimmingCharacters(in: .whitespaces).isEmpty ? .init() : .init(draft: draft), failed: { _ in }, terminal: { _ in })
     }
 }
 

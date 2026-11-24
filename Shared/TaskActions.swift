@@ -164,12 +164,19 @@ enum TaskActions {
         }
     }
 
-    /// The machine a new session of the Task starts on: the one used last by the Task, then
-    /// by its folder, then anywhere.
+    /// The machine a new Tab of the Task opens on: the one used last by the Task, then by its
+    /// folder, then by its Vault, then anywhere.
     static func lastMachine(for task: Record, in vault: Vault, library: Library) -> Machine? {
         let options = machines(for: task, in: vault)
-        let used = Tree.nearest(library.vaults.flatMap { $0.all(.session) }, to: task, in: vault).lazy.map { machine($0.body.machine) }
+        let used = Tree.nearest(actions(in: library), to: task, in: vault).lazy.map { machine($0.body.machine) }
         return used.first(where: options.contains) ?? options.first
+    }
+
+    /// Every Agent session and Terminal ever opened, closed Terminals included.
+    static func actions(in library: Library) -> [Record] {
+        library.vaults.flatMap { vault in
+            vault.all(.session) + vault.records.values.filter { $0.kind == .tab && $0.body.kind == "terminal" }
+        }
     }
 
     /// The repositories a new session of the Task may want on `machine`: the Task's own last

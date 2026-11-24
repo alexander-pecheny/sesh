@@ -37,7 +37,7 @@ struct TaskScreen: View {
                     .onAppear { scroller.scrollTo(current) }
                 }
                 if let task = vault.records[id] {
-                    AddMenu(vault: vault, task: task) { opening in
+                    NewTabButton(vault: vault, task: task) { opening in
                         Group {
                             if opening { ProgressView() } else { Image.lucide("plus", size: Metric.title) }
                         }

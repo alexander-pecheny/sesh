@@ -1,57 +1,31 @@
 import SwiftUI
 
-/// New Tabs for the Task, and every Agent session and Document it has had, to reopen.
-struct AddMenu<Label: View>: View {
+/// Opens the New Tab sheet for the Task.
+struct NewTabButton<Label: View>: View {
     @EnvironmentObject private var library: Library
     @ObservedObject var vault: Vault
     let task: Record
     @ViewBuilder let label: (_ opening: Bool) -> Label
     @State private var problem: String?
-    @State private var start: StartSessionSheet.Shown?
+    @State private var shown: NewTabSheet.Shown?
     @State private var opening = false
 
     var body: some View {
-        let machines = TaskActions.machines(for: task, in: vault)
-        Menu {
-            let menu = NewTabMenu(task: task.id, machines: machines.map(\.title), in: vault, ended: { library.ended($0) }, reachable: { library.reachable($0) })
-            ForEach(menu.sections, id: \.self) { section in
-                Section {
-                    ForEach(section.items, id: \.self) { item in
-                        Button(item.title) { perform(item.action, machines) }
-                            .disabled(opening && isTerminal(item.action))
-                    }
-                } header: {
-                    if let title = section.title { Text(title) }
-                }
+        Button { shown = .init() } label: { label(opening) }
+            .disabled(opening)
+            .sheet(item: $shown) { shown in
+                NewTabSheet(vault: vault, task: task, shown: shown, failed: { self.shown = $0 }, terminal: openTerminal)
             }
-        } label: { label(opening) }
-        .sheet(item: $start) { shown in
-            StartSessionSheet(vault: vault, task: task, shown: shown) { start = $0 }
-        }
-        .alert("Sesh could not start it", isPresented: Binding(get: { problem != nil }, set: { if !$0 { problem = nil } })) {
-            Button("OK", role: .cancel) {}
-        } message: { Text(problem ?? "") }
+            .alert("Sesh could not start it", isPresented: Binding(get: { problem != nil }, set: { if !$0 { problem = nil } })) {
+                Button("OK", role: .cancel) {}
+            } message: { Text(problem ?? "") }
     }
 
-    private func isTerminal(_ action: NewTabMenu.Action) -> Bool {
-        if case .terminal = action { true } else { false }
-    }
-
-    private func perform(_ action: NewTabMenu.Action, _ machines: [Machine]) {
-        switch action {
-        case .agent(let agent) where task.scratchpad:
-            library.start(agent, for: task, on: machines[0]) { problem = $0 }
-        case .agent(let agent): start = .init(agent: agent)
-        case .terminal(let index):
-            opening = true
-            Task {
-                problem = await library.openTerminal(in: task, on: machines[index])
-                opening = false
-            }
-        case .document:
-            let document = vault.create(.document, .init(title: "Untitled", text: "", task: task.id, edited: 0))
-            library.open(.document(document.id), in: task.id)
-        case .open(let tab): library.open(tab, in: task.id)
+    private func openTerminal(on machine: Machine) {
+        opening = true
+        Task {
+            problem = await library.openTerminal(in: task, on: machine)
+            opening = false
         }
     }
 }
