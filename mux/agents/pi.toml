@@ -1,0 +1,21 @@
+name = "pi"
+title = "pi"
+command = ["pi"]
+install = "npm install -g @mariozechner/pi-coding-agent"
+logged_in = "[ -s ~/.pi/agent/auth.json ]"
+# pi takes no message while it works, so Sesh holds it until pi is idle.
+queues = true
+
+[resume]
+args = ["--session", "{path}"]
+flags = ["--session"]
+
+[transcript]
+parser = "pi"
+first = { type = "session" }
+folders = ["~/.pi/agent/sessions"]
+depth = 1
+session = "/id"
+cwd = "/cwd"
+ids = ["/id"]
+place = "~/.pi/agent/sessions/--{cwd}--"

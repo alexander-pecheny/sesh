@@ -1,6 +1,6 @@
 //! Puts a Transcript where its Agent looks for it on this machine, so `claude --resume`,
-//! `codex resume` or `pi --session` can pick up a conversation begun elsewhere. Folder names
-//! follow atuin's rehydrate writers (MIT, Atuin, Inc.).
+//! `codex resume` or `pi --session` can pick up a conversation begun elsewhere. Each agent file
+//! names the folder; Claude's, Codex's and pi's follow atuin's rehydrate writers (MIT, Atuin, Inc.).
 
 use std::path::{Path, PathBuf};
 
@@ -36,8 +36,8 @@ pub fn place(agent: Agent, file: &Path, home: &Path, config: Option<&Path>, fork
     let name = file.file_name().unwrap_or_default().to_string_lossy().into_owned();
     let write = |id: &str| -> Result<Option<Placed>> {
         let renamed = name.replace(&session, id);
-        let path = folder(agent, &cwd, home, config, &renamed);
-        let bytes = rewrite(&text, &was, &cwd, &session, id);
+        let path = agent.spec().transcript.place(home, config, &cwd, &renamed).ok_or_else(|| Error(format!("{} names no folder to place in", agent.name())))?;
+        let bytes = rewrite(agent, &text, &was, &cwd, &session, id);
         match std::fs::read(&path) {
             Ok(here) if !bytes.as_bytes().starts_with(&here) => return Ok(None),
             Ok(here) if here.len() == bytes.len() => {}
@@ -74,48 +74,27 @@ fn settle(was: &Path, home: &Path) -> PathBuf {
     }
 }
 
-fn folder(agent: Agent, cwd: &Path, home: &Path, config: Option<&Path>, name: &str) -> PathBuf {
-    match agent {
-        Agent::Claude => {
-            let config = config.map_or_else(|| home.join(".claude"), Path::to_path_buf);
-            config.join("projects").join(project_dir_name(cwd)).join(name)
-        }
-        Agent::Codex => {
-            // rollout-2026-11-02T10-00-00-<id>.jsonl, kept under sessions/2026/11/02.
-            let day = name.get(8..18).unwrap_or_default().replace('-', "/");
-            home.join(".codex/sessions").join(day).join(name)
-        }
-        Agent::Pi => {
-            let cwd = cwd.to_string_lossy();
-            let cwd = cwd.strip_prefix('/').unwrap_or(&cwd).replace(['/', '\\', ':'], "-");
-            home.join(".pi/agent/sessions").join(format!("--{cwd}--")).join(name)
-        }
-    }
-}
-
-/// Each line's folder moved from `was` to `cwd`, and the session's id from `old` to `new`.
-fn rewrite(text: &str, was: &str, cwd: &Path, old: &str, new: &str) -> String {
+/// Each line's folder moved from `was` to `cwd`, and the session's id from `old` to `new`, where
+/// the agent file says lines keep them.
+fn rewrite(agent: Agent, text: &str, was: &str, cwd: &Path, old: &str, new: &str) -> String {
     let cwd = cwd.to_string_lossy();
     if was == cwd && old == new {
         return text.to_string();
     }
+    let files = &agent.spec().transcript;
     let mut out = String::with_capacity(text.len());
     for line in text.split_inclusive('\n') {
         let Ok(mut value) = serde_json::from_str::<Value>(line) else {
             out.push_str(line);
             continue;
         };
-        let session_line = value["type"] == "session";
-        for (at, key) in [("", "cwd"), ("/payload", "cwd"), ("", "sessionId"), ("/payload", "id"), ("/payload", "session_id"), ("", "id")] {
-            let Some(field) = value.pointer_mut(at).and_then(|object| object.get_mut(key)) else {
-                continue;
-            };
-            let Some(text) = field.as_str() else { continue };
-            if key == "cwd" {
-                if let Some(rest) = text.strip_prefix(was) {
-                    *field = json!(format!("{cwd}{rest}"));
-                }
-            } else if text == old && (key != "id" || at == "/payload" || session_line) {
+        if let Some(field) = files.cwd.as_deref().and_then(|at| value.pointer_mut(at)) {
+            if let Some(rest) = field.as_str().and_then(|text| text.strip_prefix(was)) {
+                *field = json!(format!("{cwd}{rest}"));
+            }
+        }
+        for at in &files.ids {
+            if let Some(field) = value.pointer_mut(at).filter(|field| field.as_str() == Some(old)) {
                 *field = json!(new);
             }
         }
@@ -129,7 +108,7 @@ fn rewrite(text: &str, was: &str, cwd: &Path, old: &str, new: &str) -> String {
 
 /// The project folder Claude keeps a folder's sessions in: every character but an ASCII letter
 /// or digit made `-` per UTF-16 unit, and a long name cut short with a hash of the path.
-fn project_dir_name(cwd: &Path) -> String {
+pub(crate) fn project_dir_name(cwd: &Path) -> String {
     let cwd: PathBuf = cwd.components().collect();
     let raw = cwd.to_string_lossy();
     let mut name = String::with_capacity(raw.len());

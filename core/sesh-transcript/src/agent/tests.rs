@@ -22,6 +22,7 @@ fn exchange(agent: Agent) -> Vec<Value> {
             json!({"type": "message", "id": "a1", "parentId": null, "timestamp": AT, "message": {"role": "user", "content": "Feed the walrus"}}),
             json!({"type": "message", "id": "a2", "parentId": "a1", "timestamp": AT, "message": {"role": "assistant", "content": [{"type": "text", "text": "Fed."}]}}),
         ],
+        _ => unreachable!("only the built-in Agents are tested"),
     }
 }
 
@@ -64,15 +65,19 @@ fn each_agent_is_known_by_its_name_and_by_its_transcripts_first_line() {
 #[test]
 fn a_session_id_finds_claudes_and_codexs_transcripts_but_never_pis() {
     let scratch = Scratch::new("find");
-    let claude = scratch.write("claude/-home-u-walrus/abc.jsonl", &[]);
-    let codex = scratch.write("codex/2026/10/05/rollout-2026-10-05T10-00-00-abc.jsonl", &[]);
-    assert_eq!(Agent::Claude.find(&scratch.0.join("claude"), "abc"), Some(claude));
-    assert_eq!(Agent::Codex.find(&scratch.0.join("codex"), "abc"), Some(codex));
-    assert_eq!(Agent::Codex.find(&scratch.0.join("codex"), "xyz"), None);
-    assert_eq!(Agent::Pi.locate("abc"), None);
+    let id = "0199a213-81c0-7800-8aa1-bbab2a035a53";
+    let claude = scratch.write(&format!(".claude/projects/-home-u-walrus/{id}.jsonl"), &[]);
+    let codex = scratch.write(&format!(".codex/sessions/2026/10/05/rollout-2026-10-05T10-00-00-{id}.jsonl"), &[]);
+    let find = |agent: Agent, id: &str| {
+        let files = &agent.spec().transcript;
+        let folders = files.folders_under(&scratch.0);
+        folders.iter().find_map(|folder| find_file(folder, files.depth, &|file| files.names(file, id)))
+    };
+    assert_eq!(find(Agent::Claude, id), Some(claude));
+    assert_eq!(find(Agent::Codex, id), Some(codex));
+    assert_eq!(find(Agent::Codex, "xyz"), None);
     let reported = json!({"agent_session": {"agent": "pi", "kind": "path", "value": "/home/u/.pi/s.jsonl"}});
     assert_eq!(transcript_path(&reported).as_deref(), Some("/home/u/.pi/s.jsonl"));
-    assert_eq!(transcript_path(&json!({"agent_session": {"agent": "pi", "kind": "id", "value": "abc"}})), None);
 }
 
 #[test]
@@ -81,8 +86,8 @@ fn every_claude_account_under_home_is_searched() {
     scratch.write(".claude/projects/-a/abc.jsonl", &[]);
     scratch.write(".claude-work/projects/-a/def.jsonl", &[]);
     scratch.write(".claude-empty/settings.json", &[]);
-    let configs = claude_configs(&scratch.0);
-    assert!(configs.ends_with(&[scratch.0.join(".claude"), scratch.0.join(".claude-work")]), "{configs:?}");
+    let configs = Agent::Claude.spec().transcript.folders_under(&scratch.0);
+    assert!(configs.ends_with(&[scratch.0.join(".claude/projects"), scratch.0.join(".claude-work/projects")]), "{configs:?}");
 }
 
 #[test]

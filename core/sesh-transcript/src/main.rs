@@ -30,7 +30,7 @@ const USAGE: &str = "usage: sesh-transcript --version | follow --protocol | foll
        | vault size DIR SESSION FILE | vault append DIR SESSION FILE --offset N BYTES_FILE
        | vault copy DIR SESSION --from PATH | vault search DIR QUERY [--limit N] | vault export DIR FILE
        | transcripts search QUERY [--limit N] | transcripts place FILE --agent AGENT [--config DIR] [--fork]
-       | search WORDS... [--vault NAME] [--limit N]
+       | search WORDS... [--vault NAME] [--limit N] | agents
 follow, history and entry take --file PATH --agent AGENT in place of <pane>.";
 
 /// A failed command says why on stderr and exits 1; usage errors exit 2.
@@ -66,6 +66,7 @@ fn main() {
         Some("ask") => ask(rest),
         Some("transcripts") => transcripts(rest),
         Some("search") => search(rest),
+        Some("agents") if rest.is_empty() => agents(),
         _ => usage(),
     };
     std::process::exit(exit.unwrap_or_else(|message| {
@@ -418,6 +419,13 @@ fn describe(hits: &[Value], bold: bool) -> String {
     groups.iter().map(|group| hit_entry(group, bold)).collect()
 }
 
+/// Every Agent this machine knows, as its agent file says, and why any file was not read.
+fn agents() -> Exit {
+    let agents: Vec<&Value> = sesh_transcript::agent::specs().iter().map(|spec| &spec.raw).collect();
+    println!("{}", json!({"agents": agents, "errors": sesh_transcript::agent::errors()}));
+    Ok(0)
+}
+
 fn hit_entry(hits: &[&Value], bold: bool) -> String {
     let hit = hits[0];
     let text = |key: &str| hit[key].as_str().filter(|value| !value.is_empty());
@@ -435,12 +443,7 @@ fn hit_entry(hits: &[&Value], bold: bool) -> String {
     for hit in hits {
         out += &format!("  {}\n", marked(hit["snippet"].as_str().unwrap_or_default(), bold));
     }
-    let id = text("file").unwrap_or_default().trim_end_matches(".jsonl");
-    let resume = match agent {
-        Some(Agent::Claude) => Some(format!("claude --resume {id}")),
-        Some(Agent::Codex) => Some(format!("codex resume {}", &id[id.len().saturating_sub(36)..])),
-        _ => None,
-    };
+    let resume = agent.and_then(|agent| agent.resume_command(text("file")?));
     if let (Some(resume), Some(path)) = (resume, text("path")) {
         out += &format!("  on {machine}: cd '{path}' && {resume}\n");
     }

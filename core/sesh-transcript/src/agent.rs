@@ -1,32 +1,42 @@
-//! What sets Claude, Codex and pi apart: how each writes its Transcript and where, what of its
-//! screen Sesh reads, and the keys that answer its menus.
+//! What sets one Agent apart from another: how each writes its Transcript and where, what of its
+//! screen Sesh reads, and the keys that answer its menus. Each Agent is described by a file:
+//! Claude's, Codex's and pi's ship with Sesh, and more may sit in `~/.config/sesh/agents`.
 
 pub(crate) mod claude;
 mod codex;
 mod pi;
+mod plugin;
+mod spec;
 
 use std::fs::File;
 use std::path::{Path, PathBuf};
 
 use serde_json::{json, Value};
 
+pub use spec::{errors, specs, Spec};
+
 use crate::{Background, Entry, Ids};
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum Agent {
-    Claude,
-    Codex,
-    Pi,
-}
+/// An Agent Sesh knows, by its place among the agent files; the built-in ones come first.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub struct Agent(u8);
 
+#[allow(non_upper_case_globals)]
 impl Agent {
+    pub const Claude: Self = Self(0);
+    pub const Codex: Self = Self(1);
+    pub const Pi: Self = Self(2);
+
+    pub fn all() -> impl Iterator<Item = Self> {
+        (0..specs().len()).map(|index| Self(index as u8))
+    }
+
+    pub fn spec(self) -> &'static Spec {
+        &specs()[usize::from(self.0)]
+    }
+
     pub fn named(name: &str) -> Option<Self> {
-        match name {
-            "claude" => Some(Self::Claude),
-            "codex" => Some(Self::Codex),
-            "pi" => Some(Self::Pi),
-            _ => None,
-        }
+        Self::all().find(|agent| agent.name() == name)
     }
 
     /// The Agent sesh-mux says runs in `pane`, if it is one Sesh shows.
@@ -35,70 +45,60 @@ impl Agent {
     }
 
     pub fn name(self) -> &'static str {
-        match self {
-            Self::Claude => "claude",
-            Self::Codex => "codex",
-            Self::Pi => "pi",
-        }
+        &self.spec().name
     }
 
-    /// The Agent that wrote a Transcript starting with `first`.
+    /// The Agent that wrote a Transcript starting with `first`: the one whose first line it
+    /// matches most closely, and Claude, whose first line varies, when none does.
     pub fn wrote(first: &Value) -> Self {
-        match first["type"].as_str() {
-            Some("session_meta") => Self::Codex,
-            Some("session") => Self::Pi,
-            _ => Self::Claude,
-        }
+        Self::all()
+            .filter(|agent| agent.spec().transcript.opens(first))
+            .max_by_key(|agent| agent.spec().transcript.first.len())
+            .unwrap_or(Self::Claude)
     }
 
-    /// The Transcript of session `id`, which Claude and Codex keep under their own folders.
+    /// The Transcript of session `id`, found in the Agent's folders.
     pub fn locate(self, id: &str) -> Option<PathBuf> {
-        let home = std::env::var_os("HOME").map(PathBuf::from)?;
-        match self {
-            Self::Claude => claude_configs(&home).iter().find_map(|config| self.find(&config.join("projects"), id)),
-            Self::Codex => {
-                let codex = std::env::var_os("CODEX_HOME").map_or_else(|| home.join(".codex"), PathBuf::from);
-                self.find(&codex.join("sessions"), id)
-            }
-            Self::Pi => None,
-        }
-    }
-
-    fn find(self, folder: &Path, id: &str) -> Option<PathBuf> {
-        let name = format!("{id}.jsonl");
-        match self {
-            Self::Claude => find_file(folder, 1, &|file| file == name),
-            _ => find_file(folder, 3, &|file| file.starts_with("rollout-") && file.ends_with(&format!("-{name}"))),
-        }
+        let files = &self.spec().transcript;
+        files.folders().iter().find_map(|folder| find_file(folder, files.depth, &|file| files.names(file, id)))
     }
 
     /// Whether Sesh reads the Agent's screen for what its Transcript does not hold yet: only
     /// Claude's is understood.
     pub fn reads_screen(self) -> bool {
-        self == Self::Claude
+        self.spec().transcript.screen
+    }
+
+    /// Whether a blocked Agent's menu is read off its screen: Claude's when no hook explains it,
+    /// and a plugin's, which reads the menu itself.
+    pub fn reads_menus(self) -> bool {
+        self.reads_screen() || self.spec().plugin.is_some()
+    }
+
+    /// The menu a plugin Agent's screen shows.
+    pub fn menu(self, screen: &str) -> Option<crate::screen::Menu> {
+        plugin::menu(self, screen)
     }
 
     /// The key that allows or denies in the Agent's permission menu, and what its screen shows
     /// while that menu is open.
     pub fn permit(self, allow: bool) -> Option<(&'static str, &'static str)> {
-        let (key, open) = match self {
-            Self::Claude => ("1", "Esc to cancel · Tab to amend"),
-            Self::Codex => ("y", "Press enter to confirm or esc to cancel"),
-            Self::Pi => return None,
-        };
-        Some((if allow { key } else { "esc" }, open))
+        let permissions = self.spec().permissions.as_ref()?;
+        Some((if allow { &permissions.allow } else { "esc" }, &permissions.menu))
     }
 
     /// What the screen shows while the Agent's question menu is open, and on its last page,
-    /// which asks to submit the answers; only Claude asks questions.
+    /// which asks to submit the answers.
     pub fn question_menu(self) -> Option<(&'static str, &'static str)> {
-        (self == Self::Claude).then_some(("Enter to select ·", "Ready to submit your answers?"))
+        let questions = self.spec().questions.as_ref()?;
+        Some((&questions.menu, &questions.submit))
     }
 
-    /// The `permission` line for a prompt the Agent's hook reported; only Codex gives a reason.
+    /// The `permission` line for a prompt the Agent's hook reported, with the reason the Agent
+    /// gave when it gives one.
     pub fn permission(self, id: &str, tool: &str, input: &Value) -> Value {
         let entry = Entry::tool(String::new(), &Value::Null, tool, input);
-        let reason = entry.description.filter(|_| self == Self::Codex);
+        let reason = entry.description.filter(|_| self.spec().permissions.as_ref().is_some_and(|permissions| permissions.reason));
         let mut line = json!({"t": "permission", "id": id, "tool": tool, "summary": entry.summary});
         for (key, value) in [("command", entry.command), ("file", entry.file), ("reason", reason)] {
             if let Some(value) = value {
@@ -108,11 +108,22 @@ impl Agent {
         line
     }
 
+    /// The command that resumes the conversation in `file`, when the Agent resumes by id.
+    pub fn resume_command(self, file: &str) -> Option<String> {
+        let spec = self.spec();
+        let id = spec.transcript.session_of(file)?;
+        spec.resume.args.iter().any(|arg| arg == "{id}").then(|| {
+            let args = spec.resume.args.iter().map(|arg| arg.replace("{id}", &id));
+            spec.command.iter().cloned().chain(args).collect::<Vec<_>>().join(" ")
+        })
+    }
+
     pub(crate) fn parser(self, path: &Path) -> Box<dyn Parse> {
-        match self {
-            Self::Claude => Box::new(claude::Parser::new(path.parent().is_some_and(|folder| folder.ends_with("subagents")))),
-            Self::Codex => Box::<codex::Parser>::default(),
-            Self::Pi => Box::<pi::Parser>::default(),
+        match self.spec().transcript.parser.as_str() {
+            "claude" => Box::new(claude::Parser::new(path.parent().is_some_and(|folder| folder.ends_with("subagents")))),
+            "codex" => Box::<codex::Parser>::default(),
+            "pi" => Box::<pi::Parser>::default(),
+            _ => Box::new(plugin::Parser::new(self)),
         }
     }
 }
@@ -138,27 +149,6 @@ pub fn transcript_path(pane: &Value) -> Option<String> {
     }
     let agent = Agent::named(session["agent"].as_str()?)?;
     Some(agent.locate(session["value"].as_str()?)?.to_string_lossy().into_owned())
-}
-
-/// Every folder Claude keeps an account in: `CLAUDE_CONFIG_DIR` first, then each `~/.claude*`.
-/// The follower's own `CLAUDE_CONFIG_DIR` is whatever started it, often not a session's.
-pub(crate) fn claude_configs(home: &Path) -> Vec<PathBuf> {
-    let mut found: Vec<PathBuf> = std::fs::read_dir(home)
-        .into_iter()
-        .flatten()
-        .flatten()
-        .filter(|entry| entry.file_name().to_string_lossy().starts_with(".claude"))
-        .map(|entry| entry.path())
-        .filter(|path| path.join("projects").is_dir())
-        .collect();
-    found.sort();
-    let mut configs: Vec<PathBuf> = std::env::var_os("CLAUDE_CONFIG_DIR").map(PathBuf::from).into_iter().collect();
-    for path in found {
-        if !configs.contains(&path) {
-            configs.push(path);
-        }
-    }
-    configs
 }
 
 fn find_file(dir: &Path, depth: usize, matches: &dyn Fn(&str) -> bool) -> Option<PathBuf> {

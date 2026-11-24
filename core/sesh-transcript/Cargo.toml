@@ -7,6 +7,7 @@ license = "MIT"
 [dependencies]
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
+toml = { version = "0.8", default-features = false, features = ["parse"] }
 base64 = "0.22"
 rusqlite = { version = "0.40", default-features = false, features = ["bundled"] }
 unicode-normalization = "0.1"

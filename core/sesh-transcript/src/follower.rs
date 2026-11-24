@@ -288,17 +288,19 @@ impl Follower {
             return Ok(());
         }
         self.looked = idle.then_some(self.now);
-        let unexplained = self.agent.reads_screen() && (idle || self.reported.as_deref() == Some("blocked")) && self.permission.is_none();
+        let unexplained = self.agent.reads_menus() && (idle || self.reported.as_deref() == Some("blocked")) && self.permission.is_none();
         let screen = match (unexplained, pane["pane_id"].as_str()) {
             (true, Some(pane_id)) => self.source.read(pane_id, false).ok(),
             _ => None,
         };
-        let menu = screen.and_then(|screen| match Login::read(&screen) {
+        let agent = self.agent;
+        let menu = screen.and_then(|screen| match Login::read(&screen).filter(|_| agent.reads_screen()) {
             Some(Login::Link(url)) => Some(json!({"tool": "login", "summary": "Sign in to Claude", "url": url})),
             Some(Login::Expired) => Some(json!({"tool": "login", "summary": "Sign in to Claude"})),
             Some(Login::Method(menu)) => Some(menu_line(menu)),
             None if idle => None,
-            None => Menu::read(&screen).map(menu_line),
+            None if agent.reads_screen() => Menu::read(&screen).map(menu_line),
+            None => agent.menu(&screen).map(menu_line),
         });
         let id = menu.as_ref().map(|menu| {
             let mut hasher = std::collections::hash_map::DefaultHasher::new();

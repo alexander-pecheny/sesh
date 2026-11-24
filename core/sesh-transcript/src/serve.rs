@@ -283,8 +283,7 @@ impl Machine {
         let text = request["text"].as_str().unwrap_or_default();
         let state = if busy { HANDED } else { SENT };
         let play = match op {
-            // pi takes no message while it works, so Sesh holds it.
-            "send" if busy && follower.agent() == Agent::Pi => {
+            "send" if busy && follower.agent().spec().queues => {
                 follower.live.message(id, text, QUEUED, now);
                 None
             }

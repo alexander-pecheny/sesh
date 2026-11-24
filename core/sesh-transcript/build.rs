@@ -18,6 +18,8 @@ fn shipping(dir: &Path, files: &mut Vec<PathBuf>) {
 fn main() {
     let mut files = Vec::new();
     shipping(Path::new("src"), &mut files);
+    // The built-in agent files sesh-mux and the helper both read.
+    shipping(Path::new("../../mux/agents"), &mut files);
     files.sort();
     files.push("Cargo.toml".into());
     let shipped: String = files
@@ -30,5 +32,6 @@ fn main() {
     let hash = shipped.bytes().fold(0xcbf2_9ce4_8422_2325_u64, |hash, byte| (hash ^ u64::from(byte)).wrapping_mul(0x100_0000_01b3));
     println!("cargo:rustc-env=SOURCE_HASH={hash:016x}");
     println!("cargo:rerun-if-changed=src");
+    println!("cargo:rerun-if-changed=../../mux/agents");
     println!("cargo:rerun-if-changed=Cargo.toml");
 }

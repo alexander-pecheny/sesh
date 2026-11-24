@@ -1,0 +1,33 @@
+name = "claude"
+title = "Claude"
+command = ["claude"]
+process_names = ["claude-code"]
+install = "curl -fsSL https://claude.ai/install.sh | bash"
+# sesh-mux's own hooks report Claude's state, so the screen only fills gaps.
+hooks = true
+
+[start]
+new = ["--session-id", "{uuid}"]
+remote = ["--remote-control", "{name}"]
+bypass = ["--dangerously-skip-permissions"]
+
+[resume]
+args = ["--resume", "{id}"]
+flags = ["--session-id", "--resume", "-r"]
+
+[transcript]
+parser = "claude"
+folders = ["$CLAUDE_CONFIG_DIR/projects", "~/.claude*/projects"]
+depth = 1
+cwd = "/cwd"
+ids = ["/sessionId"]
+place = "{config}/projects/{project}"
+screen = true
+
+[permissions]
+allow = "1"
+menu = "Esc to cancel · Tab to amend"
+
+[questions]
+menu = "Enter to select ·"
+submit = "Ready to submit your answers?"

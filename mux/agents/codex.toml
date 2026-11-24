@@ -1,0 +1,31 @@
+name = "codex"
+title = "Codex"
+command = ["codex"]
+install = "npm install -g @openai/codex"
+hooks = true
+logged_in = "[ -s ~/.codex/auth.json ]"
+login = "codex login"
+
+[start]
+bypass = ["--dangerously-bypass-approvals-and-sandbox"]
+
+[resume]
+args = ["resume", "{id}"]
+flags = ["resume"]
+
+[transcript]
+parser = "codex"
+first = { type = "session_meta" }
+folders = ["${CODEX_HOME:-~/.codex}/sessions"]
+depth = 3
+# rollout-<time>-<id>.jsonl
+file = "rollout-*-{id}.jsonl"
+id_length = 36
+cwd = "/payload/cwd"
+ids = ["/payload/id", "/payload/session_id"]
+place = "~/.codex/sessions/{day}"
+
+[permissions]
+allow = "y"
+menu = "Press enter to confirm or esc to cancel"
+reason = true

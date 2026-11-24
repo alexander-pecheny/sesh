@@ -168,27 +168,30 @@ impl Index {
     }
 }
 
-/// Every Transcript the Agents keep under `home`: Claude's in each `~/.claude*` folder, as one
-/// person may keep a second account in `~/.claude-personal`, then Codex's and pi's.
+/// Every Transcript the Agents keep under `home`, Claude's first: in each `~/.claude*` folder, as
+/// one person may keep a second account in `~/.claude-personal`.
 fn sources(home: &Path) -> Vec<(Agent, PathBuf)> {
     let mut found = Vec::new();
-    for entry in std::fs::read_dir(home).into_iter().flatten().flatten() {
-        if entry.file_name().to_string_lossy().starts_with(".claude") {
-            files(&entry.path().join("projects"), 1, &mut |path| found.push((Agent::Claude, path)));
+    for agent in Agent::all() {
+        let files = &agent.spec().transcript;
+        for folder in files.folders_under(home).into_iter().filter(|folder| folder.starts_with(home)) {
+            every_file(&folder, files.depth, &mut |path| {
+                if path.file_name().and_then(|name| name.to_str()).is_some_and(|name| files.session_of(name).is_some()) {
+                    found.push((agent, path));
+                }
+            });
         }
     }
-    files(&home.join(".codex/sessions"), 3, &mut |path| found.push((Agent::Codex, path)));
-    files(&home.join(".pi/agent/sessions"), 1, &mut |path| found.push((Agent::Pi, path)));
     found
 }
 
-/// The `.jsonl` files exactly `depth` folders below `dir`, so Claude's subagents, one deeper, stay out.
-fn files(dir: &Path, depth: usize, found: &mut dyn FnMut(PathBuf)) {
+/// The files exactly `depth` folders below `dir`, so Claude's subagents, one deeper, stay out.
+fn every_file(dir: &Path, depth: usize, found: &mut dyn FnMut(PathBuf)) {
     for entry in std::fs::read_dir(dir).into_iter().flatten().flatten() {
         let path = entry.path();
         if depth > 0 && path.is_dir() {
-            files(&path, depth - 1, found);
-        } else if depth == 0 && path.extension().is_some_and(|ext| ext == "jsonl") {
+            every_file(&path, depth - 1, found);
+        } else if depth == 0 && path.is_file() {
             found(path);
         }
     }
@@ -197,19 +200,18 @@ fn files(dir: &Path, depth: usize, found: &mut dyn FnMut(PathBuf)) {
 /// The session id and folder the Agent wrote near the Transcript's start; Claude's id is its
 /// file's name.
 pub(crate) fn head(agent: Agent, file: &Path) -> Result<(String, Option<String>)> {
+    let files = &agent.spec().transcript;
+    let name = file.file_name().unwrap_or_default().to_string_lossy();
     let stem = file.file_stem().unwrap_or_default().to_string_lossy().into_owned();
-    let mut session = match agent {
-        Agent::Codex => stem.get(stem.len().saturating_sub(36)..).unwrap_or(&stem).to_string(),
-        _ => stem,
-    };
+    let mut session = files.session_of(&name).unwrap_or(stem);
     let mut cwd = None;
     for line in BufReader::new(File::open(file)?).lines().take(HEAD_LINES) {
         let line: Value = serde_json::from_str(&line?).unwrap_or_default();
-        let meta = if agent == Agent::Codex { &line["payload"] } else { &line };
-        if agent == Agent::Pi && line["type"] == "session" {
-            session = meta["id"].as_str().unwrap_or(&session).to_string();
+        let named = files.session.as_deref().filter(|_| files.opens(&line)).and_then(|at| line.pointer(at)?.as_str());
+        if let Some(named) = named {
+            session = named.to_string();
         }
-        if let Some(folder) = meta["cwd"].as_str() {
+        if let Some(folder) = files.cwd.as_deref().and_then(|at| line.pointer(at)?.as_str()) {
             cwd = Some(folder.to_string());
             break;
         }
