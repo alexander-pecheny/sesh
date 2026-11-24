@@ -64,6 +64,8 @@ struct SessionLog {
         let command: String?
         let file: String?
         let reason: String?
+        /// Where Claude asks to be signed in.
+        let url: String?
         /// A menu read off the screen, with no hook to describe it: its choices, each picked by a key.
         let options: [Choice]?
 

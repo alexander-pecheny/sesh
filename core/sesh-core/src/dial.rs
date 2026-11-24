@@ -3,12 +3,13 @@
 //! `ProxyCommand` or along a `ProxyJump` chain, signing in with the agent's keys, the spec's
 //! own Keys, the identity files, a password or keyboard-interactive answers.
 
+use std::collections::HashMap;
 use std::future::Future;
 use std::net::IpAddr;
 use std::path::{Path, PathBuf};
 use std::pin::Pin;
 use std::process::Stdio;
-use std::sync::{Arc, Mutex, OnceLock};
+use std::sync::{Arc, LazyLock, Mutex, OnceLock};
 
 use russh::client::{self, AuthResult, KeyboardInteractiveAuthResponse};
 use russh::keys::agent::client::AgentClient;
@@ -555,8 +556,13 @@ async fn publickey(
         if public.as_ref().is_some_and(|key| tried.contains(key.key_data())) || !file.exists() {
             continue;
         }
-        let Some(key) = private_key(file, host.batch_mode, events, answers).await else { continue };
+        let Some((key, asked)) = private_key(file, host.batch_mode, events, answers).await else { continue };
         let key = Arc::new(key);
+        // Unlocked once, the key goes to the system agent as ssh-add would put it, so no
+        // other Host, nor ssh(1) in a terminal, asks for the passphrase again.
+        if let (true, Some(agent)) = (asked || host.add_keys_to_agent, agent.as_mut()) {
+            let _ = agent.add_identity(&key, &[]).await;
+        }
         for certificate in certificates(file, &host.certificate_files) {
             if certificate.public_key() == key.public_key().key_data() {
                 result = handle.authenticate_openssh_cert(user, key.clone(), certificate).await.map_err(|e| e.to_string())?;
@@ -569,11 +575,6 @@ async fn publickey(
             .authenticate_publickey(user, PrivateKeyWithHashAlg::new(key.clone(), hash))
             .await
             .map_err(|e| e.to_string())?;
-        if result.success() {
-            if let (true, Some(agent)) = (host.add_keys_to_agent, agent.as_mut()) {
-                let _ = agent.add_identity(&key, &[]).await;
-            }
-        }
         if result.success() || !offers(&result, MethodKind::PublicKey) {
             return Ok(result);
         }
@@ -590,18 +591,31 @@ fn public_of(file: &Path) -> Option<PublicKey> {
         .or_else(|| russh::keys::load_secret_key(file, None).ok().map(|key| key.public_key().clone()))
 }
 
-async fn private_key(file: &Path, batch: bool, events: &Arc<dyn Events>, answers: &Arc<Answers>) -> Option<PrivateKey> {
+/// The identity file's key, and whether a passphrase unlocked it. Hosts dialled at once wait
+/// for the one asking, and take the key it unlocked.
+async fn private_key(file: &Path, batch: bool, events: &Arc<dyn Events>, answers: &Arc<Answers>) -> Option<(PrivateKey, bool)> {
+    static UNLOCKED: LazyLock<tokio::sync::Mutex<HashMap<PathBuf, PrivateKey>>> = LazyLock::new(Default::default);
     match russh::keys::load_secret_key(file, None) {
-        Ok(key) => return Some(key),
+        Ok(key) => return Some((key, false)),
         Err(russh::keys::Error::KeyIsEncrypted) if !batch => {}
         Err(_) => return None,
     }
+    let mut unlocked = UNLOCKED.lock().await;
+    if let Some(key) = unlocked.get(file) {
+        return Some((key.clone(), true));
+    }
+    let home = std::env::var("HOME").unwrap_or_default();
+    let shown = match file.strip_prefix(&home) {
+        Ok(rest) if !home.is_empty() => format!("~/{}", rest.display()),
+        _ => file.display().to_string(),
+    };
+    let instruction = format!("{shown} is locked. Once unlocked, it goes to the SSH agent, so no other Host asks again.");
     for _ in 0..3 {
-        let asked = vec![prompt(&format!("Enter passphrase for key '{}':", file.display()), false)];
-        let given = ask(events, answers, "Passphrase", "", asked).await.ok()?;
+        let given = ask(events, answers, "Passphrase", &instruction, vec![prompt("Passphrase", false)]).await.ok()?;
         let passphrase = given.into_iter().next().filter(|p| !p.is_empty())?;
         if let Ok(key) = russh::keys::load_secret_key(file, Some(&passphrase)) {
-            return Some(key);
+            unlocked.insert(file.to_path_buf(), key.clone());
+            return Some((key, true));
         }
     }
     None

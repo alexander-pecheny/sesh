@@ -168,3 +168,46 @@ fn a_bracket_after_non_ascii_text_is_escaped_without_a_panic() {
     assert_eq!(escape("«цитата» [ссылка](x)"), "«цитата» \\[ссылка](x)");
     assert_eq!(escape("«цитата» [нет]"), "«цитата» [нет]");
 }
+
+/// Captured from Claude Code 2.1.319 on Linux with no login, 80 columns wide.
+const LOGIN_LINK: &str = " Browser didn't open? Use the url below to sign in (c to copy)\nhttps://claude.com/cai/oauth/authorize?code=true&client_id=9d1c250a-e61b-44d9-88\ned-5944d1962f5e&response_type=code&state=-MVgqzzuS1OktRmSVDcP19sbpTY6-olGjZo\n\n Paste code here if prompted >\n";
+
+#[test]
+fn a_sign_in_link_is_joined_back_from_the_rows_claude_broke_it_into() {
+    let link = "https://claude.com/cai/oauth/authorize?code=true&client_id=9d1c250a-e61b-44d9-88ed-5944d1962f5e&response_type=code&state=-MVgqzzuS1OktRmSVDcP19sbpTY6-olGjZo";
+    assert_eq!(Login::read(LOGIN_LINK), Some(Login::Link(link.into())));
+    assert_eq!(Login::read(&LOGIN_LINK.replace("\n\n", "\n")), Some(Login::Link(link.into())));
+    let hinted = LOGIN_LINK.replace("\n\n", "\n\n Hold Shift (Option in iTerm2, Fn in Terminal.app) while selecting to use your terminal's native copy\n\n");
+    assert_eq!(Login::read(&hinted), Some(Login::Link(link.into())), "a wide screen's hint below the link stays out of it");
+}
+
+#[test]
+fn the_login_method_menu_is_read_without_a_rule_above_it() {
+    let screen = ".......█ █   █ █......\n Claude Code can be used with your Claude subscription or billed based on API\n usage through your Console account.\n\n Select login method:\n\n ❯ 1. Claude account with subscription · Individual, Team, or Enterprise\n\n   2. Anthropic Console account · API usage billing\n\n   3. 3rd-party platform · Amazon Bedrock, Microsoft Foundry, Google Vertex AI\n";
+    let Some(Login::Method(menu)) = Login::read(screen) else { panic!("no menu") };
+    assert_eq!(menu.title, "Select login method");
+    assert_eq!(menu.options[0], ("1".into(), "Claude account with subscription · Individual, Team, or Enterprise".into()));
+    assert_eq!(menu.options.len(), 3);
+    assert_eq!(Login::read("────────────────\n❯ \n────────────────\n"), None);
+}
+
+/// Claude Code 2.1.322 on a phone-width pane drops the blank rows and wraps long options.
+#[test]
+fn a_login_method_that_wraps_stays_one_option() {
+    let screen = " Welcome to Claude Code v2.1.322\n\n Select login method:\n\n ❯ 1. Claude account with subscription · Individual,\n      Team, or Enterprise\n   2. Anthropic Console account · API usage billing\n   3. 3rd-party platform · Amazon Bedrock, Microsoft\n      Foundry, Google Vertex AI\n\n";
+    let Some(Login::Method(menu)) = Login::read(screen) else { panic!("no menu") };
+    assert_eq!(menu.options[0].1, "Claude account with subscription · Individual, Team, or Enterprise");
+    assert_eq!(menu.options[2].1, "3rd-party platform · Amazon Bedrock, Microsoft Foundry, Google Vertex AI");
+}
+
+#[test]
+fn a_bracket_after_cyrillic_text_is_escaped_without_panicking() {
+    assert_eq!(escape("«Привет» [ссылка](x) и [нет"), "«Привет» \\[ссылка](x) и [нет");
+}
+
+#[test]
+fn a_session_whose_sign_in_expired_asks_to_sign_in() {
+    let screen = " ▐▛███▛█   Claude Code v2.1.321\n❯ Приветик\n● Login expired · Please run /login\n✻ Brewed for 0s · done 6:55 PM\n❯ /login\n  ⎿  Login interrupted\n                    Not logged in · Run /login · ✔ Update installed · Restart to update\n────\n❯ \n────\n  ⏵⏵ bypass permissions on (shift+tab to cycle)\n";
+    assert_eq!(Login::read(screen), Some(Login::Expired));
+    assert_eq!(Login::read(" Not logged in · Run /login\n Select login method:\n ❯ 1. Claude account\n   2. Console\n").map(|login| matches!(login, Login::Method(_))), Some(true), "the menu /login opens wins");
+}

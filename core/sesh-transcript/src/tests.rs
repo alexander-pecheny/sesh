@@ -666,6 +666,40 @@ fn a_monitor_runs_in_the_background_until_its_stream_ends_or_it_expires() {
 }
 
 #[test]
+fn background_work_claude_code_refused_is_not_listed() {
+    let at = "2026-11-09T00:18:29.939Z";
+    let watch = json!({"type":"assistant","timestamp":at,"message":{"content":[{"type":"tool_use","id":"toolu_m","name":"Monitor",
+        "input":{"description":"wait for prod snapshot copy","until":"! pgrep scp","timeout":"600"}}]}});
+    let refused = json!({"type":"user","timestamp":at,"message":{"role":"user","content":[{"type":"tool_result","tool_use_id":"toolu_m",
+        "is_error":true,"content":"<tool_use_error>InputValidationError: exactly one of command or ws</tool_use_error>"}]},
+        "toolUseResult":"InputValidationError: exactly one of command or ws"});
+    assert!(parse(Agent::Claude, &[watch.clone(), refused.clone()]).background().is_empty());
+    let dir = std::env::temp_dir().join(format!("sesh-refused-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    std::fs::write(dir.join("t.jsonl"), format!("{watch}\n{refused}\n")).unwrap();
+    let mut scanned = Transcript::new(Agent::Claude, dir.join("t.jsonl"));
+    scanned.scan_background().unwrap();
+    std::fs::remove_dir_all(&dir).unwrap();
+    assert!(scanned.background().is_empty(), "a scan sees the refusal too");
+}
+
+#[test]
+fn an_agent_a_subagent_started_is_listed_while_it_waits_on_its_own_work() {
+    let at = "2026-11-12T12:55:21.177Z";
+    let notice = |call: &str, summary: &str, note: &str| {
+        let text = format!("<task-notification>\n<task-id>a47c</task-id>\n{call}<status>completed</status>\n<summary>Agent \"Audit OSDI key\" {summary}</summary>\n{note}</task-notification>");
+        json!({"type":"queue-operation","operation":"enqueue","timestamp":at,"content":text})
+    };
+    let note = "<note>This agent stopped with background work of its own still running.</note>\n";
+    let first = notice("<tool-use-id>toolu_f</tool-use-id>\n", "is waiting on its own background work", note);
+    let again = notice("", "is waiting on its own background work", note);
+    let listed = parse(Agent::Claude, &[first.clone(), again.clone()]);
+    assert_eq!(listed.background().iter().map(|work| work.label.as_str()).collect::<Vec<_>>(), ["Audit OSDI key"]);
+    let done = notice("", "completed", "");
+    assert!(parse(Agent::Claude, &[first, again, done]).background().is_empty());
+}
+
+#[test]
 fn claude_turn_is_over_after_end_turn_until_the_user_speaks() {
     let at = "2026-10-05T14:54:42.186Z";
     let reply = |reason: &str| json!({"type":"assistant","timestamp":at,"message":{"stop_reason":reason,"content":[{"type":"text","text":"ok"}]}});

@@ -91,7 +91,7 @@ impl super::Parse for Parser {
         let mut line = Vec::new();
         while reader.read_until(b'\n', &mut line)? > 0 {
             let text = std::str::from_utf8(&line).unwrap_or_default();
-            if ["run_in_background", "task-notification", "async_launched", "backgroundTaskId", "\"taskId\"", "TaskStop", "Monitor", "\"name\":\"Bash\""].iter().any(|word| text.contains(word)) {
+            if ["run_in_background", "task-notification", "async_launched", "backgroundTaskId", "\"taskId\"", "TaskStop", "Monitor", "\"name\":\"Bash\"", "\"is_error\":true"].iter().any(|word| text.contains(word)) {
                 if let Ok(value) = serde_json::from_str::<Value>(text) {
                     scan.read(&value, &mut ids, &mut out);
                     out.clear();
@@ -289,7 +289,8 @@ impl Parser {
             let end = text[start..].find(&format!("</{name}>"))? + start;
             Some(text[start..end].trim().to_string())
         };
-        let call = tag("tool-use-id").or_else(|| self.started.get(&tag("task-id")?).cloned());
+        let task = tag("task-id");
+        let call = tag("tool-use-id").or_else(|| self.started.get(task.as_deref()?).cloned());
         // A Monitor that expires says so only in its event.
         let expired = tag("event").is_some_and(|event| event.starts_with("[Monitor expired"));
         let (Some(call), Some(status)) = (call, tag("status").or(expired.then(|| "expired".into()))) else {
@@ -299,6 +300,15 @@ impl Parser {
         let interim = text.contains("background work of its own still running");
         if status != "running" && !interim {
             self.background.retain(|work| work.call != call);
+        }
+        // An Agent another subagent started is first heard of here, still working.
+        if interim && !self.background.iter().any(|work| work.call == call) {
+            let summary = tag("summary").unwrap_or_default();
+            let label = summary.split('"').nth(1).unwrap_or("Agent").to_string();
+            if let Some(task) = task {
+                self.started.insert(task, call.clone());
+            }
+            self.background.push(Background { call, label, agent: true });
         }
     }
 
@@ -342,6 +352,10 @@ impl Parser {
             return;
         };
         let result = &line["toolUseResult"];
+        // Work Claude Code refused, such as a Monitor with bad input, never started.
+        if block["is_error"] == true {
+            self.background.retain(|work| work.call != call);
+        }
         // A command moved to the background after it started says so only in its result.
         let command = self.commands.remove(call);
         if let Some(label) = command.filter(|_| result["backgroundTaskId"].is_string()) {

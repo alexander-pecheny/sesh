@@ -52,6 +52,7 @@ struct ConversationView: View {
             }
         }
         .overlay(alignment: .bottom) { MoveToBottom(scroll: conversation.scroll, flavour: flavour) }
+        .overlay(alignment: .bottomTrailing) { MyMessages(scroll: conversation.scroll, conversation: conversation, flavour: flavour) }
         .scrollDismissesKeyboard(.interactively)
         .safeAreaInset(edge: .bottom, spacing: 0) {
             VStack(spacing: 0) {
@@ -78,6 +79,9 @@ struct ConversationView: View {
         #endif
         .toolbar {
             if conversation.agent == .claude, resume == nil {
+                if conversation.pane != nil {
+                    ToolbarItem(placement: .primaryAction) { ModelButton(conversation: conversation) }
+                }
                 ToolbarItem(placement: .primaryAction) {
                     Button { Task { await openInClaude() } } label: { Label("Open in Claude", image: "external-link") }
                 }
@@ -91,7 +95,7 @@ struct ConversationView: View {
         }
         #if os(macOS)
         .background {
-            if !hidden, let permission = conversation.permissions.first {
+            if !hidden, let permission = conversation.permissions.first, permission.tool != "login" {
                 PermissionKeys(permission: permission, conversation: conversation).id(permission.id)
             }
         }
@@ -709,6 +713,59 @@ private struct MoveToBottom: View {
             .buttonStyle(.plain)
             .padding(Metric.pad)
         }
+    }
+}
+
+/// Steps to the message the user sent before or after the top of the view, for finding their
+/// way back through a long run of the Agent's work.
+private struct MyMessages: View {
+    @ObservedObject var scroll: ChatScroll
+    @ObservedObject var conversation: Conversation
+    let flavour: Catppuccin.Flavour
+    private static let side = Metric.control * 0.8
+    private static let glass = 0.9
+    #if os(macOS)
+    /// The Mac's scroll bar takes room at the side, where the buttons would cover it.
+    private static var scroller: CGFloat { NSScroller.scrollerWidth(for: .regular, scrollerStyle: NSScroller.preferredScrollerStyle) }
+    #else
+    private static let scroller: CGFloat = 0
+    #endif
+
+    /// The user's messages among the rows loaded now; earlier pages bring more.
+    private static func marks(_ rows: [SessionLog.Row]) -> Set<String> {
+        Set(rows.compactMap { row in
+            guard case .entry(let entry) = row.content, entry.kind == "user" else { return nil }
+            return row.id
+        })
+    }
+
+    var body: some View {
+        // Long runs of the Agent's own work can hide every message of the user's in earlier pages.
+        if !conversation.rows.isEmpty {
+            let marks = { [conversation] in Self.marks(conversation.rows) }
+            VStack(spacing: 0) {
+                button("chevron-up", "Previous message you sent") { scroll.step(back: true, among: marks) }
+                Divider().frame(width: Metric.pad)
+                button("chevron-down", "Next message you sent") { scroll.step(back: false, among: marks) }
+                    .disabled(scroll.atBottom)
+            }
+            .background(flavour(.surface1).opacity(Self.glass), in: .capsule)
+            .shadow(radius: ConversationView.shadow)
+            .padding(.trailing, Metric.pad + Self.scroller)
+            // Above "Move to bottom", which spans most of a phone's width.
+            .padding(.bottom, scroll.atBottom ? Metric.pad : Metric.control + Metric.pad)
+        }
+    }
+
+    private func button(_ icon: String, _ label: String, action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            Image.lucide(icon, size: Metric.title)
+                .foregroundStyle(flavour(.text))
+                .frame(width: Self.side, height: Self.side)
+                .contentShape(.rect)
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel(label)
     }
 }
 

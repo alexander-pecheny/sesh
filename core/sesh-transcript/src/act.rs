@@ -8,10 +8,14 @@ use serde_json::{json, Value};
 
 use crate::agent::{transcript_path, Agent};
 use crate::follower::{Input, Source};
+use crate::screen::Login;
 use crate::Transcript;
 
 const KEY_PAUSE: Duration = Duration::from_millis(200);
 const MENU_TIMEOUT: Duration = Duration::from_secs(3);
+/// How long Claude gets to show its sign-in link, and to trade a code for a login.
+const LOGIN_TIMEOUT: Duration = Duration::from_secs(30);
+const CONTINUE: &str = "Press Enter to continue";
 /// How long an Agent gets to quit on ctrl+c before its pane is closed.
 const STOP_PAUSE: Duration = Duration::from_secs(1);
 
@@ -139,6 +143,164 @@ fn permit(source: &mut dyn Source, session: &str, (_, agent): (&Value, Agent), a
     play(source, session, vec![key(name)], |screen| screen.contains(open), |_| None)
 }
 
+/// The link Claude asks to be signed in at, after typing `/login` if its sign-in expired and
+/// picking a Claude plan if it asks which way.
+pub fn login_link(source: &mut dyn Source, pane: &str) -> Result<String> {
+    let deadline = Instant::now() + LOGIN_TIMEOUT;
+    let (mut typed, mut picked) = (false, false);
+    loop {
+        match Login::read(&source.read(pane, false)?) {
+            Some(Login::Link(url)) => return Ok(url),
+            Some(Login::Method(_)) if !picked => {
+                source.input(pane, &key("1"))?;
+                picked = true;
+            }
+            Some(Login::Expired) if !typed => {
+                source.input(pane, &Input::Text("/login".into()))?;
+                std::thread::sleep(KEY_PAUSE);
+                source.input(pane, &key("enter"))?;
+                typed = true;
+            }
+            _ if !(typed || picked) || Instant::now() > deadline => return Err(format!("Claude in pane {pane} is not asking to sign in")),
+            _ => {}
+        }
+        std::thread::sleep(KEY_PAUSE);
+    }
+}
+
+/// Types the code Claude's sign-in page showed, then gets past the screens a first login
+/// shows, and the trust question a start would have answered.
+pub fn login(source: &mut dyn Source, pane: &str, code: &str) -> Result<()> {
+    if !matches!(Login::read(&source.read(pane, false)?), Some(Login::Link(_))) {
+        return Err(format!("Claude in pane {pane} is not asking for a sign-in code"));
+    }
+    source.input(pane, &Input::Text(code.trim().into()))?;
+    std::thread::sleep(KEY_PAUSE);
+    source.input(pane, &key("enter"))?;
+    let deadline = Instant::now() + LOGIN_TIMEOUT;
+    let mut signed = false;
+    loop {
+        std::thread::sleep(KEY_PAUSE);
+        let screen = source.read(pane, false)?;
+        if let Some(error) = screen.lines().map(str::trim).find(|line| line.starts_with("OAuth error")) {
+            // Enter brings the code prompt back for another try.
+            source.input(pane, &key("enter"))?;
+            return Err(error.to_string());
+        }
+        signed |= screen.contains("Login successful");
+        if signed && screen.contains(CONTINUE) {
+            source.input(pane, &key("enter"))?;
+            let closing = Instant::now() + MENU_TIMEOUT;
+            while Instant::now() < closing && source.read(pane, false)? == screen {
+                std::thread::sleep(KEY_PAUSE);
+            }
+        } else if signed && !crate::start::answer(source, pane)? {
+            return Ok(());
+        }
+        if Instant::now() > deadline {
+            let tail: Vec<&str> = screen.lines().filter(|line| !line.trim().is_empty()).collect();
+            return Err(format!("Claude did not finish signing in:\n{}", tail[tail.len().saturating_sub(6)..].join("\n")));
+        }
+    }
+}
+
+/// A model Claude's `/model` menu offers: its label, the note beside it, and whether this
+/// session uses it.
+#[derive(serde::Serialize, Debug, PartialEq)]
+pub struct Model {
+    pub label: String,
+    pub note: String,
+    pub current: bool,
+}
+
+const MODEL_MENU: &str = "Select model";
+/// The menu's own word for a pick that leaves the default alone.
+const SESSION_ONLY: &str = "for this session only";
+
+/// The models on Claude's `/model` menu, and the row its cursor is on.
+fn model_menu(screen: &str) -> Option<(Vec<Model>, usize)> {
+    let rows = screen.lines().skip_while(|line| !line.contains(MODEL_MENU)).skip(1);
+    let (mut models, mut cursor) = (Vec::new(), None);
+    for line in rows.take_while(|line| !line.contains("Enter to")) {
+        let line = line.trim_start();
+        let (at, line) = match line.strip_prefix('❯') {
+            Some(rest) => (true, rest.trim_start()),
+            None => (false, line),
+        };
+        let Some((number, rest)) = line.split_once(". ") else { continue };
+        if number.is_empty() || !number.bytes().all(|byte| byte.is_ascii_digit()) {
+            continue;
+        }
+        let rest = rest.trim();
+        let end = [rest.find("  "), rest.find(" ✔")].into_iter().flatten().min().unwrap_or(rest.len());
+        if at {
+            cursor = Some(models.len());
+        }
+        models.push(Model {
+            label: rest[..end].trim().to_string(),
+            note: rest[end..].replace('✔', "").trim().to_string(),
+            current: rest.contains('✔'),
+        });
+    }
+    Some((models, cursor?)).filter(|(models, _)| !models.is_empty())
+}
+
+/// Opens Claude's `/model` menu and reads it.
+fn open_models(source: &mut dyn Source, pane: &str) -> Result<(Vec<Model>, usize)> {
+    source.input(pane, &Input::Text("/model".into()))?;
+    std::thread::sleep(KEY_PAUSE);
+    source.input(pane, &key("enter"))?;
+    let deadline = Instant::now() + MENU_TIMEOUT;
+    loop {
+        std::thread::sleep(KEY_PAUSE);
+        if let Some(menu) = model_menu(&source.read(pane, false)?) {
+            return Ok(menu);
+        }
+        if Instant::now() > deadline {
+            return Err(format!("Claude in pane {pane} did not show its models"));
+        }
+    }
+}
+
+/// The models Claude in `pane` can switch to; the menu is closed again after reading them.
+pub fn models(source: &mut dyn Source, pane: &str) -> Result<Vec<Model>> {
+    let (models, _) = open_models(source, pane)?;
+    source.input(pane, &key("esc"))?;
+    Ok(models)
+}
+
+/// Switches Claude in `pane` to the model labelled `label` for this session only: `s` on the
+/// menu, where Enter, like `/model NAME`, would also make it the default for new sessions.
+pub fn pick_model(source: &mut dyn Source, pane: &str, label: &str) -> Result<()> {
+    let (models, mut cursor) = open_models(source, pane)?;
+    let Some(target) = models.iter().position(|model| model.label == label) else {
+        source.input(pane, &key("esc"))?;
+        return Err(format!("Claude offers no model called {label:?}"));
+    };
+    let deadline = Instant::now() + MENU_TIMEOUT;
+    while cursor != target {
+        source.input(pane, &key(if cursor < target { "down" } else { "up" }))?;
+        std::thread::sleep(KEY_PAUSE);
+        let screen = source.read(pane, false)?;
+        cursor = model_menu(&screen).map(|(_, at)| at).ok_or("the model menu closed")?;
+        if Instant::now() > deadline {
+            source.input(pane, &key("esc"))?;
+            return Err(format!("could not reach {label:?} on the model menu"));
+        }
+    }
+    source.input(pane, &Input::Text("s".into()))?;
+    loop {
+        std::thread::sleep(KEY_PAUSE);
+        let screen = source.read(pane, false)?;
+        if screen.contains(SESSION_ONLY) && model_menu(&screen).is_none() {
+            return Ok(());
+        }
+        if Instant::now() > deadline + MENU_TIMEOUT {
+            return Err(format!("Claude did not confirm the switch to {label}"));
+        }
+    }
+}
+
 /// Plays `inputs` into a menu that `open` sees on screen, then waits for it to
 /// close, answering any follow-up screen `confirm` recognises.
 fn play(
@@ -203,6 +365,127 @@ mod tests {
         let mut source = Played { menu, inputs: Vec::new() };
         let result = act(&mut source, "w1:p1", pane, &request);
         (result, source.inputs)
+    }
+
+    /// A screen that changes as inputs arrive: the first screen until one does, and so on.
+    struct Screens(Vec<&'static str>, Vec<Input>);
+
+    impl Source for Screens {
+        fn panes(&mut self) -> Result<Vec<Value>> {
+            Ok(Vec::new())
+        }
+
+        fn read(&mut self, _: &str, _: bool) -> Result<String> {
+            Ok(self.0[self.1.len().min(self.0.len() - 1)].into())
+        }
+
+        fn input(&mut self, _: &str, input: &Input) -> Result<()> {
+            self.1.push(input.clone());
+            Ok(())
+        }
+    }
+
+    const LINK: &str = "https://claude.com/cai/oauth/authorize?code=true\n Paste code here if prompted >";
+
+    #[test]
+    fn a_sign_in_code_is_typed_and_the_screens_after_a_login_are_passed() {
+        let mut source = Screens(vec![LINK, LINK, "Login successful. Press Enter to continue", "Security notes: Press Enter to continue", "❯ "], Vec::new());
+        assert_eq!(login(&mut source, "w1:p1", " abc#def \n"), Ok(()));
+        assert_eq!(keys(&source.1), ["Text(\"abc#def\")", "enter", "enter", "enter"]);
+    }
+
+    #[test]
+    fn a_wrong_sign_in_code_says_why_and_asks_again() {
+        let mut source = Screens(vec![LINK, LINK, "OAuth error: Invalid code. Please make sure the full code was copied\n Press Enter to retry."], Vec::new());
+        assert_eq!(login(&mut source, "w1:p1", "x"), Err("OAuth error: Invalid code. Please make sure the full code was copied".into()));
+        assert_eq!(keys(&source.1).last().unwrap(), "enter");
+        assert!(login(&mut Screens(vec!["❯ "], Vec::new()), "w1:p1", "x").is_err());
+    }
+
+    #[test]
+    fn the_sign_in_link_comes_after_picking_a_claude_plan() {
+        let mut source = Screens(vec![" Select login method:\n ❯ 1. Claude account\n   2. Console", LINK], Vec::new());
+        assert_eq!(login_link(&mut source, "w1:p1"), Ok("https://claude.com/cai/oauth/authorize?code=true".into()));
+        assert_eq!(keys(&source.1), ["1"]);
+        assert!(login_link(&mut Screens(vec!["❯ "], Vec::new()), "w1:p1").is_err());
+    }
+
+    #[test]
+    fn an_expired_sign_in_is_started_with_slash_login() {
+        let expired = "❯ Hello\n● Login expired · Please run /login\n          Not logged in · Run /login\n───\n❯ ";
+        let mut source = Screens(vec![expired, expired, " Select login method:\n ❯ 1. Claude account\n   2. Console", LINK], Vec::new());
+        assert_eq!(login_link(&mut source, "w1:p1"), Ok("https://claude.com/cai/oauth/authorize?code=true".into()));
+        assert_eq!(keys(&source.1), ["Text(\"/login\")", "enter", "1"]);
+    }
+
+    const MODEL_SCREEN: &str = "   Select model
+   Switch between Claude models. Your pick becomes the default for new sessions. For other/previous model names, specify with --model.
+   ❯ 1.  Default (recommended) ✔  Fable 5.2
+     2.  Opus 5.5                 For complex work and everyday tasks
+     3.  Fable 5.2                For your toughest challenges
+     4.  Sonnet 5.5               Most efficient for simpler tasks
+     ▸   More models
+   ◐ Medium effort (default) ←/→ to adjust
+   Enter to set as default · s to use this session only · Esc to cancel";
+
+    #[test]
+    fn the_model_menu_reads_as_its_models_and_cursor() {
+        let (models, cursor) = model_menu(MODEL_SCREEN).unwrap();
+        assert_eq!(cursor, 0);
+        assert_eq!(models.iter().map(|model| model.label.as_str()).collect::<Vec<_>>(), ["Default (recommended)", "Opus 5.5", "Fable 5.2", "Sonnet 5.5"]);
+        assert_eq!(models[0], Model { label: "Default (recommended)".into(), note: "Fable 5.2".into(), current: true });
+        assert_eq!(models[3].note, "Most efficient for simpler tasks");
+        assert!(model_menu("❯ 1. Yes\n  2. No").is_none(), "another menu is not the model menu");
+    }
+
+    /// Claude's model menu: down and up move its cursor, `s` closes it with the pick for this
+    /// session only.
+    struct Models {
+        open: bool,
+        cursor: usize,
+        inputs: Vec<String>,
+    }
+
+    impl Source for Models {
+        fn panes(&mut self) -> Result<Vec<Value>> {
+            Ok(Vec::new())
+        }
+
+        fn read(&mut self, _: &str, _: bool) -> Result<String> {
+            if !self.open {
+                return Ok("⎿  Set model to Sonnet 5.5 for this session only".into());
+            }
+            let rows: Vec<String> = MODEL_SCREEN.lines().map(|line| line.replacen('❯', " ", 1)).collect();
+            let at = 2 + self.cursor;
+            Ok(rows.iter().enumerate().map(|(row, line)| if row == at { line.replacen("  ", "❯ ", 1) } else { line.clone() }).collect::<Vec<_>>().join("\n"))
+        }
+
+        fn input(&mut self, _: &str, input: &Input) -> Result<()> {
+            let name = match input {
+                Input::Text(text) => text.clone(),
+                Input::Keys(keys) => keys.join(" "),
+                other => format!("{other:?}"),
+            };
+            match name.as_str() {
+                "enter" => self.open = true,
+                "down" => self.cursor += 1,
+                "up" => self.cursor -= 1,
+                "s" => self.open = false,
+                _ => {}
+            }
+            self.inputs.push(name);
+            Ok(())
+        }
+    }
+
+    #[test]
+    fn a_model_is_picked_for_this_session_only() {
+        let mut source = Models { open: false, cursor: 0, inputs: Vec::new() };
+        pick_model(&mut source, "w1", "Sonnet 5.5").unwrap();
+        assert_eq!(source.inputs, ["/model", "enter", "down", "down", "down", "s"]);
+        let mut source = Models { open: false, cursor: 0, inputs: Vec::new() };
+        assert!(pick_model(&mut source, "w1", "GPT").is_err());
+        assert_eq!(source.inputs.last().map(String::as_str), Some("esc"));
     }
 
     fn answers(json: &str) -> Vec<Answer> {

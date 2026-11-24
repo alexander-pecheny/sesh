@@ -120,6 +120,14 @@ struct PermissionCard: View {
     private var answering: Bool { conversation.answered.contains(permission.id) }
 
     var body: some View {
+        if permission.tool == "login" {
+            LoginCard(url: permission.url.flatMap(URL.init(string:)), link: conversation.loginLink) { await conversation.login($0, permission) }
+        } else {
+            prompt
+        }
+    }
+
+    private var prompt: some View {
         VStack(alignment: .leading, spacing: Metric.pad) {
             HStack(spacing: Metric.gap) {
                 Image.lucide("shield-alert", size: Metric.title).foregroundStyle(flavour(.peach))

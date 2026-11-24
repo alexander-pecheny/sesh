@@ -301,6 +301,54 @@ impl Menu {
     }
 }
 
+/// Claude asking to be signed in: first which way, then for the code its sign-in page shows.
+/// A session whose sign-in expired asks for neither until `/login` is typed.
+#[derive(Clone, Debug, PartialEq)]
+pub enum Login {
+    Expired,
+    Method(Menu),
+    Link(String),
+}
+
+pub const LOGIN_METHOD: &str = "Select login method:";
+pub const LOGIN_CODE: &str = "Paste code here if prompted";
+pub const LOGGED_OUT: &str = "Not logged in · Run /login";
+
+impl Login {
+    pub fn read(screen: &str) -> Option<Login> {
+        Self::asked(screen).or_else(|| screen.contains(LOGGED_OUT).then_some(Login::Expired))
+    }
+
+    fn asked(screen: &str) -> Option<Login> {
+        let texts: Vec<&str> = screen.lines().map(str::trim).collect();
+        if let Some(prompt) = texts.iter().rposition(|text| text.starts_with(LOGIN_CODE)) {
+            // Claude breaks the link at its width itself, so the rows are joined back.
+            let first = texts[..prompt].iter().rposition(|text| text.starts_with("https://"))?;
+            let rows = texts[first..prompt].iter().take_while(|text| !text.is_empty() && !text.contains(' '));
+            return Some(Login::Link(rows.copied().collect()));
+        }
+        let title = texts.iter().rposition(|text| *text == LOGIN_METHOD)?;
+        let mut options: Vec<(String, String)> = Vec::new();
+        let mut blank = false;
+        for text in &texts[title + 1..] {
+            if let Some(option) = numbered(text) {
+                options.push(option);
+            } else if text.is_empty() {
+                blank = true;
+                continue;
+            } else if let Some((_, label)) = options.last_mut().filter(|_| !blank) {
+                // A long option wraps onto the row below it.
+                label.push(' ');
+                label.push_str(text);
+            } else if !options.is_empty() {
+                break;
+            }
+            blank = false;
+        }
+        (options.len() >= 2).then(|| Login::Method(Menu { title: LOGIN_METHOD.trim_end_matches(':').into(), options }))
+    }
+}
+
 /// A menu with no numbers, such as "❯ No, exit" over "Yes, I trust this folder": the lines
 /// around the pointer, each picked by moving the pointer to it.
 fn pointed<'a>(texts: &[&'a str]) -> Option<(Vec<&'a str>, Vec<(String, String)>)> {

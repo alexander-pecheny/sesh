@@ -57,9 +57,17 @@ private struct AuthSheet: View {
         _values = State(initialValue: Array(repeating: "", count: question.prompts.count))
     }
 
+    private var passphrase: Bool { question.title == "Passphrase" }
+
     var body: some View {
-        Form {
+        VStack(alignment: .leading, spacing: Metric.pad) {
+            HStack(spacing: Metric.gap) {
+                Image.lucide("key-round", size: Metric.title)
+                Text(passphrase ? "Unlock your SSH key" : "Sign in to \(host)").font(.headline)
+            }
             Text(question.instruction.isEmpty ? "\(host) asks:" : question.instruction)
+                .foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
             ForEach(Array(question.prompts.enumerated()), id: \.offset) { index, prompt in
                 Group {
                     if prompt.echo {
@@ -68,16 +76,23 @@ private struct AuthSheet: View {
                         SecureField(prompt.text, text: $values[index])
                     }
                 }
+                .textFieldStyle(.roundedBorder)
+                .controlSize(.large)
                 .focused($focused, equals: index)
                 .onSubmit { if index == question.prompts.count - 1 { answer(values) } else { focused = index + 1 } }
             }
+            HStack {
+                Text(host).font(.caption).foregroundStyle(.tertiary)
+                Spacer()
+                Button("Cancel", role: .cancel) { answer(nil) }.keyboardShortcut(.cancelAction)
+                Button(passphrase ? "Unlock" : "Send") { answer(values) }
+                    .keyboardShortcut(.defaultAction)
+                    .buttonStyle(.borderedProminent)
+            }
+            .controlSize(.large)
         }
-        .padding()
+        .padding(Metric.wide + Metric.tiny)
         .frame(width: 420)
-        .toolbar {
-            ToolbarItem(placement: .cancellationAction) { Button("Cancel") { answer(nil) } }
-            ToolbarItem(placement: .confirmationAction) { Button("Send") { answer(values) } }
-        }
         .interactiveDismissDisabled()
         .onAppear { focused = 0 }
     }

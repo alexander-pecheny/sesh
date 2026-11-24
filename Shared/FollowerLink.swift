@@ -137,6 +137,26 @@ final class FollowerLink {
     /// One answer per question, as JSON: the labels picked, and any text typed instead.
     func answer(_ answers: String, in session: String) async -> String? { await ask("answer", session, ["--json", answers]) }
     func permit(_ allow: Bool, in session: String) async -> String? { await ask("permit", session, [allow ? "allow" : "deny"]) }
+    /// The link Claude in `pane` asks to be signed in at, after picking a Claude plan if it asks which way.
+    func loginLink(_ pane: String) async -> URL? {
+        guard await machine.prepare() == nil else { return nil }
+        let ran = await machine.run("\(Helper.path) login \(quote(pane))")
+        return ran.ok ? URL(string: ran.out.trimmingCharacters(in: .whitespacesAndNewlines)) : nil
+    }
+    /// The models Claude in `pane` can switch to, read off its `/model` menu.
+    func models(_ pane: String) async -> Result<[AgentModel], Problem> {
+        if let problem = await machine.prepare() { return .failure(Problem(problem)) }
+        let ran = await machine.run("\(Helper.path) model \(quote(pane))")
+        guard ran.ok else { return .failure(Problem(ran.problem)) }
+        guard let models = try? JSONDecoder().decode([AgentModel].self, from: Data(ran.out.utf8)) else {
+            return .failure(Problem("Claude's models did not read as a list."))
+        }
+        return .success(models)
+    }
+    /// Switches Claude in `pane` to a model for this session only; its default stays.
+    func pick(model label: String, in pane: String) async -> String? { await ask("model", pane, ["--pick", label]) }
+    /// Signs Claude in with the code its sign-in page showed.
+    func login(_ code: String, in pane: String) async -> String? { await ask("login", pane, ["--code", code]) }
     /// Interrupts the Agent and closes its pane.
     func stop(_ session: String) async -> String? { await ask("stop", session, []) }
 
@@ -169,6 +189,11 @@ final class FollowerLink {
         if let problem = await machine.prepare() { return problem }
         let ran = await machine.run(([Helper.path, op] + ([session] + args).map(quote)).joined(separator: " "))
         return ran.ok ? nil : ran.problem
+    }
+
+    struct Problem: Error {
+        let text: String
+        init(_ text: String) { self.text = text }
     }
 
     private struct Said: Decodable {
@@ -293,4 +318,12 @@ enum Reachability {
     }()
 
     static func online() -> Bool { monitor.currentPath.status == .satisfied }
+}
+
+/// A model Claude's `/model` menu offers, as the helper read it.
+struct AgentModel: Decodable, Identifiable, Hashable {
+    let label: String
+    let note: String
+    let current: Bool
+    var id: String { label }
 }

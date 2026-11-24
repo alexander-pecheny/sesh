@@ -26,7 +26,7 @@ const SAMPLES: &[(&str, &str, usize, bool)] = &[
     ("slash-command-with-args/session.jsonl", "a skill's slash command with arguments", 0, false),
     ("subagent-waits-on-its-shells/session.jsonl", "background Agents, one reporting early that it waits on its own shells", 4, false),
     ("subagent-waits-on-its-shells/subagents/agent-a917d397ed67a8134.jsonl", "that subagent's own shells and Monitors", 0, false),
-    ("taskstop-and-queue/session.jsonl", "a command moved to the background by a message, then TaskStop", 0, false),
+    ("taskstop-and-queue/session.jsonl", "a command moved to the background by a message, then TaskStop; two Agents still waiting on their own work", 2, false),
 ];
 
 /// `SESH_CLAUDE_CORPUS` reads a recording made with `--raw` instead, to compare with its copy.
