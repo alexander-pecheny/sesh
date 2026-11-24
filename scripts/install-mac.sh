@@ -3,6 +3,14 @@ set -euo pipefail
 cd "$(dirname "$0")/.."
 id=me.pecheny.sesh.mac
 app=build/mac/Build/Products/Release/Sesh.app
+if ! git merge-base --is-ancestor HEAD main; then
+  echo "HEAD is not on main. Merge it into main before installing." >&2
+  exit 1
+fi
+if ! git diff --quiet HEAD; then
+  echo "There are uncommitted changes. Commit and merge them into main before installing." >&2
+  exit 1
+fi
 running() { [ "$(osascript -e "application id \"$id\" is running")" = true ]; }
 
 xcodegen generate --quiet
