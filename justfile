@@ -90,7 +90,8 @@ stream-phone file="scripts/stream-sample.md": build
     xcrun simctl terminate {{udid}} {{bundle_id}} || true
     xcrun simctl launch {{udid}} {{bundle_id}} -stream "$(realpath {{file}})"
 
-# Build Release and install it over /Applications/Sesh.app, quitting and reopening a running one.
+# Build Release from a commit on main and install it over /Applications/Sesh.app, quitting and
+# reopening a running one.
 mac:
     ./scripts/install-mac.sh
 
