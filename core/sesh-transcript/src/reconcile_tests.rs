@@ -322,6 +322,20 @@ fn a_transcript_found_after_the_hello_reaches_the_session_summary() {
 }
 
 #[test]
+fn a_new_follower_drops_the_questions_its_predecessor_left_open() {
+    let dir = std::env::temp_dir().join(format!("sesh-reopened-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let log = Log::open(&dir.join("sessions.db")).unwrap();
+    let mut writer = Writer::new("p1", &log).unwrap();
+    let hello = || Event::Hello { agent: crate::Agent::Pi, transcript: String::new() };
+    let asked = |id: &str| Event::Permission(json!({"t": "permission", "id": id, "tool": "menu"}));
+    writer.apply(&log, &[hello(), asked("menu.old"), hello(), asked("menu.new")], None).unwrap();
+    let summary = log.session("p1").unwrap().unwrap();
+    std::fs::remove_dir_all(&dir).unwrap();
+    assert_eq!(summary["permissions"], json!([{"id": "menu.new", "tool": "menu"}]));
+}
+
+#[test]
 fn a_message_claude_holds_stays_handed_on_a_screen_missing_its_send_now_line() {
     let now = Instant::now();
     let mut live = Reconciler::default();

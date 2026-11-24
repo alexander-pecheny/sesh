@@ -416,6 +416,8 @@ impl Writer {
             Event::Hello { agent, transcript } => {
                 self.summary["agent"] = agent.name().into();
                 self.summary["transcript"] = transcript.clone().into();
+                // A new follower knows nothing of the questions open before it and asks again.
+                self.summary["permissions"] = json!([]);
             }
             Event::Entry { entry, replaces } => {
                 self.summary["last"] = entry.at.clone().into();
