@@ -215,8 +215,7 @@ fn manifest_cache() -> &'static RwLock<ManifestCache> {
 
 fn build_manifest_cache() -> ManifestCache {
     ManifestCache {
-        manifests: Agent::SCREEN_MANIFEST_AGENTS
-            .into_iter()
+        manifests: Agent::all()
             .map(|agent| (agent, load_manifest_uncached(agent)))
             .collect(),
     }
@@ -439,15 +438,14 @@ fn bundled_loaded_manifest(
     })
 }
 
+/// The rules built into sesh-mux, or those an added Agent's file holds, if they compile.
 fn bundled_manifest(agent: Agent) -> Option<AgentManifest> {
     let id = agent_label(agent);
-    BUNDLED_MANIFESTS
-        .iter()
-        .find(|(manifest_id, _)| *manifest_id == id)
-        .map(|(_, content)| {
-            parse_manifest(content)
-                .unwrap_or_else(|err| panic!("bundled {id} manifest is invalid: {err}"))
-        })
+    let Some((_, content)) = BUNDLED_MANIFESTS.iter().find(|(manifest_id, _)| *manifest_id == id) else {
+        let manifest = parse_manifest(agent.spec().detect.as_deref()?).ok()?;
+        return compile_manifest(&manifest).is_ok().then_some(manifest);
+    };
+    Some(parse_manifest(content).unwrap_or_else(|err| panic!("bundled {id} manifest is invalid: {err}")))
 }
 
 fn read_override_manifest(path: &Path) -> Result<AgentManifest, String> {

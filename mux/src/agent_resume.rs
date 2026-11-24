@@ -66,17 +66,12 @@ impl AgentLaunch {
 }
 
 fn args_without_session(agent: crate::detect::Agent, args: &[String]) -> Vec<String> {
-    use crate::detect::Agent;
-    let flags: &[&str] = match agent {
-        Agent::Claude => &["--session-id", "--resume", "-r"],
-        Agent::Codex => &["resume"],
-        Agent::Pi => &["--session"],
-    };
+    let flags = &agent.spec().resume.flags;
     let mut kept = Vec::new();
     let mut args = args.iter().peekable();
     while let Some(arg) = args.next() {
         let flag = arg.split_once('=').map_or(arg.as_str(), |(flag, _)| flag);
-        if !flags.contains(&flag) {
+        if !flags.iter().any(|known| known == flag) {
             kept.push(arg.clone());
         } else if flag == arg && args.peek().is_some_and(|value| !value.starts_with('-')) {
             args.next();
@@ -132,7 +127,7 @@ pub fn session_ref_from_report(
         return None;
     }
 
-    if agent == "pi" || agent == "omp" {
+    if resumed_by_path(agent) {
         return agent_session_path
             .and_then(AgentSessionRef::path)
             .or_else(|| agent_session_id.and_then(AgentSessionRef::id));
@@ -143,29 +138,27 @@ pub fn session_ref_from_report(
         .map(|session_ref| session_ref.with_path(agent_session_path))
 }
 
+fn resumed_by_path(agent: &str) -> bool {
+    agent == "omp" || crate::detect::parse_canonical_agent_label(agent).is_some_and(|agent| agent.spec().resume.by_path())
+}
+
+/// The session an Agent was started on, when its arguments name one.
 pub fn persisted_session_from_launch_args(
     agent: crate::detect::Agent,
     args: &[String],
 ) -> Option<PersistedAgentSession> {
-    if agent == crate::detect::Agent::Claude {
-        let at = args.iter().position(|arg| arg == "--session-id" || arg == "--resume")?;
-        return Some(PersistedAgentSession {
-            source: "sesh-mux:claude".into(),
-            agent: "claude".into(),
-            session_ref: AgentSessionRef::id(args.get(at + 1)?.clone())?,
-        });
-    }
-    let [command, session_id] = args else {
-        return None;
-    };
-    if agent != crate::detect::Agent::Codex || command != "resume" || session_id.starts_with('-') {
+    let resume = &agent.spec().resume;
+    let at = args.iter().position(|arg| resume.flags.contains(arg))?;
+    // A subcommand, as Codex's `resume`, names the session only when nothing else is given.
+    if !args[at].starts_with('-') && args.len() != 2 {
         return None;
     }
-
+    let value = args.get(at + 1).filter(|value| !value.starts_with('-'))?.clone();
+    let name = crate::detect::agent_label(agent);
     Some(PersistedAgentSession {
-        source: "sesh-mux:codex".into(),
-        agent: "codex".into(),
-        session_ref: AgentSessionRef::id(session_id.clone())?,
+        source: format!("sesh-mux:{name}"),
+        agent: name.into(),
+        session_ref: if resume.by_path() { AgentSessionRef::path(value)? } else { AgentSessionRef::id(value)? },
     })
 }
 
@@ -199,10 +192,8 @@ pub(crate) fn deserialize_canonical_source<'de, D: serde::Deserializer<'de>>(
 }
 
 pub fn is_reserved_native_state_source(source: &str, agent: &str) -> bool {
-    matches!(
-        (source, agent),
-        ("sesh-mux:claude", "claude") | ("sesh-mux:codex", "codex")
-    )
+    is_official_agent_source(source, agent)
+        && crate::detect::parse_canonical_agent_label(agent).is_some_and(|agent| agent.spec().hooks)
 }
 
 pub fn session_ref_from_snapshot(
@@ -215,9 +206,9 @@ pub fn session_ref_from_snapshot(
     if !is_official_agent_source(source, agent) {
         return None;
     }
-    let session_ref = match (agent, kind) {
-        ("pi", AgentSessionRefKind::Path) => AgentSessionRef::path(value)?,
-        (_, AgentSessionRefKind::Id) => {
+    let session_ref = match kind {
+        AgentSessionRefKind::Path if resumed_by_path(agent) => AgentSessionRef::path(value)?,
+        AgentSessionRefKind::Id => {
             AgentSessionRef::id(value)?.with_path(path.map(str::to_string))
         }
         _ => return None,
@@ -239,20 +230,19 @@ pub fn plan(
         return None;
     }
 
-    let resume_args = match (source, agent, session_ref.kind) {
-        ("sesh-mux:claude", "claude", AgentSessionRefKind::Id) => ["--resume", &session_ref.value],
-        ("sesh-mux:codex", "codex", AgentSessionRefKind::Id) => ["resume", &session_ref.value],
-        ("sesh-mux:pi", "pi", AgentSessionRefKind::Path | AgentSessionRefKind::Id) => {
-            ["--session", &session_ref.value]
-        }
-        _ => return None,
-    };
+    let kind = crate::detect::parse_canonical_agent_label(agent)?;
+    if session_ref.kind == AgentSessionRefKind::Path && !kind.spec().resume.by_path() {
+        return None;
+    }
+    let resume_args = kind.spec().resume.args.iter().map(|arg| arg.replace("{id}", &session_ref.value).replace("{path}", &session_ref.value));
     let launch = launch.cloned().unwrap_or_default();
-    let args = launch.args.into_iter().chain(resume_args.map(str::to_string)).collect();
+    let subcommand = crate::detect::interactive_agent_subcommand(kind).iter().cloned();
+    let args = subcommand.chain(launch.args).chain(resume_args).collect();
+    let executable = crate::detect::interactive_agent_executable(kind);
 
     Some(AgentResumePlan {
         agent: agent.to_string(),
-        argv: launch_argv(agent, &launch.env, args)?,
+        argv: launch_argv(executable, &launch.env, args)?,
         dedupe_key: dedupe_key(source, agent, session_ref),
     })
 }
@@ -265,10 +255,7 @@ pub fn dedupe_key(source: &str, agent: &str, session_ref: &AgentSessionRef) -> S
 }
 
 pub(crate) fn is_official_agent_source(source: &str, agent: &str) -> bool {
-    matches!(
-        (source, agent),
-        ("sesh-mux:claude", "claude") | ("sesh-mux:codex", "codex") | ("sesh-mux:pi", "pi")
-    )
+    source.strip_prefix("sesh-mux:") == Some(agent) && crate::detect::parse_canonical_agent_label(agent).is_some()
 }
 
 fn valid_session_id(value: &str) -> bool {

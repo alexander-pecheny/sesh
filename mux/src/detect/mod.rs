@@ -3,6 +3,7 @@
 //! Each pane's live bottom-of-buffer text is read periodically and matched
 //! against known agent output patterns to determine state.
 
+pub mod agents;
 pub mod manifest;
 mod manifest_version;
 
@@ -38,33 +39,19 @@ pub struct AgentDetection {
     pub visible_working: bool,
 }
 
-/// Which agent we detected running in a pane.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum Agent {
-    Pi,
-    Claude,
-    Codex,
-}
-
-impl Agent {
-    pub const ALL: [Self; 3] = [Self::Pi, Self::Claude, Self::Codex];
-    pub const SCREEN_MANIFEST_AGENTS: [Self; 3] = Self::ALL;
-}
+pub use agents::Agent;
 
 pub fn agent_label(agent: Agent) -> &'static str {
-    match agent {
-        Agent::Pi => "pi",
-        Agent::Claude => "claude",
-        Agent::Codex => "codex",
-    }
+    &agent.spec().name
 }
 
 pub fn interactive_agent_executable(agent: Agent) -> &'static str {
-    match agent {
-        Agent::Pi => "pi",
-        Agent::Claude => "claude",
-        Agent::Codex => "codex",
-    }
+    &agent.spec().command[0]
+}
+
+/// What goes before the Agent's own arguments, when it runs as a subcommand.
+pub fn interactive_agent_subcommand(agent: Agent) -> &'static [String] {
+    &agent.spec().command[1..]
 }
 
 pub fn parse_agent_label(agent: &str) -> Option<Agent> {
@@ -79,12 +66,10 @@ pub(crate) fn parse_canonical_agent_label(label: &str) -> Option<Agent> {
 
 fn lookup_agent(name: &str) -> Option<Agent> {
     let name = path_basename(name);
-    match name {
-        "pi" => Some(Agent::Pi),
-        "claude" | "claude-code" => Some(Agent::Claude),
-        "codex" => Some(Agent::Codex),
-        _ => None,
-    }
+    Agent::all().find(|agent| {
+        let spec = agent.spec();
+        spec.name == name || spec.process_names.iter().any(|known| known == name)
+    })
 }
 
 /// Identify which agent is running from the process name.

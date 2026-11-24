@@ -171,27 +171,25 @@ impl App {
         id: String,
         params: PaneReportAgentParams,
     ) -> String {
-        let Some((ws_idx, pane_id)) = self.parse_pane_id(&params.pane_id) else {
+        let Some((_, pane_id)) = self.parse_pane_id(&params.pane_id) else {
             return pane_not_found(id, &params.pane_id);
         };
         let Some(agent_label) = normalize_reported_agent_label(&params.agent) else {
             return invalid_agent(id);
         };
-        self.reporting(ws_idx, pane_id, |app| {
-            app.handle_internal_event(crate::events::AppEvent::HookStateReported {
-                pane_id,
-                session_ref: crate::agent_resume::session_ref_from_report(
-                    &params.source,
-                    &agent_label,
-                    params.agent_session_id,
-                    params.agent_session_path,
-                ),
-                source: params.source,
-                agent_label,
-                state: detect_state_from_api(params.state),
-                message: params.message,
-                seq: params.seq,
-            })
+        self.handle_internal_event(crate::events::AppEvent::HookStateReported {
+            pane_id,
+            session_ref: crate::agent_resume::session_ref_from_report(
+                &params.source,
+                &agent_label,
+                params.agent_session_id,
+                params.agent_session_path,
+            ),
+            source: params.source,
+            agent_label,
+            state: detect_state_from_api(params.state),
+            message: params.message,
+            seq: params.seq,
         });
 
         encode_success(id, ResponseResult::Ok {})
@@ -202,28 +200,26 @@ impl App {
         id: String,
         params: PaneReportAgentSessionParams,
     ) -> String {
-        let Some((ws_idx, pane_id)) = self.parse_pane_id(&params.pane_id) else {
+        let Some((_, pane_id)) = self.parse_pane_id(&params.pane_id) else {
             return pane_not_found(id, &params.pane_id);
         };
         let Some(agent_label) = normalize_reported_agent_label(&params.agent) else {
             return invalid_agent(id);
         };
-        self.reporting(ws_idx, pane_id, |app| {
-            app.handle_internal_event(crate::events::AppEvent::AgentSessionReported {
-                pane_id,
-                session_ref: crate::agent_resume::session_ref_from_report(
-                    &params.source,
-                    &agent_label,
-                    params.agent_session_id,
-                    params.agent_session_path,
-                ),
-                source: params.source,
-                agent_label,
-                seq: params.seq,
-                session_start_source: crate::agent_resume::normalize_session_start_source(
-                    params.session_start_source,
-                ),
-            })
+        self.handle_internal_event(crate::events::AppEvent::AgentSessionReported {
+            pane_id,
+            session_ref: crate::agent_resume::session_ref_from_report(
+                &params.source,
+                &agent_label,
+                params.agent_session_id,
+                params.agent_session_path,
+            ),
+            source: params.source,
+            agent_label,
+            seq: params.seq,
+            session_start_source: crate::agent_resume::normalize_session_start_source(
+                params.session_start_source,
+            ),
         });
 
         encode_success(id, ResponseResult::Ok {})
@@ -254,20 +250,6 @@ impl App {
         });
         self.emit_pane_updated(ws_idx, pane_id);
         encode_success(id, ResponseResult::Ok {})
-    }
-
-    /// Plays a hook's report, and tells subscribers of the pane when it named another Agent
-    /// session, which no state change announces, so a follower need not list panes on a timer.
-    fn reporting(&mut self, ws_idx: usize, pane_id: PaneId, report: impl FnOnce(&mut Self)) {
-        let session = |app: &Self| {
-            app.pane_info(ws_idx, pane_id)
-                .and_then(|pane| pane.agent_session)
-        };
-        let before = session(self);
-        report(self);
-        if session(self) != before {
-            self.emit_pane_updated(ws_idx, pane_id);
-        }
     }
 
     pub(super) fn handle_pane_report_metadata(

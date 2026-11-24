@@ -651,8 +651,7 @@ fn print_agent_help() {
     eprintln!("  targets accept unique agent names and pane ids that currently host agents");
     eprintln!(
         "  kinds: {}",
-        crate::detect::Agent::ALL
-            .into_iter()
+        crate::detect::Agent::all()
             .map(crate::detect::agent_label)
             .collect::<Vec<_>>()
             .join("|")

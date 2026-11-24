@@ -185,7 +185,8 @@ impl App {
         let mut env = params.env;
         env.insert(crate::integration::SESH_MUX_PANE_ID_ENV_VAR.into(), params.pane_id.clone());
         env.insert(crate::api::SOCKET_PATH_ENV_VAR.into(), crate::api::socket_path().to_string_lossy().into_owned());
-        let argv = launch_argv(crate::detect::interactive_agent_executable(kind), &env, params.args)
+        let args = crate::detect::interactive_agent_subcommand(kind).iter().cloned().chain(params.args).collect();
+        let argv = launch_argv(crate::detect::interactive_agent_executable(kind), &env, args)
             .ok_or(AgentStartError::InvalidArgument)?;
         let command = crate::platform::interactive_shell_command(&argv, &shell_name)
             .ok_or(AgentStartError::InvalidArgument)?;

@@ -220,6 +220,57 @@ async fn publish_state_changed_event(
     }
 }
 
+const SESSION_FILE_RECHECK: std::time::Duration = std::time::Duration::from_secs(1);
+
+/// An Agent with no hooks may say in a file which session its process holds, which changes when
+/// the user starts or resumes another one; its agent file names that file.
+#[derive(Default)]
+struct SessionFilePoll {
+    session: Option<String>,
+    checked: Option<std::time::Instant>,
+}
+
+impl SessionFilePoll {
+    async fn poll(
+        &mut self,
+        agent: Option<Agent>,
+        pgid: Option<u32>,
+        now: std::time::Instant,
+        state_events: &mpsc::Sender<AppEvent>,
+        pane_id: PaneId,
+    ) {
+        let Some((agent, file)) = agent.and_then(|agent| Some((agent, agent.spec().session.as_ref()?))) else {
+            self.session = None;
+            return;
+        };
+        let due = self.checked.is_none_or(|checked| now.duration_since(checked) >= SESSION_FILE_RECHECK);
+        let Some(pgid) = pgid.filter(|_| due) else {
+            return;
+        };
+        self.checked = Some(now);
+        let Some((session, transcript)) = file.read(pgid) else {
+            return;
+        };
+        if self.session.as_ref() == Some(&session) {
+            return;
+        }
+        let start = if self.session.is_none() { "startup" } else { "new" };
+        let agent = crate::detect::agent_label(agent);
+        let source = format!("sesh-mux:{agent}");
+        let event = AppEvent::AgentSessionReported {
+            pane_id,
+            session_ref: crate::agent_resume::session_ref_from_report(&source, agent, Some(session.clone()), Some(transcript)),
+            source,
+            agent_label: agent.into(),
+            seq: None,
+            session_start_source: Some(start.into()),
+        };
+        if state_events.send(event).await.is_ok() {
+            self.session = Some(session);
+        }
+    }
+}
+
 async fn publish_agent_process_detected_event(
     state_events: mpsc::Sender<AppEvent>,
     pane_id: PaneId,
@@ -703,6 +754,7 @@ fn spawn_basic_detection_task(
         let mut last_screen_scan_detection_content_seq = None;
         let mut agent_startup_grace_until = None;
         let mut pending_idle = PendingIdleConfirmation::default();
+        let mut session_file = SessionFilePoll::default();
 
         loop {
             let sleep_duration = if pending_idle.active() {
@@ -731,6 +783,7 @@ fn spawn_basic_detection_task(
                     last_screen_scan_detection_content_seq = None;
                     agent_startup_grace_until = None;
                     pending_idle.clear();
+                    session_file = SessionFilePoll::default();
                 }
             }
 
@@ -845,6 +898,8 @@ fn spawn_basic_detection_task(
                     }
                 }
             }
+
+            session_file.poll(agent, foreground_pgid, now, &state_events, pane_id).await;
 
             let process_exited = pending_foreground_shell_clear
                 && agent.is_some()
@@ -2387,6 +2442,7 @@ impl PaneRuntime {
                 let mut last_screen_scan_detection_content_seq = None;
                 let mut agent_startup_grace_until = None;
                 let mut pending_idle = PendingIdleConfirmation::default();
+        let mut session_file = SessionFilePoll::default();
 
                 tokio::time::sleep(Duration::from_millis(50)).await;
 
@@ -2425,6 +2481,7 @@ impl PaneRuntime {
                             last_screen_scan_detection_content_seq = None;
                             agent_startup_grace_until = None;
                             pending_idle.clear();
+                            session_file = SessionFilePoll::default();
                         }
                     }
 
@@ -2601,6 +2658,8 @@ impl PaneRuntime {
                             render_notify.notify_one();
                         }
                     }
+
+                    session_file.poll(agent, last_foreground_pgid, now, &state_events, pane_id).await;
 
                     let process_exited = pending_foreground_shell_clear
                         && agent.is_some()

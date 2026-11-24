@@ -157,8 +157,26 @@ impl App {
             None
         };
 
+        // A report naming another Agent session changes no state, so subscribers of the pane are
+        // told of it here and a follower need not list panes on a timer.
+        let reported = match &ev {
+            AppEvent::AgentSessionReported { pane_id, .. }
+            | AppEvent::HookStateReported { pane_id, .. } => self
+                .find_pane(*pane_id)
+                .map(|(ws_idx, _)| (ws_idx, *pane_id)),
+            _ => None,
+        };
+        let session = |app: &Self| {
+            reported
+                .and_then(|(ws_idx, pane_id)| app.pane_info(ws_idx, pane_id))
+                .and_then(|pane| pane.agent_session)
+        };
+        let session_before = session(self);
         let terminal_cwd_reported = matches!(ev, AppEvent::TerminalCwdReported { .. });
         let mut pane_updates = self.state.handle_app_event(ev);
+        if let Some((ws_idx, pane_id)) = reported.filter(|_| session(self) != session_before) {
+            self.emit_pane_updated(ws_idx, pane_id);
+        }
         if checkpointed_pane_exit {
             self.finish_checkpointed_pane_exit();
         }

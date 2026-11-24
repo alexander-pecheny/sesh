@@ -1385,7 +1385,9 @@ impl TerminalState {
                     Some("startup" | "clear" | "resume" | "compact" | "branch")
                 )
                 | ("sesh-mux:antigravity_cli", "agy", None)
-        )
+        ) || matches!(session_start_source, Some("startup" | "new"))
+            && crate::agent_resume::is_official_agent_source(source, agent_label)
+            && crate::detect::parse_canonical_agent_label(agent_label).is_some_and(|agent| agent.spec().session.is_some())
     }
 
     fn session_start_source_is_recognized(session_start_source: Option<&str>) -> bool {
