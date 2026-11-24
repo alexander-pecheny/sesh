@@ -48,6 +48,7 @@ targets:
         type: folder
         buildPhase: resources
       - path: Resources/licenses.json
+      - path: Resources/agents.json
       - path: Resources/helpers.json
       - path: Resources/sesh-mux.json
       - path: Resources/mosh-server.json
@@ -82,6 +83,7 @@ targets:
       - path: SeshMac
       - path: Shared
       - path: Resources/Icons.xcassets
+      - path: Resources/agents.json
       - path: Resources/helpers.json
       - path: Resources/mosh-server.json
       - path: Resources/sesh-mux.json
@@ -139,6 +141,7 @@ targets:
     sources:
       - path: SeshTests
         excludes: [Fixtures]
+      - path: Resources/agents.json
       - path: Shared/SessionLog.swift
       - path: Shared/ChatScroll.swift
       - path: Shared/Shell.swift

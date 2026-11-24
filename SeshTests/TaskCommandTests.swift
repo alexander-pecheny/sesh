@@ -185,6 +185,14 @@ final class TaskCommandTests: XCTestCase {
         XCTAssertNil(menu(.session(session.id), life: .resuming).permissions)
     }
 
+    func testEachAgentResumesTheWayItsFileSays() {
+        let id = "0199a213-81c0-7800-8aa1-bbab2a035a53"
+        XCTAssertEqual(Agent.codex.args("fix", resuming: "/s/2026/11/02/rollout-2026-11-02T10-00-00-\(id).jsonl", bypass: false), ["resume", id])
+        XCTAssertEqual(Agent.pi.args("fix", resuming: "/s/x.jsonl"), ["--session", "/s/x.jsonl"])
+        XCTAssertEqual(Agent(rawValue: "pi"), .pi)
+        XCTAssertNil(Agent(rawValue: "aider"))
+    }
+
     func testANewWorktreesBranchTakesTheNextFreeNumber() {
         XCTAssertEqual(Start.nextBranch(after: "me/fix", taken: ["main", "me/fix"]), "me/fix-2")
         XCTAssertEqual(Start.nextBranch(after: "me/fix", taken: ["me/fix", "me/fix-2", "me/fix-3", "me/fix-5"]), "me/fix-4")

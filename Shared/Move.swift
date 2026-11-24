@@ -247,8 +247,7 @@ struct Move {
             let settings = account == home + "/.claude" ? home + "/.claude.json" : account + "/.claude.json"
             lines.append("[ -s \(quote(account + "/.credentials.json")) ] || grep -qs oauthAccount \(quote(settings)) || echo out claude \(quote(account))")
         }
-        if agents.contains(.codex) { lines.append("[ -s ~/.codex/auth.json ] || echo out codex") }
-        if agents.contains(.pi) { lines.append("[ -s ~/.pi/agent/auth.json ] || echo out pi") }
+        lines += agents.compactMap { agent in agent.loggedIn.map { "\($0) || echo out \(agent.rawValue)" } }
         return lines.joined(separator: "\n")
     }
 }

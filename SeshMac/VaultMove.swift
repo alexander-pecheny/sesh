@@ -243,8 +243,8 @@ final class VaultMove {
             case ("out", .claude, let account?):
                 let command = account == move.newHome + "/.claude" ? "claude" : "CLAUDE_CONFIG_DIR=\(account) claude"
                 notes.append("Claude in \(account) is not logged in on \(to). Log in there with \(command).")
-            case ("out", .codex, _):
-                notes.append("Codex is not logged in on \(to). Log in there with codex login.")
+            case ("out", _, _) where agent.login != nil:
+                notes.append("\(agent.title) is not logged in on \(to). Log in there with \(agent.login ?? "").")
             case ("out", _, _):
                 notes.append("\(agent.title) is not logged in on \(to). Start \(agent.rawValue) there and log in with /login.")
             default: break

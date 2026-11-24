@@ -279,7 +279,12 @@ final class Library: ObservableObject {
                 for machine in machines where self.followers[machine.id] == nil {
                     self.followers[machine.id] = Task { [weak self] in
                         await machine.follower.sessions { online in
-                            if online { self?.listed.insert(machine.id) } else { self?.listed.remove(machine.id) }
+                            if online {
+                                self?.listed.insert(machine.id)
+                                Task { await Agent.learn(on: machine) }
+                            } else {
+                                self?.listed.remove(machine.id)
+                            }
                             self?.sync()
                         } line: { self?.summarize($0, on: machine.id) }
                     }

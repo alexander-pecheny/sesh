@@ -64,9 +64,19 @@ always with remote control, and opens in the Claude app; Sesh shows no Conversat
 _Avoid_: lite mode, easy mode
 
 **Agent**:
-The coding agent behind an Agent session: Claude, Codex or pi. Other coding agents running
-on the Host are not Agents, and Sesh does not show them.
+The coding agent behind an Agent session: Claude, Codex, pi, or one an agent file on the Host
+adds. Other coding agents running on the Host are not Agents, and Sesh does not show them.
 _Avoid_: model, tool, kind
+
+**Agent file**:
+A TOML file that describes one Agent: how to start and resume it, where it keeps its
+Transcripts and what its screen shows. Claude's, Codex's and pi's ship in `mux/agents`; others
+go in `~/.config/sesh/agents` on the Host (ADR 0025).
+
+**Plugin**:
+A program an Agent file names to read that Agent's Transcripts and menus where the file alone
+cannot. One copy runs per Host.
+_Avoid_: extension, adapter
 
 **Agent session**:
 One conversation with one Agent, running on the Host in one folder, optionally on its own

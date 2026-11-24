@@ -1,34 +1,113 @@
 import Foundation
 
-/// The coding agents Sesh can start and show. Anything else sesh-mux finds stays hidden.
-enum Agent: String, CaseIterable, Identifiable {
-    case claude, codex, pi
+/// A coding agent Sesh can start and show, as its agent file describes it. Claude's, Codex's
+/// and pi's come with Sesh; a machine's helper names any others it knows, and Sesh remembers
+/// them. Anything else sesh-mux finds stays hidden.
+struct Agent: Hashable, Identifiable, Decodable {
+    let rawValue: String
+    let title: String
+    let install: String?
+    /// Shell lines that print `out <name>` when the Agent is not logged in, and how to log in.
+    let loggedIn: String?
+    let login: String?
+    private let start: Start
+    private let resume: [String]
+    private let idLength: Int?
+
+    private struct Start: Decodable {
+        var new: [String]?
+        var remote: [String]?
+        var bypass: [String]?
+    }
+
+    private struct Resume: Decodable { let args: [String]? }
+    private struct Files: Decodable { let id_length: Int? }
+
+    private enum Keys: String, CodingKey {
+        case name, title, install, logged_in, login, start, resume, transcript
+    }
+
+    init(from decoder: Decoder) throws {
+        let file = try decoder.container(keyedBy: Keys.self)
+        rawValue = try file.decode(String.self, forKey: .name)
+        title = try file.decodeIfPresent(String.self, forKey: .title) ?? rawValue
+        install = try file.decodeIfPresent(String.self, forKey: .install)
+        loggedIn = try file.decodeIfPresent(String.self, forKey: .logged_in)
+        login = try file.decodeIfPresent(String.self, forKey: .login)
+        start = try file.decodeIfPresent(Start.self, forKey: .start) ?? Start()
+        resume = try file.decodeIfPresent(Resume.self, forKey: .resume)?.args ?? []
+        idLength = try file.decodeIfPresent(Files.self, forKey: .transcript)?.id_length
+    }
+
+    static func == (one: Agent, other: Agent) -> Bool { one.rawValue == other.rawValue }
+    func hash(into hasher: inout Hasher) { hasher.combine(rawValue) }
 
     var id: String { rawValue }
-    var title: String { self == .pi ? "pi" : rawValue.capitalized }
-    /// pi never asks permission, so it has no mode to choose.
-    var asks: Bool { self != .pi }
+    /// An Agent that never asks permission has no mode to choose.
+    var asks: Bool { !(start.bypass ?? []).isEmpty }
+
+    static let claude = builtIn("claude")
+    static let codex = builtIn("codex")
+    static let pi = builtIn("pi")
 
     /// With `bypass` the Agent asks no permission; without it, the chat shows each question. With a
     /// Transcript, the Agent picks up the conversation it holds.
     func args(_ name: String, resuming transcript: String? = nil, remote: Bool = true, bypass: Bool = true) -> [String] {
-        let id = ((transcript ?? "") as NSString).lastPathComponent.replacingOccurrences(of: ".jsonl", with: "")
-        switch self {
+        let stem = ((transcript ?? "") as NSString).lastPathComponent.replacingOccurrences(of: ".jsonl", with: "")
+        let id = idLength.map { String(stem.suffix($0)) } ?? stem
+        let session = transcript == nil ? start.new ?? [] : resume
+        let args = (remote ? start.remote ?? [] : []) + (bypass ? start.bypass ?? [] : []) + session
         // A new Claude gets its session id from Sesh, so sesh-mux knows its Transcript before any hook runs.
-        case .claude: return (remote ? ["--remote-control", name] : []) + (bypass ? ["--dangerously-skip-permissions"] : [])
-            + (transcript == nil ? ["--session-id", UUID().uuidString.lowercased()] : ["--resume", id])
-        // Codex names its files rollout-<time>-<uuid>.
-        case .codex: return (transcript == nil ? [] : ["resume", String(id.suffix(36))]) + (bypass ? ["--dangerously-bypass-approvals-and-sandbox"] : [])
-        case .pi: return transcript.map { ["--session", $0] } ?? []
+        let uuid = UUID().uuidString.lowercased()
+        return args.map {
+            $0.replacingOccurrences(of: "{id}", with: id).replacingOccurrences(of: "{path}", with: transcript ?? "")
+                .replacingOccurrences(of: "{name}", with: name).replacingOccurrences(of: "{uuid}", with: uuid)
         }
     }
 
-    var install: String {
-        switch self {
-        case .claude: "curl -fsSL https://claude.ai/install.sh | bash"
-        case .codex: "npm install -g @openai/codex"
-        case .pi: "npm install -g @mariozechner/pi-coding-agent"
-        }
+    init?(rawValue: String) {
+        guard let known = Self.known.first(where: { $0.rawValue == rawValue }) else { return nil }
+        self = known
+    }
+
+    /// Every Agent Sesh knows: the built-in ones, then those machines named.
+    static var allCases: [Agent] { known }
+
+    /// The test bundle carries its own copy, since it has no app around it.
+    private static let builtIns: [Agent] = ([Bundle.main] + Bundle.allBundles).lazy
+        .compactMap { $0.url(forResource: "agents", withExtension: "json") }.first
+        .flatMap { try? Data(contentsOf: $0) }
+        .flatMap { try? JSONDecoder().decode([Agent].self, from: $0) } ?? []
+
+    private static func builtIn(_ name: String) -> Agent {
+        guard let agent = builtIns.first(where: { $0.rawValue == name }) else { fatalError("agents.json lacks \(name)") }
+        return agent
+    }
+
+    private static let remembered = "agents"
+    private static var learnt: [Agent] = UserDefaults.standard.data(forKey: remembered)
+        .flatMap { try? JSONDecoder().decode([Agent].self, from: $0) } ?? []
+
+    private static var known: [Agent] {
+        builtIns + learnt.filter { agent in !builtIns.contains(agent) }
+    }
+
+    /// Learns the Agents a machine's helper knows, which a helper too old to tell leaves as they were.
+    /// Each agent file is kept whole, so what Sesh remembers decodes as the helper wrote it.
+    @MainActor
+    static func learn(on runner: Runner) async {
+        let ran = await runner.run("\(Helper.path) agents")
+        typealias File = [String: Any]
+        guard ran.ok, let listed = (try? JSONSerialization.jsonObject(with: Data(ran.out.utf8))) as? File,
+              let named = listed["agents"] as? [File] else { return }
+        let kept = UserDefaults.standard.data(forKey: remembered).flatMap { try? JSONSerialization.jsonObject(with: $0) } as? [File] ?? []
+        let added = named.filter { file in !builtIns.contains { $0.rawValue == file["name"] as? String } }
+        let names = Set(added.compactMap { $0["name"] as? String })
+        let files = kept.filter { !names.contains($0["name"] as? String ?? "") } + added
+        guard let data = try? JSONSerialization.data(withJSONObject: files),
+              let agents = try? JSONDecoder().decode([Agent].self, from: data) else { return }
+        UserDefaults.standard.set(data, forKey: remembered)
+        learnt = agents
     }
 }
 

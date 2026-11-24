@@ -34,6 +34,10 @@ core:
     git submodule update --init --recursive
     ./scripts/build-core.sh
 
+# The built-in agent files as the app reads them, into Resources/agents.json.
+agents:
+    cd core && SESH_AGENTS=/nonexistent cargo run -q -p sesh-transcript -- agents | uv run python -c "import json, sys; print(json.dumps(json.load(sys.stdin)['agents'], indent=2, ensure_ascii=False))" > ../Resources/agents.json
+
 # sesh-transcript for each Host platform, into build/helpers.
 helpers:
     ./scripts/build-helpers.sh

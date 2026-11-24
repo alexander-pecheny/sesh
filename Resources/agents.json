@@ -1,0 +1,143 @@
+[
+  {
+    "command": [
+      "claude"
+    ],
+    "hooks": true,
+    "install": "curl -fsSL https://claude.ai/install.sh | bash",
+    "name": "claude",
+    "permissions": {
+      "allow": "1",
+      "menu": "Esc to cancel · Tab to amend"
+    },
+    "process_names": [
+      "claude-code"
+    ],
+    "questions": {
+      "menu": "Enter to select ·",
+      "submit": "Ready to submit your answers?"
+    },
+    "resume": {
+      "args": [
+        "--resume",
+        "{id}"
+      ],
+      "flags": [
+        "--session-id",
+        "--resume",
+        "-r"
+      ]
+    },
+    "start": {
+      "bypass": [
+        "--dangerously-skip-permissions"
+      ],
+      "new": [
+        "--session-id",
+        "{uuid}"
+      ],
+      "remote": [
+        "--remote-control",
+        "{name}"
+      ]
+    },
+    "title": "Claude",
+    "transcript": {
+      "cwd": "/cwd",
+      "depth": 1,
+      "folders": [
+        "$CLAUDE_CONFIG_DIR/projects",
+        "~/.claude*/projects"
+      ],
+      "ids": [
+        "/sessionId"
+      ],
+      "parser": "claude",
+      "place": "{config}/projects/{project}",
+      "screen": true
+    }
+  },
+  {
+    "command": [
+      "codex"
+    ],
+    "hooks": true,
+    "install": "npm install -g @openai/codex",
+    "logged_in": "[ -s ~/.codex/auth.json ]",
+    "login": "codex login",
+    "name": "codex",
+    "permissions": {
+      "allow": "y",
+      "menu": "Press enter to confirm or esc to cancel",
+      "reason": true
+    },
+    "resume": {
+      "args": [
+        "resume",
+        "{id}"
+      ],
+      "flags": [
+        "resume"
+      ]
+    },
+    "start": {
+      "bypass": [
+        "--dangerously-bypass-approvals-and-sandbox"
+      ]
+    },
+    "title": "Codex",
+    "transcript": {
+      "cwd": "/payload/cwd",
+      "depth": 3,
+      "file": "rollout-*-{id}.jsonl",
+      "first": {
+        "type": "session_meta"
+      },
+      "folders": [
+        "${CODEX_HOME:-~/.codex}/sessions"
+      ],
+      "id_length": 36,
+      "ids": [
+        "/payload/id",
+        "/payload/session_id"
+      ],
+      "parser": "codex",
+      "place": "~/.codex/sessions/{day}"
+    }
+  },
+  {
+    "command": [
+      "pi"
+    ],
+    "install": "npm install -g @mariozechner/pi-coding-agent",
+    "logged_in": "[ -s ~/.pi/agent/auth.json ]",
+    "name": "pi",
+    "queues": true,
+    "resume": {
+      "args": [
+        "--session",
+        "{path}"
+      ],
+      "flags": [
+        "--session"
+      ]
+    },
+    "title": "pi",
+    "transcript": {
+      "cwd": "/cwd",
+      "depth": 1,
+      "first": {
+        "type": "session"
+      },
+      "folders": [
+        "~/.pi/agent/sessions"
+      ],
+      "ids": [
+        "/id"
+      ],
+      "parser": "pi",
+      "place": "~/.pi/agent/sessions/--{cwd}--",
+      "session": "/id"
+    }
+  }
+]
