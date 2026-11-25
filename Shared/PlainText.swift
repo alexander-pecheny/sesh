@@ -106,6 +106,7 @@ final class PlainField: NSTextView, ObservableObject {
     var escape: (() -> Void)?
     /// Takes a pasted image and returns where it now lives, for its path to go in the text.
     var pasteImage: ((Data, String) async -> String?)?
+    let pasted = PastedUploads()
 
     /// Plain text has nothing to paste when the clipboard holds only an image, so AppKit
     /// would disable Paste before `paste` could upload it.
@@ -117,9 +118,7 @@ final class PlainField: NSTextView, ObservableObject {
     override func paste(_ sender: Any?) {
         guard let pasteImage, let (data, ext) = PastedImage.read(.general) else { return super.paste(sender) }
         Task { @MainActor in
-            if let path = await PastedImage.uploading(over: enclosingScrollView ?? self, { await pasteImage(data, ext) }) {
-                insertPaths(quote(path))
-            }
+            if let path = await pasted.send(data, ext, by: pasteImage) { insertPaths(quote(path)) }
         }
     }
 
@@ -273,35 +272,39 @@ enum PastedImage {
         }
         return nil
     }
+}
 
-    /// Shows a capsule over `host` while `upload` runs, since a large image takes seconds to arrive.
-    @MainActor
-    static func uploading(over host: NSView, _ upload: () async -> String?) async -> String? {
-        let badge = NSHostingView(rootView: UploadingBadge())
-        badge.translatesAutoresizingMaskIntoConstraints = false
-        host.addSubview(badge)
-        NSLayoutConstraint.activate([
-            badge.centerXAnchor.constraint(equalTo: host.centerXAnchor),
-            badge.centerYAnchor.constraint(equalTo: host.centerYAnchor),
-        ])
-        defer { badge.removeFromSuperview() }
-        return await upload()
+/// The images pasted into one view that are still on their way.
+@MainActor
+final class PastedUploads: ObservableObject {
+    private struct Item {
+        let id = UUID()
+        let preview: NSImage?
+        let task: Task<String?, Never>
+    }
+
+    @Published private var items: [Item] = []
+
+    var busy: Bool { !items.isEmpty }
+    var previews: [NSImage] { items.compactMap(\.preview) }
+
+    func cancel() { items.forEach { $0.task.cancel() } }
+
+    /// Where `upload` put the image, or nil if it failed or was cancelled.
+    func send(_ data: Data, _ ext: String, by upload: @escaping (Data, String) async -> String?) async -> String? {
+        let item = Item(preview: NSImage(data: data), task: Task { await upload(data, ext) })
+        items.append(item)
+        defer { items.removeAll { $0.id == item.id } }
+        return await item.task.value
     }
 }
 
-private struct UploadingBadge: View {
-    @Environment(\.flavour) private var flavour
+/// The ring of a view's pasted images, while any are on their way.
+struct PastedRing: View {
+    @ObservedObject var uploads: PastedUploads
 
     var body: some View {
-        HStack(spacing: Metric.gap) {
-            ProgressView().controlSize(.small)
-            Text("Uploading image").font(.ui(Metric.note).weight(.medium))
-        }
-        .foregroundStyle(flavour(.text))
-        .padding(.horizontal, Metric.pad)
-        .padding(.vertical, Metric.tiny)
-        .background(flavour(.surface1), in: .capsule)
-        .shadow(radius: ConversationView.shadow)
+        if uploads.busy { UploadStatus(fraction: nil, previews: uploads.previews, cancel: uploads.cancel) }
     }
 }
 #endif

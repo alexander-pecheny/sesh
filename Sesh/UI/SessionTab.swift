@@ -13,7 +13,7 @@ struct SessionTab: View {
                 .overlay { disconnected }
             KeysRow(
                 input: session.terminal.input,
-                uploading: session.uploading?.fraction,
+                uploading: session.uploading,
                 canUpload: session.canUpload
             ) { action in
                 switch action {

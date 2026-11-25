@@ -255,6 +255,19 @@ extension Ghostty {
         /// Uploads a pasted image and returns its path, which is then typed in.
         var pasteImage: ((Data, String) async -> String?)?
 
+        /// Its ring sits in the top right corner, over the terminal's text.
+        private lazy var pasted: PastedUploads = {
+            let uploads = PastedUploads()
+            let ring = NSHostingView(rootView: PastedRing(uploads: uploads).background(.background, in: .circle))
+            ring.translatesAutoresizingMaskIntoConstraints = false
+            addSubview(ring)
+            NSLayoutConstraint.activate([
+                ring.topAnchor.constraint(equalTo: topAnchor, constant: Metric.gap),
+                ring.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -Metric.gap),
+            ])
+            return uploads
+        }()
+
         func type(_ text: String) {
             guard let surface else { return }
             ghostty_surface_text(surface, text, UInt(text.utf8.count))
@@ -266,7 +279,7 @@ extension Ghostty {
             guard window?.firstResponder === self, event.modifierFlags.contains(.command) else { return false }
             if event.charactersIgnoringModifiers == "v", let pasteImage, let (data, ext) = PastedImage.read(.general) {
                 Task { @MainActor in
-                    if let path = await PastedImage.uploading(over: self, { await pasteImage(data, ext) }) { self.type(quote(path)) }
+                    if let path = await self.pasted.send(data, ext, by: pasteImage) { self.type(quote(path)) }
                 }
                 return true
             }

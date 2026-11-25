@@ -66,6 +66,22 @@ enum Uploads {
         return id == 0 ? nil : id
     }
 
+    /// A small copy of each image for the Upload's preview; a video has none.
+    static func thumbnails(_ files: [PreparedUpload]) -> [UIImage] {
+        files.compactMap { file in
+            guard let reader = CGImageSourceCreateWithURL(file.local as CFURL, nil),
+                  let image = CGImageSourceCreateThumbnailAtIndex(reader, 0, [
+                      kCGImageSourceCreateThumbnailFromImageAlways: true,
+                      kCGImageSourceCreateThumbnailWithTransform: true,
+                      kCGImageSourceThumbnailMaxPixelSize: thumbnailEdge,
+                  ] as CFDictionary)
+            else { return nil }
+            return UIImage(cgImage: image)
+        }
+    }
+
+    private static let thumbnailEdge = 480
+
     static func discard(_ files: [PreparedUpload]) {
         files.forEach { try? FileManager.default.removeItem(at: $0.local) }
     }
@@ -123,23 +139,6 @@ enum Uploads {
     enum Failure: LocalizedError {
         case unreadable
         var errorDescription: String? { "the photo library would not give up that file" }
-    }
-}
-
-/// How far the Upload in flight has got, across the whole batch. `ProgressView`'s circular
-/// style on iOS ignores its value and spins, so the ring is drawn.
-struct UploadRing: View {
-    let fraction: Double
-    let colour: Color
-
-    /// The ring fills as the files go; the cross inside says a tap stops them.
-    var body: some View {
-        Circle()
-            .trim(from: 0, to: max(fraction, 0.02))
-            .stroke(colour, style: .init(lineWidth: 2.5, lineCap: .round))
-            .rotationEffect(.degrees(-90))
-            .overlay { Image(systemName: "xmark").font(.system(size: 7, weight: .bold)).foregroundStyle(colour) }
-            .frame(width: 16, height: 16)
     }
 }
 

@@ -9,7 +9,10 @@ final class HostLink: CoreLink {
         let id: UInt32
         var done: UInt64
         var total: UInt64
+        var previews: [UIImage] = []
         var fraction: Double { total == 0 ? 0 : Double(done) / Double(total) }
+        /// Unknown until the files are prepared and the transfer has started.
+        var shown: Double? { id == 0 ? nil : fraction }
     }
 
     @Published var savePassword = false
@@ -68,13 +71,19 @@ final class HostLink: CoreLink {
 
     // MARK: Uploads
 
-    var canUpload: Bool { linked && uploading == nil }
+    /// Not tied to `linked`: the Link lets go on the way to the background and dials again on use.
+    var canUpload: Bool { uploading == nil }
 
     /// As in a Terminal Tab, but over the Link: the paths reach `insert` once all have landed.
     func upload(_ results: [PHPickerResult], insert: @escaping (String) -> Void) {
         guard canUpload, !results.isEmpty else { return }
         uploading = Progress(id: 0, done: 0, total: 1)
         Task {
+            if let problem = await up() {
+                uploading = nil
+                uploadError = problem
+                return
+            }
             let files: [PreparedUpload]
             do {
                 files = try await Uploads.prepare(results, compress: store.compressUploads)
@@ -88,7 +97,7 @@ final class HostLink: CoreLink {
                 uploading = nil
                 return Uploads.discard(files)
             }
-            uploading = Progress(id: id, done: 0, total: 1)
+            uploading = Progress(id: id, done: 0, total: 1, previews: Uploads.thumbnails(files))
             uploaded = { [weak self] paths, error in
                 Uploads.discard(files)
                 self?.uploading = nil
@@ -110,7 +119,8 @@ final class HostLink: CoreLink {
 
     override func uploadProgressed(_ id: UInt32, _ done: UInt64, _ total: UInt64) {
         guard uploading?.id == id else { return }
-        uploading = Progress(id: id, done: done, total: total)
+        uploading?.done = done
+        uploading?.total = total
     }
 
     override func uploadDone(_ id: UInt32, _ paths: [String], _ error: String?) {
