@@ -36,6 +36,8 @@ struct MessageBox: View {
                 Image.lucide("image-up", size: 20).foregroundStyle(flavour(.overlay0))
                     .frame(width: Metric.control, height: Metric.control)
             }
+            #else
+            PastedRing(uploads: field.pasted)
             #endif
             PlainText(field: field, text: $outbox.text, font: .systemFont(ofSize: Metric.title), lines: 6, tallest: tallest) { Task { await conversation.sendDraft() } }
                 .overlay(alignment: .leading) {
@@ -103,7 +105,7 @@ struct MessageBox: View {
         #if os(macOS)
         field.pasteImage = { [weak conversation] data, ext in
             let path = await conversation?.upload(data, ext: ext)
-            if path == nil { conversation?.problem = "Sesh could not upload the pasted image." }
+            if path == nil, !Task.isCancelled { conversation?.problem = "Sesh could not upload the pasted image." }
             return path
         }
         field.escape = { [weak conversation] in
@@ -175,21 +177,19 @@ private struct UploadButton: View {
     let pick: () -> Void
 
     var body: some View {
-        Button {
-            if link.uploading != nil { link.cancelUpload() } else { pick() }
-        } label: {
-            Group {
-                if let fraction = link.uploading?.fraction {
-                    UploadRing(fraction: fraction, colour: flavour(.mauve))
-                } else {
+        Group {
+            if let uploading = link.uploading {
+                UploadStatus(fraction: uploading.shown, previews: uploading.previews, cancel: link.cancelUpload)
+            } else {
+                Button(action: pick) {
                     Image.lucide("image-up", size: 20)
+                        .foregroundStyle(flavour(.subtext0))
+                        .frame(width: Metric.control, height: Metric.control)
                 }
+                .disabled(!link.canUpload)
+                .accessibilityLabel("upload")
             }
-            .foregroundStyle(flavour(.subtext0))
-            .frame(width: 38, height: 38)
         }
-        .disabled(link.uploading == nil && !link.canUpload)
-        .accessibilityLabel(link.uploading == nil ? "upload" : "cancel upload")
         .uploadFailure($link.uploadError)
     }
 }

@@ -79,7 +79,7 @@ final class Machine: Runner, Identifiable, Hashable {
         if let known = pasted[digest], let path = await known.value { return path }
         let task = Task { await store(data, ext: ext) }
         pasted[digest] = task
-        let path = await task.value
+        let path = await withTaskCancellationHandler { await task.value } onCancel: { task.cancel() }
         if path == nil, pasted[digest] == task { pasted[digest] = nil }
         return path
     }

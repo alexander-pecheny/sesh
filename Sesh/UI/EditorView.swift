@@ -70,14 +70,12 @@ private struct DraftView: View {
                     Button("Done") { dismiss() }
                 }
                 ToolbarItemGroup(placement: .topBarTrailing) {
-                    Button { if session.uploading != nil { session.cancelUpload() } else { picking = true } } label: {
-                        if let fraction = session.uploading?.fraction {
-                            UploadRing(fraction: fraction, colour: .accentColor)
-                        } else {
-                            Label("upload", image: "image-up")
-                        }
+                    if let uploading = session.uploading {
+                        UploadStatus(fraction: uploading.shown, previews: uploading.previews, cancel: session.cancelUpload)
+                    } else {
+                        Button { picking = true } label: { Label("upload", image: "image-up") }
+                            .disabled(!session.canUpload)
                     }
-                    .disabled(session.uploading == nil && !session.canUpload)
                     Button("Send") { finish(draft, false) }
                     // Short, so the upload button fits beside it rather than in an overflow.
                     Button("Send \u{23CE}") { finish(draft, true) }

@@ -10,11 +10,12 @@ struct KeysRow: View {
 
     static let row: CGFloat = 40
     static let height: CGFloat = row * 2
+    private static let cap: CGFloat = 22
 
     @ObservedObject var input: InputState
     @Environment(\.flavour) private var flavour
-    /// How far the Upload in flight has got, or `nil` when none is.
-    let uploading: Double?
+    /// The Upload in flight, or `nil` when none is.
+    let uploading: HostLink.Progress?
     let canUpload: Bool
     let send: (Action) -> Void
 
@@ -67,20 +68,13 @@ struct KeysRow: View {
         .frame(height: Self.row)
     }
 
-    /// The button is the progress ring, so while it fills the only thing it can do is stop.
-    private var upload: some View {
-        Button { send(.upload) } label: {
-            label(Group {
-                if let uploading {
-                    UploadRing(fraction: uploading, colour: flavour(.mauve))
-                } else {
-                    Image.lucide("image-up", size: 16)
-                }
-            }, width: 22)
+    /// While an Upload runs, its ring stands in for the button, and a tap opens it to stop it.
+    @ViewBuilder private var upload: some View {
+        if let uploading {
+            label(UploadStatus(fraction: uploading.shown, previews: uploading.previews, side: Self.cap) { send(.upload) }, width: Self.cap)
+        } else {
+            cap(icon: "image-up", name: "upload") { send(.upload) }.disabled(!canUpload)
         }
-        .disabled(uploading == nil && !canUpload)
-        .accessibilityLabel(uploading == nil ? "upload" : "cancel upload")
-        .accessibilityValue(uploading.map { "\(Int($0 * 100))%" } ?? "")
     }
 
     private var modes: some View {
@@ -124,7 +118,7 @@ struct KeysRow: View {
     }
 
     private func cap(icon: String, name: String, action: @escaping () -> Void) -> some View {
-        Button(action: action) { label(Image.lucide(icon, size: 16), width: 22) }
+        Button(action: action) { label(Image.lucide(icon, size: 16), width: Self.cap) }
             .accessibilityLabel(name)
     }
 
