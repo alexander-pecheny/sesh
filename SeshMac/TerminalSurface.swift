@@ -253,7 +253,7 @@ extension Ghostty {
         override func keyUp(with event: NSEvent) { _ = send(event, GHOSTTY_ACTION_RELEASE) }
 
         /// Uploads a pasted image and returns its path, which is then typed in.
-        var pasteImage: ((Data, String) async -> String?)?
+        var pasteImage: ((Data, String, @escaping (Double) -> Void) async -> String?)?
 
         /// Its ring sits in the top right corner, over the terminal's text.
         private lazy var pasted: PastedUploads = {

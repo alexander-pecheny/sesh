@@ -40,7 +40,7 @@ extension Library {
             // Ghostty starts commands with a bare PATH; the login shell has the user's.
             surface = Ghostty.TerminalSurface(command: "/bin/zsh -lic \(quote(attach))", folder: nil)
         }
-        surface.pasteImage = { data, ext in await machine.upload(data, ext: ext) }
+        surface.pasteImage = { data, ext, progress in await machine.upload(data, ext: ext, progress: progress) }
         // The attach ended: the pane is gone, or only the connection, and the next look attaches again.
         surface.onClose = { [weak self] in
             self?.terminals.surfaces[key] = nil

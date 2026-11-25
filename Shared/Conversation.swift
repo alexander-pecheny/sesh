@@ -521,7 +521,9 @@ final class Conversation: ObservableObject {
         return image
     }
 
-    func upload(_ data: Data, ext: String) async -> String? { await runner?.upload(data, ext: ext) }
+    func upload(_ data: Data, ext: String, progress: @escaping (Double) -> Void) async -> String? {
+        await runner?.upload(data, ext: ext, progress: progress)
+    }
 
     func link() async -> URL? {
         guard let pane else { return nil }

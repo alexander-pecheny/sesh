@@ -103,8 +103,8 @@ struct MessageBox: View {
             conversation?.rows.flatMap(\.entries).last { $0.kind == "user" && $0.text?.isEmpty == false }?.text
         }
         #if os(macOS)
-        field.pasteImage = { [weak conversation] data, ext in
-            let path = await conversation?.upload(data, ext: ext)
+        field.pasteImage = { [weak conversation] data, ext, progress in
+            let path = await conversation?.upload(data, ext: ext, progress: progress)
             if path == nil, !Task.isCancelled { conversation?.problem = "Sesh could not upload the pasted image." }
             return path
         }
