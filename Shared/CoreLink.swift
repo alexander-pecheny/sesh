@@ -33,6 +33,8 @@ class CoreLink: ObservableObject, Identifiable {
     private let dial: (sesh_callbacks_t, UnsafeMutableRawPointer) -> OpaquePointer?
     private var bridge = LinkBridge()
     private var waiting: [UInt32: CheckedContinuation<Ran, Never>] = [:]
+    /// Uploads from `upload(_:as:progress:)` still on their way.
+    private var sending: [UInt32: (progress: (Double) -> Void, done: CheckedContinuation<String?, Never>)] = [:]
     private var streams: [UInt32: (lines: LineSplitter, line: (String) -> Void)] = [:]
     private var linking: [CheckedContinuation<Bool, Never>] = []
     private(set) var linked = false
@@ -102,6 +104,34 @@ class CoreLink: ObservableObject, Identifiable {
         guard sent.ok else { return sent }
         let target = shellPath(path)
         return await run("mkdir -p \"$(dirname \(target))\" && cat ~/\(staged) > \(target); s=$?; rm -f ~/\(staged); exit $s")
+    }
+
+    /// Sends `data` into `~/.sesh/uploads` as `name`, or beside it if that is taken, and returns
+    /// where it landed; nil if it failed or was cancelled.
+    func upload(_ data: Data, as name: String, progress: @escaping (Double) -> Void) async -> String? {
+        let file = FileManager.default.temporaryDirectory.appending(path: UUID().uuidString)
+        guard (try? data.write(to: file)) != nil else { return nil }
+        defer { try? FileManager.default.removeItem(at: file) }
+        guard await up() == nil, let handle else { return nil }
+        let id = file.path.withCString { local in
+            name.withCString { remote in
+                var entry = sesh_upload_t(local_path: local, remote_name: remote)
+                return sesh_session_upload(handle, &entry, 1)
+            }
+        }
+        guard id != 0 else { return nil }
+        // A cancelled transfer is let go at once, since a stalled one may never report that it stopped.
+        return await withTaskCancellationHandler {
+            await withCheckedContinuation { done in
+                if Task.isCancelled { done.resume(returning: nil) } else { sending[id] = (progress, done) }
+            }
+        } onCancel: {
+            Task { @MainActor [weak self] in
+                guard let self, self.sending[id] != nil else { return }
+                if let handle = self.handle { sesh_session_cancel_upload(handle, id) }
+                self.uploadDone(id, [], nil)
+            }
+        }
     }
 
     /// The file at `path` on the Host, read over SFTP.
@@ -185,8 +215,13 @@ class CoreLink: ObservableObject, Identifiable {
 
     /// The saved password was refused.
     func passwordRejected() {}
-    func uploadProgressed(_ id: UInt32, _ done: UInt64, _ total: UInt64) {}
-    func uploadDone(_ id: UInt32, _ paths: [String], _ error: String?) {}
+    func uploadProgressed(_ id: UInt32, _ done: UInt64, _ total: UInt64) {
+        if total > 0 { sending[id]?.progress(Double(done) / Double(total)) }
+    }
+
+    func uploadDone(_ id: UInt32, _ paths: [String], _ error: String?) {
+        sending.removeValue(forKey: id)?.done.resume(returning: paths.first)
+    }
 
     // MARK: From the core
 

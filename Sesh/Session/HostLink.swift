@@ -118,13 +118,13 @@ final class HostLink: CoreLink {
     }
 
     override func uploadProgressed(_ id: UInt32, _ done: UInt64, _ total: UInt64) {
-        guard uploading?.id == id else { return }
+        guard uploading?.id == id else { return super.uploadProgressed(id, done, total) }
         uploading?.done = done
         uploading?.total = total
     }
 
     override func uploadDone(_ id: UInt32, _ paths: [String], _ error: String?) {
-        guard uploading?.id == id, let finish = uploaded else { return }
+        guard uploading?.id == id, let finish = uploaded else { return super.uploadDone(id, paths, error) }
         uploaded = nil
         finish(paths, error)
     }

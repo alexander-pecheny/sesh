@@ -105,7 +105,7 @@ final class PlainField: NSTextView, ObservableObject {
     /// Escape in an empty box, as in the Agent's terminal.
     var escape: (() -> Void)?
     /// Takes a pasted image and returns where it now lives, for its path to go in the text.
-    var pasteImage: ((Data, String) async -> String?)?
+    var pasteImage: ((Data, String, @escaping (Double) -> Void) async -> String?)?
     let pasted = PastedUploads()
 
     /// Plain text has nothing to paste when the clipboard holds only an image, so AppKit
@@ -278,8 +278,9 @@ enum PastedImage {
 @MainActor
 final class PastedUploads: ObservableObject {
     private struct Item {
-        let id = UUID()
+        let id: UUID
         let preview: NSImage?
+        var fraction: Double?
         let task: Task<String?, Never>
     }
 
@@ -287,15 +288,26 @@ final class PastedUploads: ObservableObject {
 
     var busy: Bool { !items.isEmpty }
     var previews: [NSImage] { items.compactMap(\.preview) }
+    /// The share sent so far, once every upload has reported one.
+    var fraction: Double? {
+        let known = items.compactMap(\.fraction)
+        return known.count == items.count && !known.isEmpty ? known.reduce(0, +) / Double(known.count) : nil
+    }
 
     func cancel() { items.forEach { $0.task.cancel() } }
 
     /// Where `upload` put the image, or nil if it failed or was cancelled.
-    func send(_ data: Data, _ ext: String, by upload: @escaping (Data, String) async -> String?) async -> String? {
-        let item = Item(preview: NSImage(data: data), task: Task { await upload(data, ext) })
-        items.append(item)
-        defer { items.removeAll { $0.id == item.id } }
-        return await item.task.value
+    func send(_ data: Data, _ ext: String, by upload: @escaping (Data, String, @escaping (Double) -> Void) async -> String?) async -> String? {
+        let id = UUID()
+        let task = Task {
+            await upload(data, ext) { [weak self] fraction in
+                guard let self, let index = items.firstIndex(where: { $0.id == id }) else { return }
+                items[index].fraction = fraction
+            }
+        }
+        items.append(Item(id: id, preview: NSImage(data: data), task: task))
+        defer { items.removeAll { $0.id == id } }
+        return await task.value
     }
 }
 
@@ -304,7 +316,7 @@ struct PastedRing: View {
     @ObservedObject var uploads: PastedUploads
 
     var body: some View {
-        if uploads.busy { UploadStatus(fraction: nil, previews: uploads.previews, cancel: uploads.cancel) }
+        if uploads.busy { UploadStatus(fraction: uploads.fraction, previews: uploads.previews, cancel: uploads.cancel) }
     }
 }
 #endif

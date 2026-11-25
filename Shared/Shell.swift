@@ -251,7 +251,7 @@ protocol Runner: AnyObject {
     var carrier: String? { get }
 
     /// Saves a pasted image on the machine and returns its absolute path there.
-    func upload(_ data: Data, ext: String) async -> String?
+    func upload(_ data: Data, ext: String, progress: @escaping (Double) -> Void) async -> String?
     /// The link that opens the Claude app on the Agent in `pane`.
     func claudeLink(for pane: String) async -> URL?
     #if os(iOS)
@@ -267,7 +267,7 @@ extension Runner {
         await stream(command, line: line)
     }
     func fetch(_ command: String, line: @escaping (String) -> Void) async -> Ran { await stream(command, line: line) }
-    func upload(_ data: Data, ext: String) async -> String? { nil }
+    func upload(_ data: Data, ext: String, progress: @escaping (Double) -> Void) async -> String? { nil }
     func claudeLink(for pane: String) async -> URL? { nil }
 
     func read(_ path: String) async -> Data? {

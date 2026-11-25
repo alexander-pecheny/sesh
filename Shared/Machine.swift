@@ -74,24 +74,26 @@ final class Machine: Runner, Identifiable, Hashable {
 
     /// Pasted images land in `~/.sesh/uploads` under the moment they were pasted, as the
     /// phone's Uploads do, so the Agent can be told where to look.
-    func upload(_ data: Data, ext: String) async -> String? {
+    func upload(_ data: Data, ext: String, progress: @escaping (Double) -> Void) async -> String? {
         let digest = SHA256.hash(data: data)
         if let known = pasted[digest], let path = await known.value { return path }
-        let task = Task { await store(data, ext: ext) }
+        let task = Task { await store(data, ext: ext, progress: progress) }
         pasted[digest] = task
         let path = await withTaskCancellationHandler { await task.value } onCancel: { task.cancel() }
         if path == nil, pasted[digest] == task { pasted[digest] = nil }
         return path
     }
 
-    private func store(_ data: Data, ext: String) async -> String? {
+    private func store(_ data: Data, ext: String, progress: @escaping (Double) -> Void) async -> String? {
+        let stamp = Date().formatted(.iso8601.year().month().day().time(includingFractionalSeconds: false).timeSeparator(.omitted))
+        let name = "pasted-\(stamp).\(ext)"
+        if let link { return await link.upload(data, as: name, progress: progress) }
         if home == nil {
             let ran = await run("printf %s \"$HOME\"")
             if ran.ok, !ran.out.isEmpty { home = ran.out }
         }
         guard let home else { return nil }
-        let stamp = Date().formatted(.iso8601.year().month().day().time(includingFractionalSeconds: false).timeSeparator(.omitted))
-        let path = "\(home)/.sesh/uploads/pasted-\(stamp).\(ext)"
+        let path = "\(home)/.sesh/uploads/\(name)"
         return (await put(data, to: path)).ok ? path : nil
     }
 
