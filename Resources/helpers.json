@@ -1,10 +1,10 @@
 {
-  "version": "sesh-transcript 0.1.0+ca62599710e9ab25.p5-s1",
-  "url": "https://github.com/alexander-pecheny/sesh/releases/download/helper-0.1.0-ca62599710e9ab25.p5-s1/",
+  "version": "sesh-transcript 0.1.0+bb3f736efcc8a19a.p5-s1",
+  "url": "https://github.com/alexander-pecheny/sesh/releases/download/helper-0.1.0-bb3f736efcc8a19a.p5-s1/",
   "sha256": {
-    "darwin-arm64": "a144743bf09ac7a7cdfea72d058568ed1b7403faf7a8c4739f7b4eaf9b37693f",
-    "darwin-x86_64": "f3fd1b2be6dfb905bdb9c97c3a6d34a12da95c1a98f53bcabae0aa38f91be23e",
-    "linux-aarch64": "d7a92abebcaff27a55a7c243a089e989772ec2e574e70b0a97cdaa0c870a1d1e",
-    "linux-x86_64": "3c3ebd2e32412cbaab67f739c30c1cfaa38578be331c064a8446f80c8dd1203a"
+    "darwin-arm64": "9cc765eb439c3da5567ba760231cc3abac6ae6a430e57c77a9dffe844f328663",
+    "darwin-x86_64": "0940417ba3771e06cce073e8af6e1ea97c44be43eca68e5f76172f00c8633616",
+    "linux-aarch64": "5f72fc5fe6ee5fde4b1c0d5e98839a90fa55f42c22a31eaf7c1ab87d248c6a15",
+    "linux-x86_64": "1b59cfbf99c7bfa91fc350eca08ef754ff3007085846f3100996d5ca98390887"
   }
 }
