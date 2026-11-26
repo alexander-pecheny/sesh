@@ -62,6 +62,8 @@ final class Conversation: ObservableObject {
     var stoppedAfterRefusal: (() async -> Bool)?
     /// The repository the Agent works in, for linking `#213` to its pull request.
     @Published var repo: Repo?
+    /// The pull request links the Agent printed, by number, which `#213` prefers to `repo`.
+    @Published private(set) var pulls: [String: URL] = [:]
     /// The Vault's rules for linking text such as `SRCH-9049`.
     @Published var links: [LinkRule] = []
     /// Keeps one entry as a Bookmark; nil where there is no Journal to keep it in.
@@ -215,10 +217,21 @@ final class Conversation: ObservableObject {
     private var publishing = false
     private var savedSeq = 0
 
+    private func notePulls() {
+        var found = pulls
+        for entry in log.rows.flatMap(\.entries) + log.results.values {
+            for text in [entry.text, entry.command, entry.summary].compactMap(\.self) where text.contains("/pull") || text.contains("merge_requests") {
+                found.merge(PathLinks.pulls(in: text)) { $1 }
+            }
+        }
+        if found != pulls { pulls = found }
+    }
+
     private func publish() {
         publishing = false
         // A catch-up arrives in parts; rows already on screen take them in one go when it ends.
         if !(log.syncing && loaded) {
+            if rows != log.rows || results != log.results { notePulls() }
             if rows != log.rows { rows = log.rows }
             if results != log.results { results = log.results }
         }

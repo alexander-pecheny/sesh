@@ -471,7 +471,7 @@ private struct RowView: View {
             switch entry.kind {
             case "user": UserBubble(entry: entry, conversation: conversation)
             case "text":
-                let text = PathLinks.link(entry.text ?? entry.summary, repo: conversation.repo,
+                let text = PathLinks.link(entry.text ?? entry.summary, repo: conversation.repo, pulls: conversation.pulls,
                                           paths: conversation.openPath != nil, rules: conversation.links)
                 let pieces = Cmark.pieces(text)
                 VStack(alignment: .leading, spacing: Metric.tiny) {

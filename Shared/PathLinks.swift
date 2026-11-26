@@ -8,20 +8,31 @@ enum PathLinks {
     static let scheme = "sesh-path"
 
     /// Paths in code spans become file and folder links, unless there is nowhere to open them, `#213`
-    /// a link to that pull request when the session's repository is known, and text matching
-    /// one of the Vault's rules a link of its own.
-    static func link(_ written: String, repo: Repo? = nil, paths: Bool = true, rules: [LinkRule] = []) -> String {
+    /// a link to that pull request, taken from `pulls` or else the session's repository, and text
+    /// matching one of the Vault's rules a link of its own.
+    static func link(_ written: String, repo: Repo? = nil, pulls: [String: URL] = [:], paths: Bool = true,
+                     rules: [LinkRule] = []) -> String {
         // cmark would rewrite a formula's underscores and stars as it renders the Markdown back.
         let (markdown, formulas) = MathText.extract(written)
-        return MathText.restore(linked(markdown, repo: repo, paths: paths, rules: rules), formulas)
+        return MathText.restore(linked(markdown, repo: repo, pulls: pulls, paths: paths, rules: rules), formulas)
     }
 
-    private static func linked(_ markdown: String, repo: Repo?, paths: Bool, rules: [LinkRule]) -> String {
-        let numbers = repo != nil && markdown.contains("#")
+    /// The pull request links in text, by number. An Agent that opened a pull request in another
+    /// repository printed its link, so `#213` should point there rather than at the session's own.
+    static func pulls(in text: String) -> [String: URL] {
+        var found: [String: URL] = [:]
+        for match in text.matches(of: /https?:\/\/[\w.-]+\/[\w.\/-]+?\/(?:pull|pulls|merge_requests)\/(\d+)\b/) {
+            found[String(match.output.1)] = URL(string: String(match.output.0))
+        }
+        return found
+    }
+
+    private static func linked(_ markdown: String, repo: Repo?, pulls: [String: URL], paths: Bool, rules: [LinkRule]) -> String {
+        let numbers = (repo != nil || !pulls.isEmpty) && markdown.contains("#")
         guard paths && markdown.contains("`") || numbers || !rules.isEmpty, let root = Cmark.parse(markdown) else { return markdown }
         defer { cmark_node_free(root) }
         var changed = false
-        if let repo, numbers { changed = linkNumbers(root, repo: repo) }
+        if numbers { changed = linkNumbers(root, repo: repo, pulls: pulls) }
         if !rules.isEmpty { changed = linkRules(root, rules) || changed }
 
         // A bare name listed under a folder the message named, as in "Files are in `/a/b/`:",
@@ -64,7 +75,7 @@ enum PathLinks {
     }
 
     /// Splits text nodes around `#123` and puts each number in a link of its own.
-    private static func linkNumbers(_ root: UnsafeMutablePointer<cmark_node>, repo: Repo) -> Bool {
+    private static func linkNumbers(_ root: UnsafeMutablePointer<cmark_node>, repo: Repo?, pulls: [String: URL]) -> Bool {
         Cmark.link(root) { text in
             // `#213` alone, not `a#213`, `&#213;` or a URL's fragment.
             text.matches(of: /#(\d{1,7})\b/).compactMap { match in
@@ -72,7 +83,8 @@ enum PathLinks {
                     let before = text[text.index(before: match.range.lowerBound)]
                     if before.isLetter || before.isNumber || before == "&" || before == "/" || before == "_" { return nil }
                 }
-                return (match.range, repo.pull(String(match.output.1)))
+                let number = String(match.output.1)
+                return (pulls[number] ?? repo?.pull(number)).map { (match.range, $0) }
             }
         }
     }
