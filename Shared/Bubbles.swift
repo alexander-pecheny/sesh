@@ -17,8 +17,12 @@ struct UserBubble: View {
     var body: some View {
         VStack(alignment: .trailing, spacing: Bubble.spacing) {
             if let images = entry.images, !images.isEmpty {
-                HStack(spacing: Bubble.spacing) {
+                let row = HStack(spacing: Bubble.spacing) {
                     ForEach(images, id: \.self) { RemoteImage(path: $0, conversation: conversation) }
+                }
+                ViewThatFits(in: .horizontal) {
+                    row
+                    ScrollView(.horizontal, showsIndicators: false) { row }
                 }
             }
             if let text = entry.text, !text.isEmpty {
