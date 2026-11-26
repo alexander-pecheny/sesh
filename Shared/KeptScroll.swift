@@ -9,22 +9,26 @@ extension View {
 private struct KeptScroll: ViewModifier {
     @Binding var offset: CGPoint
     @State private var position = ScrollPosition()
-    @State private var restored = false
+    /// True until the content is tall enough to scroll back to the saved offset, which stays as it was meanwhile.
+    @State private var restoring = true
 
     func body(content: Content) -> some View {
         content
             .scrollPosition($position)
-            .onScrollGeometryChange(for: CGPoint.self, of: { $0.contentOffset }) { _, now in
-                if restored { offset = now }
+            .onScrollGeometryChange(for: ScrollGeometry.self, of: { $0 }) { _, now in
+                guard restoring else { return offset = now.contentOffset }
+                guard now.contentSize.height - now.containerSize.height >= offset.y else { return }
+                restoring = false
+                position.scrollTo(point: offset)
             }
             .onAppear {
                 let saved = offset
-                DispatchQueue.main.async {
-                    position.scrollTo(point: saved)
-                    restored = true
-                }
+                DispatchQueue.main.async { position.scrollTo(point: saved) }
+                DispatchQueue.main.asyncAfter(deadline: .now() + Self.patience) { restoring = false }
             }
     }
+
+    private static let patience = 2.0
 }
 
 /// The same for a scroll view of AppKit or UIKit.

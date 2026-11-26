@@ -43,6 +43,7 @@ struct Prose: NSViewRepresentable {
         let old = view.string
         coordinator.shown = key
         coordinator.text = text
+        coordinator.measured = [:]
         view.textStorage?.setAttributedString(Renderer(flavour: flavour, width: width).render(text))
         if grown { coordinator.fade(in: view, after: old) }
         (view as? LinkTextView)?.tables = tables
@@ -58,6 +59,9 @@ struct Prose: NSViewRepresentable {
         }
         // Asked for its ideal size, the text is as wide as its longest line, up to the measure.
         let width = proposed ?? Metric.measure
+        // Laid out again on every redraw, at the ideal width and then the real one, the text pulled
+        // the scroll view it sits in back up a paragraph at a time.
+        if let size = context.coordinator.measured[width] { return size }
         // A table sizes its columns by the text view's frame, not the container's.
         if view.frame.width != width { view.setFrameSize(NSSize(width: width, height: view.frame.height)) }
         container.containerSize = NSSize(width: width, height: .greatestFiniteMagnitude)
@@ -73,7 +77,9 @@ struct Prose: NSViewRepresentable {
         }
         let paragraphs = view.string.utf16.reduce(1) { $1 == 10 ? $0 + 1 : $0 }
         let full = lines > paragraphs || Cmark.hasTable(text)
-        return CGSize(width: full ? width : min(width, ceil(longest)), height: ceil(used.height))
+        let size = CGSize(width: full ? width : min(width, ceil(longest)), height: ceil(used.height))
+        context.coordinator.measured[width] = size
+        return size
     }
 
     func makeCoordinator() -> Coordinator { Coordinator() }
@@ -82,6 +88,8 @@ struct Prose: NSViewRepresentable {
         var shown = ""
         var text = ""
         var width: CGFloat?
+        /// The size of the text as shown, by the width it was laid out at.
+        var measured: [CGFloat: CGSize] = [:]
         var openURL: OpenURLAction?
         private var fading: Timer?
         private static let fade = 0.3
