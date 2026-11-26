@@ -22,7 +22,7 @@ struct DocumentScreen: View {
                     .padding(.bottom, Metric.gap)
             }
             if document.code, document.editable {
-                CodeEditor(text: $document.text, path: path ?? "")
+                CodeEditor(text: $document.text, scrolled: $document.scrolled, path: path ?? "")
             } else if editing {
                 PlainText(field: field, text: $document.text, font: .monospacedSystemFont(ofSize: Metric.label, weight: .regular))
                     .padding(Metric.gap)
@@ -42,6 +42,7 @@ struct DocumentScreen: View {
                         .padding(Metric.wide)
                         .frame(maxWidth: .infinity, alignment: .leading)
                 }
+                .keepsScroll($document.scrolled)
             } else {
                 ScrollView([.horizontal, .vertical]) {
                     Text(document.text)
@@ -50,6 +51,7 @@ struct DocumentScreen: View {
                         .textSelection(.enabled)
                         .padding(Metric.pad)
                 }
+                .keepsScroll($document.scrolled)
             }
         }
         .background(flavour(.base))

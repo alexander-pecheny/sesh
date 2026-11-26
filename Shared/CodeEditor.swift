@@ -6,6 +6,7 @@ import SwiftUI
 struct CodeEditor {
     @Environment(\.colorScheme) private var colorScheme
     @Binding var text: String
+    @Binding var scrolled: CGPoint
     let path: String
 }
 
@@ -145,7 +146,10 @@ extension CodeEditor: NSViewRepresentable {
         guard let view = scroll.documentView as? CodeTextView else { return }
         view.changed = { text = $0 }
         view.show(text, dark: colorScheme == .dark)
+        context.coordinator.keep(scroll, in: $scrolled)
     }
+
+    func makeCoordinator() -> ScrollMemory { ScrollMemory() }
 }
 
 private final class CodeTextView: NSTextView {
@@ -338,7 +342,10 @@ extension CodeEditor: UIViewRepresentable {
     func updateUIView(_ field: CodeField, context: Context) {
         field.changed = { text = $0 }
         field.show(text, dark: colorScheme == .dark)
+        context.coordinator.keep(field, in: $scrolled)
     }
+
+    func makeCoordinator() -> ScrollMemory { ScrollMemory() }
 }
 
 final class CodeField: UITextView, UITextViewDelegate {

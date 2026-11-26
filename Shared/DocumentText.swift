@@ -26,6 +26,8 @@ final class DocumentText: ObservableObject {
     private var loose: (path: String, machine: Machine)?
     /// Where its browser was left, which outlives the browser when the user switches Tabs.
     var browsed: (folder: String, picked: String?, files: [String: DocumentText])?
+    /// Where its Tab was scrolled to, for the Tab to come back to.
+    var scrolled = CGPoint.zero
 
     init(vault: Vault, id: String) {
         self.vault = vault

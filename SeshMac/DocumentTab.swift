@@ -24,7 +24,7 @@ struct DocumentTab: View {
                     .padding(Metric.gap)
             }
             if document.code, document.editable {
-                CodeEditor(text: $document.text, path: path ?? "")
+                CodeEditor(text: $document.text, scrolled: $document.scrolled, path: path ?? "")
             } else if editing {
                 PlainText(field: field, text: $document.text, font: .monospacedSystemFont(ofSize: Metric.label, weight: .regular))
                     .padding(Metric.pad)
@@ -38,17 +38,16 @@ struct DocumentTab: View {
                 } else if document.html {
                     HTMLView(html: document.text)
                 } else if !document.markdown {
-                    CodeView(text: document.text, language: path.map { ($0 as NSString).pathExtension })
+                    CodeView(text: document.text, language: path.map { ($0 as NSString).pathExtension }, scrolled: $document.scrolled)
                 } else {
                 ScrollView {
-                    Group {
-                        Prose(text: document.text)
-                    }
-                    .textSelection(.enabled)
-                    .padding(Metric.wide)
-                    .frame(maxWidth: 820, alignment: .leading)
-                    .frame(maxWidth: .infinity)
+                    Prose(text: document.text)
+                        .textSelection(.enabled)
+                        .padding(Metric.wide)
+                        .frame(maxWidth: 820, alignment: .leading)
+                        .frame(maxWidth: .infinity)
                 }
+                .keepsScroll($document.scrolled)
                 }
             }
         }
@@ -105,6 +104,7 @@ private struct CodeView: NSViewRepresentable {
     @Environment(\.colorScheme) private var colorScheme
     let text: String
     let language: String?
+    @Binding var scrolled: CGPoint
 
     func makeNSView(context: Context) -> NSScrollView {
         let scroll = NSTextView.scrollableTextView()
@@ -124,6 +124,7 @@ private struct CodeView: NSViewRepresentable {
     }
 
     func updateNSView(_ scroll: NSScrollView, context: Context) {
+        defer { context.coordinator.memory.keep(scroll, in: $scrolled) }
         guard let view = scroll.documentView as? NSTextView, context.coordinator.shown != "\(colorScheme)\(text)" else { return }
         context.coordinator.shown = "\(colorScheme)\(text)"
         let dark = colorScheme == .dark
@@ -138,8 +139,9 @@ private struct CodeView: NSViewRepresentable {
     func makeCoordinator() -> Coordinator { Coordinator() }
 
     /// What the view shows, so it is coloured once rather than on every update.
-    final class Coordinator {
+    @MainActor final class Coordinator {
         var shown = ""
+        let memory = ScrollMemory()
     }
 }
 
