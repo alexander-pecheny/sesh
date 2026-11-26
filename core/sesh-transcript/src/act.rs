@@ -49,7 +49,13 @@ pub fn act(source: &mut dyn Source, session: &str, pane: Option<&Value>, request
     match request["op"].as_str().unwrap_or_default() {
         "send" => {
             let text = request["text"].as_str().ok_or("a message needs text")?;
-            source.input(session, &Input::Prompt(text.into()))
+            match pane.and_then(Agent::of).filter(|agent| *agent == Agent::Claude).and(images_apart(text)) {
+                Some((images, rest)) => {
+                    paste_images(source, session, &images)?;
+                    source.input(session, &Input::Prompt(rest))
+                }
+                None => source.input(session, &Input::Prompt(text.into())),
+            }
         }
         "keys" => source.input(session, &Input::Keys(strings("keys").filter(|keys| !keys.is_empty()).ok_or("no keys to send")?)),
         "stop" => {
@@ -66,6 +72,29 @@ pub fn act(source: &mut dyn Source, session: &str, pane: Option<&Value>, request
         "start" => crate::start::start(source, session, request),
         other => Err(format!("unknown op {other:?}")),
     }
+}
+
+/// Claude drops a paste's blank lines when it takes an image from it, so a message with blank
+/// lines has its lines of image paths split off, to go in a paste of their own.
+fn images_apart(text: &str) -> Option<(String, String)> {
+    let (images, rest): (Vec<&str>, Vec<&str>) = text
+        .lines()
+        .partition(|line| !line.trim().is_empty() && line.split_whitespace().all(|word| crate::image_path(word).is_some()));
+    let rest = rest.join("\n").trim().to_string();
+    (!images.is_empty() && rest.contains("\n\n")).then(|| (images.join("\n"), rest))
+}
+
+/// Pastes image paths into Claude's prompt and waits until it has taken them, which shows as
+/// a change to the prompt's line.
+fn paste_images(source: &mut dyn Source, session: &str, images: &str) -> Result<()> {
+    let prompt = |screen: String| screen.lines().rev().find(|line| line.contains('❯')).unwrap_or_default().to_string();
+    let before = prompt(source.read(session, false)?);
+    source.input(session, &Input::Paste(images.into()))?;
+    let deadline = Instant::now() + MENU_TIMEOUT;
+    while prompt(source.read(session, false)?) == before && Instant::now() < deadline {
+        std::thread::sleep(KEY_PAUSE);
+    }
+    Ok(())
 }
 
 fn agent_pane<'a>(session: &str, pane: Option<&'a Value>) -> Result<(&'a Value, Agent)> {
@@ -500,6 +529,18 @@ mod tests {
                 other => format!("{other:?}"),
             })
             .collect()
+    }
+
+    #[test]
+    fn image_paths_go_to_claude_ahead_of_a_message_with_blank_lines() {
+        let claude = json!({"agent": "claude"});
+        let send = json!({"op": "send", "text": "'/u/a.png' '/u/b.png'\nLook here.\n\nAnd here."});
+        let mut source = Screens(vec!["❯ ", "❯ [Image #1][Image #2]"], Vec::new());
+        assert_eq!(act(&mut source, "w1:p1", Some(&claude), &send), Ok(()));
+        assert_eq!(source.1, [Input::Paste("'/u/a.png' '/u/b.png'".into()), Input::Prompt("Look here.\n\nAnd here.".into())]);
+        let one_paragraph = json!({"op": "send", "text": "'/u/a.png'\nLook here."});
+        assert_eq!(played("", Some(&claude), one_paragraph).1, [Input::Prompt("'/u/a.png'\nLook here.".into())]);
+        assert_eq!(played("", Some(&json!({"agent": "codex"})), send).1.len(), 1);
     }
 
     #[test]
