@@ -26,6 +26,8 @@ pub enum Input {
     Keys(Vec<String>),
     /// Literal text, typed.
     Text(String),
+    /// Text pasted, as a terminal pastes it, without Enter.
+    Paste(String),
     /// A message, which sesh-mux submits as the Agent's next prompt.
     Prompt(String),
     Close,
@@ -79,6 +81,7 @@ impl Source for Mux {
         let (method, params) = match input {
             Input::Keys(keys) => ("pane.send_keys", json!({"pane_id": pane_id, "keys": keys})),
             Input::Text(text) => ("pane.send_text", json!({"pane_id": pane_id, "text": text})),
+            Input::Paste(text) => ("pane.send_input", json!({"pane_id": pane_id, "text": text})),
             Input::Prompt(text) => ("agent.prompt", json!({"target": pane_id, "text": text})),
             Input::Close => ("pane.close", json!({"pane_id": pane_id})),
         };
