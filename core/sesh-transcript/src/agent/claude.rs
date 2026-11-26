@@ -279,6 +279,7 @@ impl Parser {
         let fresh: Vec<String> = paths.into_iter().filter(|path| !images.iter().any(|known| known == path)).map(str::to_string).collect();
         if !fresh.is_empty() {
             images.extend(fresh);
+            in_place(images, entry.text.as_deref().unwrap_or_default());
             self.amended.push(entry.id.clone());
         }
     }
@@ -420,6 +421,18 @@ fn answers(result: &Value) -> Option<Vec<String>> {
             })
             .collect(),
     )
+}
+
+/// Orders a message's images as they stand in its text: a path where it was written, and a
+/// file Claude took where its `[Image #N]` stands, in turn.
+fn in_place(images: &mut [String], text: &str) {
+    let mut chips = text.match_indices("[Image #").map(|(at, _)| at);
+    let mut placed: Vec<(usize, String)> =
+        images.iter().map(|path| (text.find(path.as_str()).or_else(|| chips.next()).unwrap_or(usize::MAX), path.clone())).collect();
+    placed.sort_by_key(|(at, _)| *at);
+    for (image, (_, path)) in images.iter_mut().zip(placed) {
+        *image = path;
+    }
 }
 
 fn typed_text(text: &str) -> Option<String> {

@@ -132,6 +132,17 @@ fn an_image_claude_names_after_the_message_joins_it() {
 }
 
 #[test]
+fn images_keep_the_order_they_have_in_the_message() {
+    let at = "2026-10-12T10:17:24.000Z";
+    let text = "[Image #29] [Image #30]look at the tournament '/home/u/.sesh/uploads/c.png'";
+    let mut transcript = parse(Agent::Claude, &[json!({"type":"user","timestamp":at,"origin":{"kind":"human"},"message":{"role":"user","content":[{"type":"text","text":text}]}})]);
+    let meta = json!({"type":"user","timestamp":at,"isMeta":true,"message":{"role":"user","content":[{"type":"text","text":"[Image: source: /home/u/.sesh/uploads/a.png]\n[Image: source: /home/u/.sesh/uploads/b.png]"}]}});
+    transcript.feed(format!("{meta}\n").as_bytes());
+    let names: Vec<&str> = transcript.entries[0].images.iter().flatten().map(|path| &path[path.len() - 5..]).collect();
+    assert_eq!(names, ["a.png", "b.png", "c.png"]);
+}
+
+#[test]
 fn codex_response_items_become_entries() {
     let at = "2026-06-03T11:54:39.234Z";
     let transcript = parse(
